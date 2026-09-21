@@ -76,11 +76,13 @@ class MemoDelegate(QStyledItemDelegate):
         editor = super().createEditor(parent, option, index)
         if isinstance(editor, QLineEdit):
             editor.textChanged.connect(lambda text: self.parent().resize_memo_column(index.row(), text))
+            editor.textChanged.connect(lambda text: self.parent().memo_edited.emit(index.row(), text))
         return editor
 
 
 class RowsTable(QTableWidget):
     moved = Signal(int, int)
+    memo_edited = Signal(int, str)
 
     def __init__(self):
         super().__init__(0, 5)
@@ -167,7 +169,7 @@ class SettingsDialog(QDialog):
             self.times[name] = spin
             form.addRow(label, spin)
         self.checks = {}
-        for name, label in (("auto_fire", "커서 이동-클릭 단축키를 누르는 동안 반복"),
+        for name, label in (("auto_fire", "좌표 클릭 단축키를 누르는 동안 반복"),
                             ("exclusive_hook", "처리한 단축키를 다른 앱에 전달하지 않기"),
                             ("show_realtime", "실시간 커서 좌표 표시")):
             checkbox = QCheckBox(label)
@@ -388,13 +390,13 @@ class MainWindow(QMainWindow):
 
         toolbar = QHBoxLayout()
         toolbar.setSpacing(4)
-        for text, callback in (("＋ 행 추가", self.add_row), ("선택 삭제", self.delete_rows),
-                               ("저장", self.save)):
+        for text, callback in (("＋ 행 추가", self.add_row), ("선택 삭제", self.delete_rows)):
             toolbar.addWidget(self.button(text, callback))
         toolbar.addStretch()
         layout.addLayout(toolbar)
         self.table = RowsTable()
         self.table.itemChanged.connect(self.memo_changed)
+        self.table.memo_edited.connect(self.live_memo_changed)
         self.table.moved.connect(self.move_row)
         layout.addWidget(self.table, 1)
         self.update_labels()
@@ -464,6 +466,7 @@ class MainWindow(QMainWindow):
         self.stop()
         self.dirty = True
         self.update_labels()
+        return self.save(automatic=True)
 
     def row(self, row_id):
         return next((r for r in self.profile.rows if r.id == row_id), None)
@@ -513,6 +516,10 @@ class MainWindow(QMainWindow):
             self.table.selectRow(0)
         self.update_labels()
 
+    def live_memo_changed(self, index, text):
+        if not self.rebuilding and 0 <= index < len(self.profile.rows):
+            self.set_value(self.profile.rows[index].id, 'memo', text)
+
     def memo_changed(self, item):
         if not self.rebuilding and item.column() == 4:
             self.set_value(item.data(Qt.ItemDataRole.UserRole), "memo", item.text())
@@ -539,7 +546,8 @@ class MainWindow(QMainWindow):
                 row.script = dialog.source
                 self.changed()
                 self.rebuild(rid)
-                self.statusBar().showMessage('스크립트를 반영했습니다. 프로필 저장으로 파일에 보관하세요.')
+                if not self.dirty:
+                    self.statusBar().showMessage('스크립트를 반영하고 자동저장했습니다.')
         finally:
             self.modal = False
             self.restart_hooks()
@@ -547,7 +555,7 @@ class MainWindow(QMainWindow):
     def eligible(self, action):
         if self.modal or self.closing:
             return False
-        if action == "pause":
+        if action in ("pause", "capture_selected"):
             return True
         if action == "move":
             return self.armed and (not self.target or self.native.active(self.target))
@@ -620,8 +628,10 @@ class MainWindow(QMainWindow):
         if row and row.action_mode == 'script':
             self.statusBar().showMessage('스크립트 작성 화면에서 좌표를 추가하세요.')
             return
-        if not row or (self.target and not self.native.active(self.target)):
-            self.statusBar().showMessage("대상 창을 활성화한 뒤 좌표를 캡처하세요.")
+        if not row:
+            return
+        if self.target and not self.native.exists(self.target):
+            self.statusBar().showMessage('대상 창이 닫혔습니다. 창을 다시 선택하세요.')
             return
         try:
             x, y = self.native.cursor(self.target)
@@ -635,7 +645,8 @@ class MainWindow(QMainWindow):
             self.profile.resolution = (w, h)
             self.changed()
             self.rebuild(rid)
-            self.statusBar().showMessage(f"좌표 캡처 완료: {x}, {y} · 변경 후 일시정지됨 · 저장 버튼으로 파일에 저장하세요.")
+            if not self.dirty:
+                self.statusBar().showMessage(f"좌표 캡처 및 자동저장 완료: {x}, {y} · 일시정지됨")
         except Exception as error:
             self.on_engine_error(str(error))
 
@@ -765,7 +776,8 @@ class MainWindow(QMainWindow):
 
     def new_profile(self):
         if self.confirm_changes():
-            self.profile, self.path, self.dirty = Profile.default(), None, False
+            self.profile, self.path, self.dirty = Profile.default(), self.next_profile_path(), False
+            self.changed()
             self.rebuild()
             self.restart_hooks()
 
@@ -791,19 +803,35 @@ class MainWindow(QMainWindow):
         finally:
             self.modal = False
 
-    def save(self):
+    def next_profile_path(self):
+        path = self.data_dir / 'macro.json'
+        number = 1
+        while path.exists():
+            path = self.data_dir / f'macro_{number}.json'
+            number += 1
+        return path
+
+    def save(self, automatic=False):
         if self.path is None:
-            return self.save_as()
+            if automatic:
+                self.path = self.next_profile_path()
+            else:
+                return self.save_as()
         try:
             self.profile.validate((self.settings.capture_hk, self.settings.pause_hk))
             atomic_json(self.path, self.profile.export())
-            self.dirty = False
             self.persist_settings()
+            self.dirty = False
             self.update_labels()
-            self.statusBar().showMessage(f"저장 완료: {self.path}")
+            self.statusBar().showMessage(f"{'자동저장' if automatic else '저장'} 완료: {self.path}")
             return True
         except Exception as error:
-            self.error(str(error))
+            if automatic:
+                self.dirty = True
+                self.update_labels()
+                self.statusBar().showMessage(f'자동저장 실패: {error} · 변경사항은 아직 저장되지 않았습니다.')
+            else:
+                self.error(str(error))
             return False
 
     def save_as(self):
@@ -907,7 +935,8 @@ class MainWindow(QMainWindow):
                 self.profile.convert(values[:2], values[2:])
                 self.changed()
                 self.rebuild()
-                self.statusBar().showMessage("좌표를 변환했습니다. 저장 버튼으로 프로필에 반영하세요.")
+                if not self.dirty:
+                    self.statusBar().showMessage("좌표를 변환하고 자동저장했습니다.")
         except Exception as error:
             self.error(str(error))
         finally:
@@ -953,7 +982,7 @@ class MainWindow(QMainWindow):
         self.modal = True
         QMessageBox.information(self, "사용 방법", "1. 대상 게임/에뮬레이터 창을 선택합니다.\n"
             "2. 행을 선택하고 대상 창의 원하는 위치에 커서를 놓은 뒤 좌표 캡처 키(기본 Ctrl+S)를 누릅니다.\n"
-            "3. 단축키와 동작을 지정하고 프로필을 저장합니다.\n"
+            "3. 단축키와 동작을 지정하면 변경사항이 자동저장됩니다.\n"
             "4. 스크립트 실행 모드는 스크립트 작성 버튼에서 명령을 작성합니다.\n"
             "5. 작동 시작을 누른 뒤 단축키를 누릅니다.\n\n"
             "좌표를 수정하면 일시정지됩니다. 작동/정지 키는 일시정지 중에도 유지됩니다.\n"

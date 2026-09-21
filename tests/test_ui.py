@@ -41,7 +41,8 @@ class UiTests(unittest.TestCase):
         w.armed = True
         w.table.cellWidget(0, 1).setValue(125)
         self.assertFalse(w.armed)
-        self.assertTrue(w.dirty)
+        self.assertFalse(w.dirty)
+        self.assertEqual(Profile.read(read_json(w.path)).rows[0].x,125)
         w.table.item(0, 4).setText("첫 번째 스킬")
         rid = w.profile.rows[0].id
         w.move_row(0, 2)
@@ -57,10 +58,11 @@ class UiTests(unittest.TestCase):
         w.delete_rows()
         self.assertEqual(w.table.rowCount(), 3)
 
-    def test_capture_requires_target_and_stops_run(self):
+    def test_capture_inactive_target_and_stops_run(self):
         w = self.window
         w.target = 99
-        with patch.object(w.native, "active", return_value=True), patch.object(w.native, "cursor", return_value=(400, 500)), patch.object(w.native, "size", return_value=(1920, 1080)):
+        with patch.object(w.native, "active", return_value=False), patch.object(w.native, "exists", return_value=True), patch.object(w.native, "cursor", return_value=(400, 500)), patch.object(w.native, "bounds", return_value=(0, 0, 1920, 1080)), patch.object(w.native, "size", return_value=(1920, 1080)):
+            self.assertTrue(w.eligible('capture_selected'))
             w.armed = True
             w.capture(w.profile.rows[0].id)
             self.assertEqual(w.profile.rows[0].x, 400)
@@ -98,14 +100,16 @@ class UiTests(unittest.TestCase):
 
     def test_cancel_close_retains_unsaved_changes(self):
         w = self.window
-        w.changed()
+        with patch('app.atomic_json', side_effect=OSError('disk unavailable')):
+            w.changed()
         with patch.object(QMessageBox, "exec", return_value=QMessageBox.StandardButton.Cancel):
             self.assertFalse(w.confirm_changes())
         self.assertTrue(w.dirty)
 
     def test_save_dialog_korean_buttons_and_actions(self):
         w = self.window
-        w.changed()
+        with patch('app.atomic_json', side_effect=OSError('disk unavailable')):
+            w.changed()
         for answer, expected in ((QMessageBox.StandardButton.Save, True),
                                  (QMessageBox.StandardButton.Discard, True),
                                  (QMessageBox.StandardButton.Cancel, False)):
@@ -369,3 +373,65 @@ class UiTests(unittest.TestCase):
         for value in (-1, 10001):
             with self.assertRaises(ValueError):
                 Settings.read({'curve_duration': value})
+
+    def test_autosave_all_edits_and_new_profile_preserves_old(self):
+        w=self.window
+        self.assertNotIn('저장',[b.text() for b in w.centralWidget().findChildren(QPushButton)])
+        row=w.profile.rows[0]
+        w.set_value(row.id,'memo','자동 메모')
+        w.set_value(row.id,'x',12345)
+        w.set_value(row.id,'action_mode','script')
+        w.set_value(row.id,'script','click mouse')
+        saved=Profile.read(read_json(w.path)).rows[0]
+        self.assertEqual((saved.memo,saved.x,saved.action_mode,saved.script),('자동 메모',12345,'script','click mouse'))
+        w.add_row()
+        self.assertEqual(len(Profile.read(read_json(w.path)).rows),4)
+        w.move_row(3,0)
+        self.assertEqual(Profile.read(read_json(w.path)).rows[0].id,w.profile.rows[0].id)
+        w.table.selectRow(0)
+        w.delete_rows()
+        self.assertEqual(len(Profile.read(read_json(w.path)).rows),3)
+        old_path,old_bytes=w.path,w.path.read_bytes()
+        with patch.object(QFileDialog,'getSaveFileName') as save_dialog:
+            w.new_profile()
+            save_dialog.assert_not_called()
+        self.assertNotEqual(w.path,old_path)
+        self.assertEqual(old_path.read_bytes(),old_bytes)
+        self.assertTrue(w.path.exists())
+        self.assertEqual(read_json(w.settings_path)['last_profile'],w.path.name)
+        self.assertFalse(w.dirty)
+
+    def test_live_memo_is_saved_before_editor_closes(self):
+        from PySide6.QtWidgets import QLineEdit
+        w=self.window
+        w.table.editItem(w.table.item(0,4))
+        self.qt.processEvents()
+        editor=self.qt.focusWidget()
+        self.assertIsInstance(editor,QLineEdit)
+        QTest.keyClicks(editor,'live memo')
+        self.assertEqual(Profile.read(read_json(w.path)).rows[0].memo,'live memo')
+        self.assertFalse(w.dirty)
+
+    def test_autosave_failure_preserves_file_and_reports_error(self):
+        w=self.window
+        original=w.path.read_bytes()
+        with patch('app.atomic_json',side_effect=OSError('disk unavailable')), patch.object(QMessageBox,'warning') as popup:
+            w.set_value(w.profile.rows[0].id,'memo','pending')
+            popup.assert_not_called()
+        self.assertTrue(w.dirty)
+        self.assertIn('자동저장 실패',w.statusBar().currentMessage())
+        self.assertEqual(w.path.read_bytes(),original)
+        self.assertTrue(w.save(automatic=True))
+        self.assertFalse(w.dirty)
+        self.assertEqual(Profile.read(read_json(w.path)).rows[0].memo,'pending')
+
+    def test_script_accept_is_automatically_saved(self):
+        w=self.window
+        row=w.profile.rows[0]
+        row.action_mode='script'
+        with patch('app.ScriptEditor') as editor:
+            editor.return_value.exec.return_value=QDialog.DialogCode.Accepted
+            editor.return_value.source='click 100,200'
+            w.edit_script(row.id)
+        self.assertEqual(Profile.read(read_json(w.path)).rows[0].script,'click 100,200')
+        self.assertFalse(w.dirty)

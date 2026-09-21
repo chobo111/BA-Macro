@@ -9,7 +9,7 @@ import tempfile
 import uuid
 
 MODES = {
-    "move_and_click": "커서 이동-클릭",
+    "move_and_click": "좌표 클릭",
     "move_only": "커서 이동",
     "script": "스크립트 실행",
 }
