@@ -83,6 +83,7 @@ class MemoDelegate(QStyledItemDelegate):
 class RowsTable(QTableWidget):
     moved = Signal(int, int)
     memo_edited = Signal(int, str)
+    content_width_changed = Signal()
 
     def __init__(self):
         super().__init__(0, 5)
@@ -100,15 +101,16 @@ class RowsTable(QTableWidget):
         delegate = MemoDelegate(self)
         delegate.closeEditor.connect(lambda *_: QTimer.singleShot(0, self.resize_memo_column))
         self.setItemDelegateForColumn(4, delegate)
-        for column, width in ((0, 72), (1, 60), (2, 60), (3, 122), (4, 140)):
+        for column, width in ((0, 72), (1, 60), (2, 60), (3, 122), (4, 70)):
             self.setColumnWidth(column, width)
 
     def resize_memo_column(self, editing_row=-1, editing_text=""):
         texts = [self.item(i, 4).text() for i in range(self.rowCount())
                  if i != editing_row and self.item(i, 4)]
         texts.append(editing_text)
-        width = max((self.fontMetrics().horizontalAdvance(text) + 18 for text in texts), default=140)
-        self.setColumnWidth(4, max(140, min(width, 1200)))
+        width = max((self.fontMetrics().horizontalAdvance(text) + 18 for text in texts), default=70)
+        self.setColumnWidth(4, max(70, min(width, 1200)))
+        self.content_width_changed.emit()
 
     def dropEvent(self, event):
         if event.source() is self:
@@ -275,8 +277,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Blue Archive Studio")
         self.setWindowIcon(make_icon())
-        self.resize(600, 420)
-        self.setMinimumSize(480, 340)
+        self.resize(420, 420)
+        self.setMinimumHeight(340)
         self.native = Windows()
         self.armed = False
         self.modal = False
@@ -398,8 +400,29 @@ class MainWindow(QMainWindow):
         self.table.itemChanged.connect(self.memo_changed)
         self.table.memo_edited.connect(self.live_memo_changed)
         self.table.moved.connect(self.move_row)
+        self.table.content_width_changed.connect(self.fit_content_width, Qt.ConnectionType.QueuedConnection)
+        self.table.horizontalHeader().sectionResized.connect(self.queue_fit_content_width)
+        self.table.verticalScrollBar().rangeChanged.connect(self.queue_fit_content_width)
         layout.addWidget(self.table, 1)
         self.update_labels()
+
+    def queue_fit_content_width(self, *_):
+        QTimer.singleShot(0, self.fit_content_width)
+
+    def fit_content_width(self):
+        if self.closing:
+            return
+        table = self.table
+        margins = self.centralWidget().layout().contentsMargins()
+        width = (table.horizontalHeader().length() + table.verticalHeader().width()
+                 + table.frameWidth() * 2 + margins.left() + margins.right())
+        if table.verticalScrollBar().maximum() > 0:
+            width += table.verticalScrollBar().sizeHint().width()
+        screen = self.screen()
+        if screen:
+            frame = max(0, self.frameGeometry().width() - self.geometry().width())
+            width = min(width, screen.availableGeometry().width() - frame)
+        self.setFixedWidth(width)
 
     def build_menu(self):
         file_menu = self.menuBar().addMenu("파일")
