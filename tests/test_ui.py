@@ -15,6 +15,49 @@ from domain import MODES
 
 
 class UiTests(unittest.TestCase):
+    def test_remember_target_restore_and_missing_window(self):
+        w = self.window
+        identity = {'exe': r'C:\Games\Game.exe', 'class': 'GameWindow', 'title': 'Game'}
+        with patch.object(w.native, 'windows', return_value=[(123, 'Game')]), patch.object(w.native, 'window_identity', return_value=identity):
+            w.refresh_windows()
+            w.targets.setCurrentIndex(1)
+            self.assertEqual(Profile.read(read_json(w.path)).target_program, identity)
+            self.assertEqual(w.targets.currentText(), 'Game')
+        w.target = 0
+        with patch.object(w.native, 'windows', return_value=[]):
+            w.refresh_windows()
+        self.assertEqual(w.target, 0)
+        self.assertEqual(w.profile.target_program, identity)
+        with patch.object(w.native, 'windows', return_value=[(456, 'Game')]), patch.object(w.native, 'window_identity', return_value=identity):
+            w.refresh_windows()
+            self.assertEqual(w.target, 456)
+            self.assertFalse(w.armed)
+            w.targets.setCurrentIndex(0)
+        self.assertEqual(Profile.read(read_json(w.path)).target_program, {})
+
+    def test_startup_restores_profile_target(self):
+        from domain import atomic_json
+        identity = {'exe': r'C:\Games\Game.exe', 'class': 'GameWindow', 'title': 'Old title'}
+        with tempfile.TemporaryDirectory() as folder:
+            profile = Profile.default()
+            profile.target_program = identity
+            atomic_json(Path(folder) / 'macro.json', profile.export())
+            with patch('app.Windows.windows', return_value=[(456, 'New title')]), patch('app.Windows.window_identity', return_value={**identity, 'title': 'New title'}):
+                other = MainWindow(data_dir=folder, hook_enabled=False)
+                try:
+                    self.assertEqual(other.target, 456)
+                    self.assertFalse(other.armed)
+                finally:
+                    other.close()
+
+    def test_target_restore_avoids_ambiguous_or_different_executable(self):
+        native = self.window.native
+        identity = {'exe': r'C:\Games\Game.exe', 'class': 'GameWindow', 'title': 'Game'}
+        with patch.object(native, 'window_identity', return_value=identity):
+            self.assertEqual(native.find_target(identity, [(1, 'Game'), (2, 'Game')]), 0)
+        with patch.object(native, 'window_identity', return_value={**identity, 'exe': r'C:\Other\Game.exe'}):
+            self.assertEqual(native.find_target(identity, [(1, 'Game')]), 0)
+
     @classmethod
     def setUpClass(cls):
         cls.qt = QApplication.instance() or QApplication([])

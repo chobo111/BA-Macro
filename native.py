@@ -47,6 +47,12 @@ get_cursor = bind("GetCursorPos", [C.POINTER(W.POINT)], W.BOOL)
 set_cursor = bind("SetCursorPos", [C.c_int, C.c_int], W.BOOL)
 send_input = bind("SendInput", [W.UINT, C.POINTER(Input), C.c_int], W.UINT)
 get_title = bind("GetWindowTextW", [W.HWND, W.LPWSTR, C.c_int], C.c_int)
+get_class = bind("GetClassNameW", [W.HWND, W.LPWSTR, C.c_int], C.c_int)
+K = C.WinDLL('kernel32', use_last_error=True)
+K.OpenProcess.argtypes, K.OpenProcess.restype = [W.DWORD, W.BOOL, W.DWORD], W.HANDLE
+K.QueryFullProcessImageNameW.argtypes = [W.HANDLE, W.DWORD, W.LPWSTR, C.POINTER(W.DWORD)]
+K.QueryFullProcessImageNameW.restype = W.BOOL
+K.CloseHandle.argtypes, K.CloseHandle.restype = [W.HANDLE], W.BOOL
 get_pid = bind("GetWindowThreadProcessId", [W.HWND, C.POINTER(W.DWORD)], W.DWORD)
 get_long = bind("GetWindowLongW", [W.HWND, C.c_int], W.LONG)
 get_window = bind("GetWindow", [W.HWND, W.UINT], W.HWND)
@@ -72,6 +78,46 @@ def check(value):
 
 
 class Windows:
+    def window_identity(self, hwnd):
+        check(valid_window(hwnd))
+        title, classname = C.create_unicode_buffer(1024), C.create_unicode_buffer(256)
+        get_title(hwnd, title, len(title))
+        get_class(hwnd, classname, len(classname))
+        pid = W.DWORD()
+        get_pid(hwnd, C.byref(pid))
+        process = K.OpenProcess(0x1000, False, pid.value)
+        exe = ''
+        if process:
+            try:
+                path, size = C.create_unicode_buffer(32768), W.DWORD(32768)
+                if K.QueryFullProcessImageNameW(process, 0, path, C.byref(size)):
+                    exe = path.value
+            finally:
+                K.CloseHandle(process)
+        return {'exe': exe, 'class': classname.value, 'title': title.value}
+
+    def find_target(self, saved, windows):
+        if not saved:
+            return 0
+        candidates = []
+        for hwnd, _ in windows:
+            try:
+                info = self.window_identity(hwnd)
+            except OSError:
+                continue
+            if saved.get('exe'):
+                matches = (info['exe'].casefold() == saved['exe'].casefold()
+                           and info['class'] == saved.get('class'))
+            else:
+                matches = bool(saved.get('class') and saved.get('title')) and all(
+                    info[k] == saved[k] for k in ('class', 'title'))
+            if matches:
+                candidates.append((hwnd, info))
+        exact = [hwnd for hwnd, info in candidates if info['title'] == saved.get('title')]
+        if len(exact) == 1:
+            return exact[0]
+        return candidates[0][0] if len(candidates) == 1 else 0
+
     def taskbar_window(self, hwnd):
         if not visible(hwnd) or hwnd == get_shell_window():
             return False

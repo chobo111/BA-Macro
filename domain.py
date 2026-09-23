@@ -83,6 +83,7 @@ class Row:
 class Profile:
     rows: list[Row] = field(default_factory=list)
     resolution: tuple[int, int] | None = None
+    target_program: dict = field(default_factory=dict)
 
     @classmethod
     def default(cls):
@@ -110,7 +111,10 @@ class Profile:
             if len(values) != 2:
                 raise ValueError("해상도 형식이 올바르지 않습니다.")
             size = tuple(bounded_int(v.strip(), 1, 100000, "해상도") for v in values)
-        obj = cls(rows, size)
+        target = data.get('target_program') or {}
+        if not isinstance(target, dict) or any(not isinstance(v, str) for v in target.values()):
+            raise ValueError('대상 프로그램 정보가 올바르지 않습니다.')
+        obj = cls(rows, size, {k: target.get(k, '') for k in ('exe', 'class', 'title')} if target else {})
         obj.validate()
         return obj
 
@@ -127,6 +131,7 @@ class Profile:
 
     def export(self):
         return {"version": 3, "target_resolution": "%dx%d" % self.resolution if self.resolution else "알 수 없음",
+                "target_program": self.target_program,
                 "macros": [{"id": r.id, "move_hk": r.move_hk,
                             "coords": f"{r.x}, {r.y}", "memo": r.memo, "action_mode": r.action_mode,
                             "script": r.script} for r in self.rows]}

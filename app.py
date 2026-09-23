@@ -678,28 +678,42 @@ class MainWindow(QMainWindow):
         self.targets.clear()
         self.targets.addItem("전체화면", 0)
         try:
-            for hwnd, title in self.native.windows(os.getpid()):
+            windows = self.native.windows(os.getpid())
+            for hwnd, title in windows:
                 self.targets.addItem(title, hwnd)
             index = self.targets.findData(self.target)
+            if not self.target or index < 0:
+                restored = self.native.find_target(self.profile.target_program, windows)
+                index = self.targets.findData(restored)
             self.targets.setCurrentIndex(max(0, index))
         except Exception as error:
             self.statusBar().showMessage(str(error))
         self.targets.blockSignals(False)
-        self.change_target()
+        self.change_target(remember=False)
 
-    def change_target(self, *_):
+    def change_target(self, *_, remember=True):
         target = self.targets.currentData() or 0
         self.targets.setToolTip(self.targets.currentText())
         if target != self.target:
             self.stop()
             self.target = target
+        if remember:
+            try:
+                identity = self.native.window_identity(target) if target else {}
+                if identity != self.profile.target_program:
+                    self.profile.target_program = identity
+                    self.changed()
+            except OSError as error:
+                self.statusBar().showMessage(str(error))
 
     def tick(self):
         try:
             if self.target and not self.native.exists(self.target):
                 self.stop()
                 self.target = 0
+                self.targets.blockSignals(True)
                 self.targets.setCurrentIndex(0)
+                self.targets.blockSignals(False)
                 self.statusBar().showMessage("대상 창이 닫혔습니다. 새 창을 선택하세요.")
             if self.target:
                 w, h = self.native.size(self.target)
@@ -800,6 +814,8 @@ class MainWindow(QMainWindow):
     def new_profile(self):
         if self.confirm_changes():
             self.profile, self.path, self.dirty = Profile.default(), self.next_profile_path(), False
+            self.target = 0
+            self.refresh_windows()
             self.changed()
             self.rebuild()
             self.restart_hooks()
@@ -817,6 +833,9 @@ class MainWindow(QMainWindow):
             for row in profile.rows:
                 Hotkeys.compile(row.move_hk)
             self.profile, self.path, self.dirty = profile, Path(path), False
+            self.stop()
+            self.target = 0
+            self.refresh_windows()
             self.rebuild()
             self.rebind()
             self.persist_settings()
