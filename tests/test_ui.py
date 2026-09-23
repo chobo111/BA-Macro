@@ -15,6 +15,18 @@ from domain import MODES
 
 
 class UiTests(unittest.TestCase):
+    def test_target_matches_updated_path_and_rejects_ambiguous_titles(self):
+        native = self.window.native
+        saved = {'exe': r'C:\WindowsApps\App_1.0\ChatGPT.exe',
+                 'class': 'Chrome_WidgetWin_1', 'title': 'ChatGPT'}
+        updated = {**saved, 'exe': r'D:\WindowsApps\App_2.0\CHATGPT.EXE'}
+        with patch.object(native, 'window_identity', return_value=updated):
+            self.assertEqual(native.find_target(saved, [(1, 'ChatGPT')]), 1)
+            self.assertEqual(native.find_target(saved, [(1, 'ChatGPT'), (2, 'ChatGPT')]), 0)
+        identities = {1: updated, 2: {**updated, 'title': 'Other window'}}
+        with patch.object(native, 'window_identity', side_effect=identities.get):
+            self.assertEqual(native.find_target(saved, [(1, 'ChatGPT'), (2, 'Other window')]), 1)
+
     def test_delete_selects_previous_survivor_and_blank_hotkey(self):
         from PySide6.QtCore import QItemSelectionModel
         w = self.window
@@ -260,7 +272,7 @@ class UiTests(unittest.TestCase):
 
     def test_remember_target_restore_and_missing_window(self):
         w = self.window
-        identity = {'exe': r'C:\Games\Game.exe', 'class': 'GameWindow', 'title': 'Game'}
+        identity = {'exe': 'Game.exe', 'class': 'GameWindow', 'title': 'Game'}
         with patch.object(w.native, 'windows', return_value=[(123, 'Game')]), patch.object(w.native, 'window_identity', return_value=identity):
             w.refresh_windows()
             w.targets.setCurrentIndex(1)
@@ -280,7 +292,7 @@ class UiTests(unittest.TestCase):
 
     def test_startup_restores_profile_target(self):
         from domain import atomic_json
-        identity = {'exe': r'C:\Games\Game.exe', 'class': 'GameWindow', 'title': 'Old title'}
+        identity = {'exe': 'Game.exe', 'class': 'GameWindow', 'title': 'Old title'}
         with tempfile.TemporaryDirectory() as folder:
             profile = Profile.default()
             profile.target_program = identity
@@ -295,10 +307,10 @@ class UiTests(unittest.TestCase):
 
     def test_target_restore_avoids_ambiguous_or_different_executable(self):
         native = self.window.native
-        identity = {'exe': r'C:\Games\Game.exe', 'class': 'GameWindow', 'title': 'Game'}
+        identity = {'exe': 'Game.exe', 'class': 'GameWindow', 'title': 'Game'}
         with patch.object(native, 'window_identity', return_value=identity):
             self.assertEqual(native.find_target(identity, [(1, 'Game'), (2, 'Game')]), 0)
-        with patch.object(native, 'window_identity', return_value={**identity, 'exe': r'C:\Other\Game.exe'}):
+        with patch.object(native, 'window_identity', return_value={**identity, 'exe': 'Other.exe'}):
             self.assertEqual(native.find_target(identity, [(1, 'Game')]), 0)
 
     @classmethod

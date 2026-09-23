@@ -2,6 +2,7 @@
 import ctypes as C
 from ctypes import wintypes as W
 from script_language import KEYS
+from domain import target_identity
 
 U = C.WinDLL("user32", use_last_error=True)
 ULONG_PTR = C.c_size_t
@@ -94,15 +95,16 @@ class Windows:
                     exe = path.value
             finally:
                 K.CloseHandle(process)
-        return {'exe': exe, 'class': classname.value, 'title': title.value}
+        return target_identity({'exe': exe, 'class': classname.value, 'title': title.value})
 
     def find_target(self, saved, windows):
+        saved = target_identity(saved)
         if not saved:
             return 0
         candidates = []
         for hwnd, _ in windows:
             try:
-                info = self.window_identity(hwnd)
+                info = target_identity(self.window_identity(hwnd))
             except OSError:
                 continue
             if saved.get('exe'):

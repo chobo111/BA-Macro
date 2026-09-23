@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import ntpath
 import os
 from pathlib import Path
 import tempfile
@@ -13,6 +14,16 @@ MODES = {
     "move_only": "커서 이동",
     "script": "스크립트 실행",
 }
+
+
+def target_identity(data):
+    """Accept legacy absolute paths, but persist only the executable filename."""
+    if not data:
+        return {}
+    if not isinstance(data, dict) or any(not isinstance(v, str) for v in data.values()):
+        raise ValueError('대상 프로그램 정보가 올바르지 않습니다.')
+    return {'exe': ntpath.basename(data.get('exe', '')),
+            'class': data.get('class', ''), 'title': data.get('title', '')}
 
 
 def hotkey(value: str) -> str:
@@ -111,10 +122,7 @@ class Profile:
             if len(values) != 2:
                 raise ValueError("해상도 형식이 올바르지 않습니다.")
             size = tuple(bounded_int(v.strip(), 1, 100000, "해상도") for v in values)
-        target = data.get('target_program') or {}
-        if not isinstance(target, dict) or any(not isinstance(v, str) for v in target.values()):
-            raise ValueError('대상 프로그램 정보가 올바르지 않습니다.')
-        obj = cls(rows, size, {k: target.get(k, '') for k in ('exe', 'class', 'title')} if target else {})
+        obj = cls(rows, size, target_identity(data.get('target_program')))
         obj.validate()
         return obj
 
@@ -131,7 +139,7 @@ class Profile:
 
     def export(self):
         return {"version": 3, "target_resolution": "%dx%d" % self.resolution if self.resolution else "알 수 없음",
-                "target_program": self.target_program,
+                "target_program": target_identity(self.target_program),
                 "macros": [{"id": r.id, "move_hk": r.move_hk,
                             "coords": f"{r.x}, {r.y}", "memo": r.memo, "action_mode": r.action_mode,
                             "script": r.script} for r in self.rows]}

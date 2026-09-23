@@ -5,6 +5,16 @@ from domain import Profile, Row, Settings, atomic_json, read_json, hotkey
 
 
 class DomainTests(unittest.TestCase):
+    def test_legacy_target_path_migrates_without_changing_macros(self):
+        from domain import target_identity
+        data = Profile.default().export()
+        data['target_program'] = {'exe': r'C:\Games\1.0\Game.exe', 'class': 'GameWindow', 'title': 'Game'}
+        profile = Profile.read(data)
+        self.assertEqual(profile.target_program['exe'], 'Game.exe')
+        self.assertEqual(profile.export()['macros'], data['macros'])
+        self.assertEqual(profile.export()['target_program']['exe'], 'Game.exe')
+        self.assertEqual(target_identity({}), {})
+
     def test_old_profile_and_roundtrip(self):
         old = {"target_resolution": "1920x1080", "macros": [
             {"move_hk": "Q", "save_hk": "SHIFT+Q", "coords": "123, 456", "memo": "스킬", "action_mode": "target_and_return_click"}]}
