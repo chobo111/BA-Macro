@@ -1,7 +1,7 @@
 """A single input worker, cancellable waits, and no Qt dependencies."""
 from dataclasses import dataclass
 import threading
-from script_language import compile_script, ScriptRuntime
+from script_language import compile_script, ScriptRuntime, Program
 
 
 @dataclass(frozen=True)
@@ -13,10 +13,10 @@ class Command:
     key: str
     click_delay: int
     click_duration: int
-    return_delay: int
     after_action_delay: int
     script: str = ''
     curve_duration: int = 10
+    program: Program | None = None
 
 
 class Cancelled(Exception):
@@ -116,7 +116,7 @@ class Engine:
                 if c is None:
                     continue
                 if c.mode == 'script':
-                    self.runtime.run(compile_script(c.script), c)
+                    self.runtime.run(c.program if c.program is not None else compile_script(c.script), c)
                     continue
                 # A coordinate action must not inherit a script's latched inputs.
                 self.runtime.release_all()

@@ -32,11 +32,20 @@ class FakeWindows:
 
 
 class EngineTests(unittest.TestCase):
+    def test_precompiled_program_is_not_compiled_again(self):
+        from unittest.mock import patch
+        from script_language import compile_script
+        program = compile_script('sleep 1')
+        with patch('engine.compile_script', side_effect=AssertionError('compiled twice')):
+            self.engine.submit(replace(self.command, mode='script', script='sleep 1', program=program))
+            self.wait_idle()
+        self.assertEqual(self.errors, [])
+
     def setUp(self):
         self.native = FakeWindows()
         self.errors = []
         self.engine = Engine(self.native, lambda key: False, self.errors.append)
-        self.command = Command(1, 30, 40, "move_and_click", "q", 0, 1, 0, 0)
+        self.command = Command(1, 30, 40, "move_and_click", "q", 0, 1, 0)
 
     def tearDown(self):
         self.engine.shutdown()

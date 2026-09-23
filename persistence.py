@@ -1,0 +1,121 @@
+"""Ordered background writes of immutable profile/settings snapshots."""
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
+from dataclasses import dataclass
+from pathlib import Path
+from dataclasses import asdict
+from domain import Profile, Settings, atomic_json, read_json
+
+
+@dataclass(frozen=True)
+class SaveResult:
+    profile_saved: bool
+    recent_name: str = ''
+    error: str = ''
+
+
+@dataclass(frozen=True)
+class LoadedProfile:
+    settings: Settings
+    profile: Profile
+    path: Path | None
+    warning: str = ''
+
+
+class ProfileStore:
+    def __init__(self, directory):
+        self.directory = Path(directory).resolve()
+        self.settings_path = self.directory / 'setting.json'
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='profile-save')
+        self.settings_snapshot = None
+        self.recent_copies = {}
+        self.closed = False
+
+    def load(self):
+        warnings = []
+        try:
+            settings = Settings.read(read_json(self.settings_path)) if self.settings_path.exists() else Settings()
+        except Exception as error:
+            settings = Settings()
+            warnings.append(f'환경설정 불러오기 실패: {error}')
+        recent = self.directory / Path(settings.last_profile).name if settings.last_profile else None
+        path = recent if recent and recent.is_file() else self.directory / 'macro.json'
+        try:
+            profile = Profile.read(read_json(path)) if path.exists() else Profile.default()
+            profile.validate((settings.capture_hk, settings.pause_hk))
+            if not path.exists():
+                result = self.save(path, profile.export(), asdict(settings)).result()
+                if not result.profile_saved:
+                    raise OSError(result.error)
+                if result.error:
+                    warnings.append(f'설정 저장 실패: {result.error}')
+                if result.recent_name:
+                    settings.last_profile = result.recent_name
+            else:
+                try:
+                    settings.last_profile = self.settings(path, asdict(settings))
+                except Exception as error:
+                    warnings.append(f'설정 저장 실패: {error}')
+        except Exception as error:
+            profile, path = Profile.default(), None
+            warnings.append(f'프로필 불러오기 실패: {error}')
+        return LoadedProfile(settings, profile, path, ' · '.join(warnings))
+
+    def next_path(self):
+        path = self.directory / 'macro.json'
+        number = 1
+        while path.exists():
+            path = self.directory / f'macro_{number}.json'
+            number += 1
+        return path
+
+    def _recent_path(self, path):
+        path = Path(path).resolve()
+        if path.parent == self.directory:
+            return path
+        if path not in self.recent_copies:
+            local = self.directory / path.name
+            number = 1
+            while local.exists() or local in self.recent_copies.values():
+                local = self.directory / f'{path.stem}_{number}{path.suffix}'
+                number += 1
+            self.recent_copies[path] = local
+        return self.recent_copies[path]
+
+    def _settings(self, path, settings, profile=None):
+        if path:
+            local = self._recent_path(path)
+            if local != Path(path).resolve():
+                snapshot = profile if profile is not None else read_json(path)
+                if not local.exists() or read_json(local) != snapshot:
+                    atomic_json(local, snapshot)
+            settings['last_profile'] = local.name
+        if settings != self.settings_snapshot:
+            atomic_json(self.settings_path, settings)
+            self.settings_snapshot = deepcopy(settings)
+        return settings.get('last_profile', '')
+
+    def _save(self, path, profile, settings):
+        try:
+            atomic_json(path, profile)
+        except Exception as error:
+            return SaveResult(False, error=str(error))
+        try:
+            return SaveResult(True, self._settings(path, settings, profile))
+        except Exception as error:
+            return SaveResult(True, error=str(error))
+
+    def save(self, path, profile, settings):
+        return self.executor.submit(self._save, Path(path), deepcopy(profile), deepcopy(settings))
+
+    def settings(self, path, settings):
+        return self.executor.submit(self._settings, path, deepcopy(settings)).result()
+
+    def flush(self):
+        if not self.closed:
+            self.executor.submit(lambda: None).result()
+
+    def close(self):
+        if not self.closed:
+            self.closed = True
+            self.executor.shutdown(wait=True)

@@ -2,8 +2,7 @@
 import re
 from PySide6.QtCore import Qt, QEvent, QPoint, Signal, QTimer
 from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel,
-                             QPushButton, QPlainTextEdit, QComboBox, QSizeGrip)
+from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QPlainTextEdit, QComboBox, QSizeGrip
 from mouse_hook import CoordinateHook
 from native import to_client, check
 import ctypes as C

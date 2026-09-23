@@ -1,301 +1,45 @@
 from __future__ import annotations
 
-from dataclasses import asdict, replace
+from dataclasses import asdict
 import os
 from pathlib import Path
 import sys
 
-from PySide6.QtCore import Qt, Signal, QObject, QTimer, QStandardPaths, QPoint, QLockFile, QSize
-from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolygon, QPen
+from PySide6.QtCore import Qt, Signal, QObject, QTimer, QStandardPaths, QLockFile, QSize
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QSpinBox, QLineEdit, QFileDialog, QMessageBox, QDialog, QFormLayout,
-    QDialogButtonBox, QCheckBox, QKeySequenceEdit, QSystemTrayIcon, QMenu, QGroupBox, QStyledItemDelegate, QSizePolicy, QStatusBar,
+    QComboBox, QTableWidgetItem, QSpinBox, QFileDialog, QMessageBox, QDialog, QFormLayout,
+    QDialogButtonBox, QSystemTrayIcon, QMenu, QGroupBox, QSizePolicy,
 )
 
-from domain import MODES, Profile, Row, Settings, atomic_json, read_json, hotkey
+from domain import MODES, Profile, Row, Settings, read_json
 from engine import Engine, Command
 from native import Windows
 from hotkeys import Hotkeys
 from script_language import compile_script
 from script_editor import ScriptEditor
+from persistence import ProfileStore
+from session import ExecutionSession, editing_dialog
+from widgets import (make_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
+                     BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog)
 
 BASE = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
 MODE_LABELS = MODES
 
 
-def make_icon():
-    pixmap = QPixmap(64, 64)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor("#47b8ed"))
-    painter.drawRoundedRect(2, 2, 60, 60, 16, 16)
-    painter.setBrush(QColor("#102435"))
-    painter.drawPolygon(QPolygon([QPoint(x, y) for x, y in [(19, 13), (47, 33), (34, 36), (28, 51)]]))
-    painter.end()
-    return QIcon(pixmap)
-
-
 class Bridge(QObject):
     action = Signal(str, str)
     error = Signal(str)
-
-
-def make_pin_icon():
-    icon = QIcon()
-    for state, color in ((QIcon.State.Off, "#91a6ba"), (QIcon.State.On, "#47b8ed")):
-        pixmap = QPixmap(48, 48)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.translate(24, 24)
-        painter.rotate(35)
-        painter.setPen(QPen(QColor(color), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        painter.drawLine(0, 6, 0, 19)
-        painter.setBrush(QColor(color))
-        painter.drawPolygon(QPolygon([QPoint(x, y) for x, y in
-            [(-9, -17), (9, -17), (6, -12), (6, -3), (11, 4), (-11, 4), (-6, -3), (-6, -12)]]))
-        painter.end()
-        icon.addPixmap(pixmap, QIcon.Mode.Normal, state)
-    return icon
-
-
-def make_trash_icon():
-    pixmap = QPixmap(24, 24)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(QColor('#91a6ba'), 2))
-    painter.drawLine(5, 6, 19, 6)
-    painter.drawLine(9, 3, 15, 3)
-    painter.drawLine(7, 9, 8, 21)
-    painter.drawLine(17, 9, 16, 21)
-    painter.drawLine(8, 21, 16, 21)
-    painter.drawLine(10, 10, 10, 17)
-    painter.drawLine(14, 10, 14, 17)
-    painter.end()
-    return QIcon(pixmap)
-
-
-class TargetCombo(QComboBox):
-    opening = Signal()
-
-    def showPopup(self):
-        self.opening.emit()
-        super().showPopup()
-
-
-class MemoDelegate(QStyledItemDelegate):
-    def createEditor(self, parent, option, index):
-        editor = super().createEditor(parent, option, index)
-        if isinstance(editor, QLineEdit):
-            editor.textChanged.connect(lambda text: self.parent().resize_memo_column(index.row(), text))
-            editor.textChanged.connect(lambda text: self.parent().memo_edited.emit(index.row(), text))
-        return editor
-
-
-class RowsTable(QTableWidget):
-    moved = Signal(int, int)
-    memo_edited = Signal(int, str)
-    content_width_changed = Signal()
-
-    def __init__(self):
-        super().__init__(0, 5)
-        self.setHorizontalHeaderLabels(["단축키", "X", "Y", "동작", "메모"])
-        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.setDragEnabled(True)
-        self.setAcceptDrops(True)
-        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        self.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self.setAlternatingRowColors(True)
-        self.verticalHeader().setDefaultSectionSize(36)
-        self.setShowGrid(False)
-        self.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        delegate = MemoDelegate(self)
-        delegate.closeEditor.connect(lambda *_: QTimer.singleShot(0, self.resize_memo_column))
-        self.setItemDelegateForColumn(4, delegate)
-        for column, width in ((0, 72), (1, 60), (2, 60), (3, 122), (4, 70)):
-            self.setColumnWidth(column, width)
-
-    def resize_memo_column(self, editing_row=-1, editing_text=""):
-        texts = [self.item(i, 4).text() for i in range(self.rowCount())
-                 if i != editing_row and self.item(i, 4)]
-        texts.append(editing_text)
-        width = max((self.fontMetrics().horizontalAdvance(text) + 18 for text in texts), default=70)
-        self.setColumnWidth(4, max(70, min(width, 1200)))
-        self.content_width_changed.emit()
-
-    def dropEvent(self, event):
-        if event.source() is self:
-            origin = self.currentRow()
-            target = self.indexAt(event.position().toPoint()).row()
-            if target < 0:
-                target = self.rowCount() - 1
-            if origin >= 0:
-                self.moved.emit(origin, target)
-            event.accept()
-        else:
-            event.ignore()
-
-
-class BriefStatusBar(QStatusBar):
-    def showMessage(self, message, timeout=4000):
-        super().showMessage(message, timeout)
-
-
-class KeyDialog(QDialog):
-    def __init__(self, value, parent):
-        super().__init__(parent)
-        self.setWindowTitle("단축키 지정")
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("입력 칸을 클릭한 뒤 사용할 키 조합을 누르세요."))
-        self.editor = QKeySequenceEdit(QKeySequence(value), self)
-        self.editor.setMaximumSequenceLength(1)
-        layout.addWidget(self.editor)
-        clear = QPushButton("지정 해제")
-        clear.clicked.connect(self.editor.clear)
-        layout.addWidget(clear)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        self.editor.setFocus()
-
-    def value(self):
-        return hotkey(self.editor.keySequence().toString(QKeySequence.SequenceFormat.PortableText))
-
-
-class SettingsDialog(QDialog):
-    def __init__(self, settings, parent):
-        super().__init__(parent)
-        self.setWindowTitle("환경설정")
-        self.setMinimumWidth(470)
-        self.original = settings
-        form = QFormLayout(self)
-        self.keys = {}
-        for name, label in (("pause_hk", "작동 / 정지"), ("capture_hk", "선택한 행 좌표 캡처")):
-            editor = QKeySequenceEdit(QKeySequence(getattr(settings, name)))
-            editor.setMaximumSequenceLength(1)
-            self.keys[name] = editor
-            form.addRow(label, editor)
-        self.times = {}
-        for name, label in (("click_delay", "이동 후 클릭 대기"), ("click_duration", "클릭 유지 시간"),
-                            ("curve_duration", "드래그 이동 시간 (좌표 구간당)"),
-                            ("after_action_delay", "동작 완료 후 대기")):
-            spin = QSpinBox()
-            spin.setRange(1 if name == "click_duration" else 0, 10000)
-            spin.setSuffix(" ms")
-            spin.setValue(getattr(settings, name))
-            self.times[name] = spin
-            form.addRow(label, spin)
-        self.checks = {}
-        for name, label in (("exclusive_hook", "처리한 단축키를 다른 앱에 전달하지 않기"),
-                            ("auto_pause", "설정·편집 창을 열거나 변경할 때 자동 중지")):
-            checkbox = QCheckBox(label)
-            checkbox.setChecked(getattr(settings, name))
-            self.checks[name] = checkbox
-            form.addRow(checkbox)
-        self.theme = QComboBox()
-        self.theme.addItems(["Dark", "Light", "System"])
-        self.theme.setCurrentText(settings.theme)
-        form.addRow("테마", self.theme)
-        note = QLabel("전체화면은 화면 좌표로, 창 선택 시 해당 창이 활성화된 동안 실행됩니다.\n자동 중지가 켜져 있을 때는 설정·편집 후 다시 시작하세요.")
-        note.setWordWrap(True)
-        form.addRow(note)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Save).setText('저장')
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('취소')
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
-
-    def value(self):
-        data = asdict(self.original)
-        data.update({name: editor.keySequence().toString(QKeySequence.SequenceFormat.PortableText)
-                     for name, editor in self.keys.items()})
-        data.update({name: spin.value() for name, spin in self.times.items()})
-        data.update({name: checkbox.isChecked() for name, checkbox in self.checks.items()})
-        data["theme"] = self.theme.currentText()
-        return Settings.read(data)
-
-
-class ResizeDialog(QDialog):
-    PRESETS = {
-        "16:9": [(640, 360), (960, 540), (1280, 720), (1600, 900), (1920, 1080), (2560, 1440), (3840, 2160)],
-        "4:3": [(640, 480), (800, 600), (1024, 768), (1280, 960), (1600, 1200), (1920, 1440)],
-    }
-
-    def __init__(self, size, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("대상 창 크기 조절")
-        self.form = QFormLayout(self)
-        self.ratio = QComboBox()
-        self.ratio.addItems(["16:9", "4:3", "직접 입력"])
-        self.presets = QComboBox()
-        self.width_input, self.height_input = QSpinBox(), QSpinBox()
-        for spin, value in zip((self.width_input, self.height_input), size):
-            spin.setRange(1, 16384)
-            spin.setValue(value)
-            spin.setSuffix(" px")
-        self.form.addRow("화면 비율", self.ratio)
-        self.form.addRow("해상도", self.presets)
-        self.form.addRow("너비", self.width_input)
-        self.form.addRow("높이", self.height_input)
-        self.custom_size = tuple(size)
-        self.mode = "직접 입력"
-        self.selections = {"16:9": (1280, 720), "4:3": (1024, 768)}
-        initial = next((ratio for ratio, sizes in self.PRESETS.items() if tuple(size) in sizes), "직접 입력")
-        if initial in self.PRESETS:
-            self.selections[initial] = tuple(size)
-        self.ratio.setCurrentText(initial)
-        self.ratio.currentTextChanged.connect(self.change_ratio)
-        self.presets.currentIndexChanged.connect(self.change_preset)
-        self.change_ratio(initial)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("적용")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        self.form.addRow(buttons)
-
-    def change_ratio(self, mode):
-        if self.mode == "직접 입력":
-            self.custom_size = self.value()
-        self.mode = mode
-        custom = mode == "직접 입력"
-        self.form.setRowVisible(self.presets, not custom)
-        self.width_input.setEnabled(custom)
-        self.height_input.setEnabled(custom)
-        if custom:
-            size = self.custom_size
-        else:
-            self.presets.blockSignals(True)
-            self.presets.clear()
-            for w, h in self.PRESETS[mode]:
-                self.presets.addItem(f"{w} × {h}", (w, h))
-            size = self.selections[mode]
-            self.presets.setCurrentIndex(self.PRESETS[mode].index(size))
-            self.presets.blockSignals(False)
-        self.width_input.setValue(size[0])
-        self.height_input.setValue(size[1])
-
-    def change_preset(self, index):
-        if index < 0:
-            return
-        size = self.PRESETS[self.mode][index]
-        self.selections[self.mode] = size
-        self.width_input.setValue(size[0])
-        self.height_input.setValue(size[1])
-
-    def value(self):
-        return self.width_input.value(), self.height_input.value()
+    saved = Signal(int, object)
 
 
 class MainWindow(QMainWindow):
+    armed = property(lambda self: self.session.armed, lambda self, value: setattr(self.session, "armed", value))
+    modal = property(lambda self: self.session.modal, lambda self, value: setattr(self.session, "modal", value))
+    closing = property(lambda self: self.session.closing, lambda self, value: setattr(self.session, "closing", value))
+    target = property(lambda self: self.session.target, lambda self, value: setattr(self.session, "target", value))
+
     def __init__(self, data_dir=None, hook_enabled=True):
         super().__init__()
         self.setWindowTitle("Blue Archive Studio")
@@ -303,41 +47,30 @@ class MainWindow(QMainWindow):
         self.resize(420, 420)
         self.setMinimumHeight(340)
         self.native = Windows()
-        self.armed = False
-        self.modal = False
-        self.closing = False
-        self.target = 0
-        self.editing = False
+        self.session = ExecutionSession(self.native)
         self.dirty = False
         self.rebuilding = False
         self.path = None
         self.data_dir = Path(data_dir or BASE).resolve()
-        self.recent_copies = {}
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.settings_path = self.data_dir / "setting.json"
+        self.store = ProfileStore(self.data_dir)
+        self.settings_path = self.store.settings_path
+        self.save_revision = 0
+        self.pending_saves = {}
+        self.settings_error = ""
         self.settings = Settings()
         self.profile = Profile.default()
         self.load_error = ""
         self.hook_enabled = hook_enabled
-        try:
-            if self.settings_path.exists():
-                self.settings = Settings.read(read_json(self.settings_path))
-            recent = self.data_dir / Path(self.settings.last_profile).name if self.settings.last_profile else None
-            self.path = recent if recent and recent.is_file() else self.data_dir / "macro.json"
-            if self.path.exists():
-                self.profile = Profile.read(read_json(self.path))
-            else:
-                atomic_json(self.path, self.profile.export())
-            self.profile.validate((self.settings.capture_hk, self.settings.pause_hk))
-            self.persist_settings()
-        except Exception as error:
-            self.load_error = f"설정을 불러오지 못해 기본값으로 시작했습니다: {error}"
-            self.settings, self.profile, self.path = Settings(), Profile.default(), None
+        loaded = self.store.load()
+        self.settings, self.profile, self.path = loaded.settings, loaded.profile, loaded.path
+        self.load_error = loaded.warning
         self.bridge = Bridge()
         self.engine = Engine(self.native, lambda key: self.hooks.held(key), self.bridge.error.emit)
         self.hooks = Hotkeys(self.bridge.action.emit, self.eligible, self.engine.stop)
         self.bridge.action.connect(self.dispatch, Qt.ConnectionType.QueuedConnection)
         self.bridge.error.connect(self.on_engine_error, Qt.ConnectionType.QueuedConnection)
+        self.bridge.saved.connect(self.save_completed, Qt.ConnectionType.QueuedConnection)
         self.setStatusBar(BriefStatusBar(self))
         self.build_ui()
         self.build_menu()
@@ -590,39 +323,21 @@ class MainWindow(QMainWindow):
             if field == 'action_mode':
                 QTimer.singleShot(0, lambda: self.rebuild(rid))
 
+    @editing_dialog(hooks=True)
     def edit_script(self, rid):
         row = self.row(rid)
         if row is None:
             return
-        self.pause_for_configuration()
-        self.modal = True
-        if self.settings.auto_pause:
-            self.hooks.close()
-        try:
-            dialog = ScriptEditor(row.script, self.native, self.target, self)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                row.script = dialog.source
-                self.changed()
-                self.rebuild(rid)
-                if not self.dirty:
-                    self.statusBar().showMessage('스크립트를 반영하고 자동저장했습니다.')
-        finally:
-            self.modal = False
-            self.restart_hooks()
+        dialog = ScriptEditor(row.script, self.native, self.target, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            row.script = dialog.source
+            self.changed()
+            self.rebuild(rid)
+            if not self.dirty:
+                self.statusBar().showMessage('스크립트를 반영하고 자동저장했습니다.')
 
     def eligible(self, action):
-        if self.closing:
-            return False
-        if self.modal:
-            if self.settings.auto_pause or action == "capture_selected":
-                return False
-            if action != "pause" and self.native.foreground_owned_by(os.getpid()):
-                return False
-        if action in ("pause", "capture_selected"):
-            return True
-        if action == "move":
-            return self.armed and (not self.target or self.native.active(self.target))
-        return not self.target or self.native.active(self.target)
+        return self.session.eligible(action, self.settings.auto_pause)
 
     def rebind(self):
         self.profile.validate((self.settings.capture_hk, self.settings.pause_hk))
@@ -679,14 +394,15 @@ class MainWindow(QMainWindow):
             return
         if action == "move" and self.eligible("move"):
             s = self.settings
+            program = None
             if row.action_mode == 'script':
                 try:
-                    compile_script(row.script)
+                    program = compile_script(row.script)
                 except ValueError as error:
                     self.on_engine_error(str(error))
                     return
             command = Command(self.target, row.x, row.y, row.action_mode, row.move_hk,
-                              s.click_delay, s.click_duration, s.return_delay, s.after_action_delay, row.script, curve_duration=s.curve_duration)
+                              s.click_delay, s.click_duration, s.after_action_delay, row.script, curve_duration=s.curve_duration, program=program)
             if not self.engine.submit(command):
                 self.statusBar().showMessage("실행기가 종료되어 실행할 수 없습니다.")
 
@@ -769,14 +485,11 @@ class MainWindow(QMainWindow):
         except OSError:
             self.target_info.setText("창 상태 확인 중")
 
+    @editing_dialog(hooks=True)
     def edit_key(self, rid):
         row = self.row(rid)
         if row is None:
             return
-        self.pause_for_configuration()
-        self.modal = True
-        if self.settings.auto_pause:
-            self.hooks.close()
         try:
             dialog = KeyDialog(row.move_hk, self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -793,9 +506,6 @@ class MainWindow(QMainWindow):
                 self.rebuild(rid)
         except Exception as error:
             self.statusBar().showMessage(str(error))
-        finally:
-            self.modal = False
-            self.restart_hooks()
 
     def restart_hooks(self):
         try:
@@ -834,9 +544,11 @@ class MainWindow(QMainWindow):
         self.rebuild(row.id)
 
     def confirm_changes(self):
+        self.flush_pending_saves()
         self.pause_for_configuration()
         if not self.dirty:
             return True
+        previous_modal = self.modal
         self.modal = True
         try:
             dialog = QMessageBox(QMessageBox.Icon.Question, "저장하지 않은 변경",
@@ -851,7 +563,7 @@ class MainWindow(QMainWindow):
             dialog.setEscapeButton(QMessageBox.StandardButton.Cancel)
             answer = dialog.exec()
         finally:
-            self.modal = False
+            self.modal = previous_modal
         if answer == QMessageBox.StandardButton.Cancel:
             return False
         return self.save() if answer == QMessageBox.StandardButton.Save else True
@@ -865,10 +577,10 @@ class MainWindow(QMainWindow):
             self.rebuild()
             self.restart_hooks()
 
+    @editing_dialog(hooks=False)
     def open_profile(self):
         if not self.confirm_changes():
             return
-        self.modal = True
         try:
             path, _ = QFileDialog.getOpenFileName(self, "불러오기", str(self.path or self.data_dir), "매크로 프로필 (*.json)")
             if not path:
@@ -887,16 +599,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("프로필을 불러왔습니다. 대상 창과 해상도를 확인하세요.")
         except Exception as error:
             self.error(str(error))
-        finally:
-            self.modal = False
 
     def next_profile_path(self):
-        path = self.data_dir / 'macro.json'
-        number = 1
-        while path.exists():
-            path = self.data_dir / f'macro_{number}.json'
-            number += 1
-        return path
+        self.flush_pending_saves()
+        return self.store.next_path()
 
     def save(self, automatic=False):
         if self.path is None:
@@ -906,78 +612,77 @@ class MainWindow(QMainWindow):
                 return self.save_as()
         try:
             self.profile.validate((self.settings.capture_hk, self.settings.pause_hk))
-            atomic_json(self.path, self.profile.export())
-            self.persist_settings()
-            self.dirty = False
+            self.save_revision += 1
+            revision = self.save_revision
+            future = self.store.save(self.path, self.profile.export(), asdict(self.settings))
+            self.pending_saves[revision] = (self.path, future)
+            self.dirty = True
             self.update_labels()
-            self.statusBar().showMessage(f"{'자동저장' if automatic else '저장'} 완료: {self.path}")
-            return True
-        except Exception as error:
             if automatic:
-                self.dirty = True
-                self.update_labels()
-                self.statusBar().showMessage(f'자동저장 실패: {error} · 변경사항은 아직 저장되지 않았습니다.')
-            else:
-                self.error(str(error))
+                future.add_done_callback(lambda done: self.bridge.saved.emit(revision, done.result()))
+                return True
+            result = future.result()
+            self.save_completed(revision, result)
+            return result.profile_saved
+        except Exception as error:
+            self.dirty = True
+            self.update_labels()
+            self.statusBar().showMessage(f'저장 실패: {error}')
             return False
 
+    def save_completed(self, revision, result):
+        pending = self.pending_saves.pop(revision, None)
+        if not pending or revision != self.save_revision or pending[0] != self.path:
+            return
+        self.dirty = not result.profile_saved
+        self.settings_error = result.error if result.profile_saved else ''
+        if result.recent_name:
+            self.settings.last_profile = result.recent_name
+        self.update_labels()
+        if not result.profile_saved:
+            self.statusBar().showMessage(f'자동저장 실패: {result.error} · 변경사항은 아직 저장되지 않았습니다.')
+        elif result.error:
+            self.statusBar().showMessage(f'프로필 저장 완료 · 설정/최근 프로필 정보 저장 실패: {result.error}')
+        else:
+            self.statusBar().showMessage(f'저장 완료: {self.path}')
+
+    def flush_pending_saves(self):
+        for revision, (_, future) in list(self.pending_saves.items()):
+            self.save_completed(revision, future.result())
+
+    @editing_dialog(hooks=False)
     def save_as(self):
-        self.pause_for_configuration()
-        self.modal = True
-        try:
-            path, _ = QFileDialog.getSaveFileName(self, "프로필 저장", str(self.path or self.data_dir / "macro.json"), "매크로 프로필 (*.json)")
-            if not path:
-                return False
-            previous = self.path
-            self.path = Path(path)
-            if self.save():
-                return True
-            self.path = previous
+        path, _ = QFileDialog.getSaveFileName(self, "프로필 저장", str(self.path or self.data_dir / "macro.json"), "매크로 프로필 (*.json)")
+        if not path:
             return False
-        finally:
-            self.modal = False
+        previous = self.path
+        self.path = Path(path)
+        if self.save():
+            return True
+        self.path = previous
+        return False
 
     def persist_settings(self):
-        if self.path:
-            path = self.path.resolve()
-            if path.parent != self.data_dir:
-                # Keep a portable copy without overwriting an unrelated local profile.
-                local = self.recent_copies.get(path)
-                if local is None:
-                    local = self.data_dir / path.name
-                    number = 1
-                    while local.exists():
-                        local = self.data_dir / f"{path.stem}_{number}{path.suffix}"
-                        number += 1
-                    self.recent_copies[path] = local
-                atomic_json(local, read_json(path))
-                path = local
-            self.settings.last_profile = path.name
-        atomic_json(self.settings_path, asdict(self.settings))
+        self.flush_pending_saves()
+        self.settings.last_profile = self.store.settings(self.path, asdict(self.settings))
+        self.settings_error = ''
 
+    @editing_dialog(hooks=True)
     def settings_dialog(self):
-        self.pause_for_configuration()
-        self.modal = True
-        if self.settings.auto_pause:
-            self.hooks.close()
-        try:
-            dialog = SettingsDialog(self.settings, self)
-            while dialog.exec() == QDialog.DialogCode.Accepted:
-                try:
-                    settings = dialog.value()
-                    self.profile.validate((settings.capture_hk, settings.pause_hk))
-                    Hotkeys.compile(settings.capture_hk)
-                    Hotkeys.compile(settings.pause_hk)
-                    self.settings = settings
-                    self.persist_settings()
-                    self.apply_theme()
-                    self.update_labels()
-                    break
-                except Exception as error:
-                    self.error(str(error))
-        finally:
-            self.modal = False
-            self.restart_hooks()
+        dialog = SettingsDialog(self.settings, self)
+        while dialog.exec() == QDialog.DialogCode.Accepted:
+            try:
+                settings = dialog.value()
+                self.profile.validate((settings.capture_hk, settings.pause_hk))
+                Hotkeys.compile(settings.capture_hk)
+                Hotkeys.compile(settings.pause_hk)
+                self.settings = settings
+                self.persist_settings()
+                self.apply_theme()
+                self.update_labels()
+                break
+            except Exception as error:
+                self.error(str(error))
 
     def dimensions_dialog(self, title, labels, values):
         dialog = QDialog(self)
@@ -996,12 +701,11 @@ class MainWindow(QMainWindow):
         form.addRow(buttons)
         return [spin.value() for spin in spins] if dialog.exec() == QDialog.DialogCode.Accepted else None
 
+    @editing_dialog(hooks=False)
     def resize_dialog(self):
-        self.pause_for_configuration()
         if not self.native.exists(self.target):
             self.statusBar().showMessage("대상 창을 먼저 선택하세요.")
             return
-        self.modal = True
         try:
             dialog = ResizeDialog(self.native.size(self.target), self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -1009,12 +713,9 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("창 크기 변경을 요청했습니다. 저장 좌표는 설정 → 좌표 변환에서 조정하세요.")
         except Exception as error:
             self.error(str(error))
-        finally:
-            self.modal = False
 
+    @editing_dialog(hooks=False)
     def convert_dialog(self):
-        self.pause_for_configuration()
-        self.modal = True
         try:
             current = self.native.size(self.target if self.native.exists(self.target) else 0)
             values = self.dimensions_dialog("프로필 좌표 변환", ["원본 너비", "원본 높이", "변경 너비", "변경 높이"],
@@ -1027,8 +728,6 @@ class MainWindow(QMainWindow):
                     self.statusBar().showMessage("좌표를 변환하고 자동저장했습니다.")
         except Exception as error:
             self.error(str(error))
-        finally:
-            self.modal = False
 
     def on_engine_error(self, text):
         self.stop()
@@ -1065,9 +764,8 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    @editing_dialog(hooks=False)
     def help_dialog(self):
-        self.pause_for_configuration()
-        self.modal = True
         QMessageBox.information(self, "사용 방법", "1. 대상 게임/에뮬레이터 창을 선택합니다.\n"
             "2. 행을 선택하고 대상 창의 원하는 위치에 커서를 놓은 뒤 좌표 캡처 키(기본 Ctrl+S)를 누릅니다.\n"
             "3. 단축키와 동작을 지정하면 변경사항이 자동저장됩니다.\n"
@@ -1075,17 +773,24 @@ class MainWindow(QMainWindow):
             "5. 작동 시작을 누른 뒤 단축키를 누릅니다.\n\n"
             "자동 중지 옵션이 켜져 있으면 편집 시 일시정지됩니다. 작동/정지 키는 일시정지 중에도 유지됩니다.\n"
             "기존 매크로의 JSON 프로필을 열 수 있습니다. 다른 매크로 앱은 종료한 뒤 사용하세요.")
-        self.modal = False
 
     def shutdown(self):
+        if self.closing:
+            return
         self.closing = True
         self.timer.stop()
         self.stop()
         self.hooks.close()
         self.engine.shutdown()
+        self.flush_pending_saves()
+        self.store.close()
         self.tray.hide()
 
     def closeEvent(self, event):
+        if self.closing:
+            event.accept()
+            return
+        self.stop()
         if not self.confirm_changes():
             event.ignore()
             return

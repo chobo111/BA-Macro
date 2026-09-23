@@ -15,6 +15,67 @@ from domain import MODES
 
 
 class UiTests(unittest.TestCase):
+    def test_partial_save_does_not_mark_profile_unsaved(self):
+        from domain import atomic_json
+        w = self.window
+        w.settings.theme = 'Light'
+        def fail_settings(path, data):
+            if Path(path) == w.settings_path:
+                raise OSError('settings unavailable')
+            atomic_json(path, data)
+        with patch('persistence.atomic_json', side_effect=fail_settings):
+            w.set_value(w.profile.rows[0].id, 'memo', 'saved profile')
+            w.flush_pending_saves()
+        self.assertFalse(w.dirty)
+        self.assertIn('프로필 저장 완료', w.statusBar().currentMessage())
+        self.assertIn('settings unavailable', w.settings_error)
+        self.assertEqual(read_json(w.path)['macros'][0]['memo'], 'saved profile')
+        w.persist_settings()
+        self.assertEqual(w.settings_error, '')
+
+    def test_autosave_is_nonblocking_and_ignores_stale_completion(self):
+        import threading
+        from domain import atomic_json
+        w = self.window
+        entered, release = threading.Event(), threading.Event()
+        def delayed(path, data):
+            if Path(path) == w.path and not entered.is_set():
+                entered.set()
+                if not release.wait(3):
+                    raise RuntimeError('test timeout')
+            atomic_json(path, data)
+        with patch('persistence.atomic_json', side_effect=delayed):
+            w.set_value(w.profile.rows[0].id, 'memo', 'first')
+            try:
+                self.assertTrue(entered.wait(1))
+                old_revision = w.save_revision
+                w.set_value(w.profile.rows[0].id, 'memo', 'second')
+                self.assertTrue(w.dirty)
+                self.qt.processEvents()
+                self.assertTrue(w.dirty)
+            finally:
+                release.set()
+            w.flush_pending_saves()
+        from persistence import SaveResult
+        w.save_completed(old_revision, SaveResult(False, error='old failure'))
+        self.assertFalse(w.dirty)
+        self.assertEqual(read_json(w.path)['macros'][0]['memo'], 'second')
+
+    def test_dispatch_passes_compiled_script(self):
+        from script_language import compile_script
+        w = self.window
+        row = w.profile.rows[0]
+        row.action_mode, row.script = 'script', 'sleep 1'
+        w.armed = True
+        with patch('app.compile_script', wraps=compile_script) as compile_once, patch.object(w.engine, 'submit', return_value=True) as submit:
+            w.dispatch('move', row.id)
+        compile_once.assert_called_once_with(row.script)
+        self.assertIsNotNone(submit.call_args.args[0].program)
+
+    def saved(self, path):
+        self.window.flush_pending_saves()
+        return read_json(path)
+
     def test_hotkey_dialog_duplicate_cancel_and_save(self):
         w = self.window
         row = w.profile.rows[0]
@@ -27,7 +88,7 @@ class UiTests(unittest.TestCase):
             warning.assert_not_called()
             dialog.return_value.value.return_value = 'ctrl+r'
             w.edit_key(row.id)
-            self.assertEqual(Profile.read(read_json(w.path)).rows[0].move_hk, 'ctrl+r')
+            self.assertEqual(Profile.read(self.saved(w.path)).rows[0].move_hk, 'ctrl+r')
             dialog.return_value.exec.return_value = QDialog.DialogCode.Rejected
             dialog.return_value.value.return_value = 'ctrl+t'
             w.edit_key(row.id)
@@ -43,7 +104,7 @@ class UiTests(unittest.TestCase):
         w = self.window
         w.add_row()
         self.assertEqual(w.profile.rows[-1].memo, '')
-        self.assertEqual(Profile.read(read_json(w.path)).rows[-1].memo, '')
+        self.assertEqual(Profile.read(self.saved(w.path)).rows[-1].memo, '')
         w.statusBar().showMessage('잠시 안내')
         self.assertEqual(w.statusBar().currentMessage(), '잠시 안내')
         QTest.qWait(4200)
@@ -151,7 +212,7 @@ class UiTests(unittest.TestCase):
         with patch.object(w.native, 'windows', return_value=[(123, 'Game')]), patch.object(w.native, 'window_identity', return_value=identity):
             w.refresh_windows()
             w.targets.setCurrentIndex(1)
-            self.assertEqual(Profile.read(read_json(w.path)).target_program, identity)
+            self.assertEqual(Profile.read(self.saved(w.path)).target_program, identity)
             self.assertEqual(w.targets.currentText(), 'Game')
         w.target = 0
         with patch.object(w.native, 'windows', return_value=[]):
@@ -163,7 +224,7 @@ class UiTests(unittest.TestCase):
             self.assertEqual(w.target, 456)
             self.assertFalse(w.armed)
             w.targets.setCurrentIndex(0)
-        self.assertEqual(Profile.read(read_json(w.path)).target_program, {})
+        self.assertEqual(Profile.read(self.saved(w.path)).target_program, {})
 
     def test_startup_restores_profile_target(self):
         from domain import atomic_json
@@ -214,16 +275,18 @@ class UiTests(unittest.TestCase):
         w.armed = True
         w.table.cellWidget(0, 1).setValue(125)
         self.assertFalse(w.armed)
+        w.flush_pending_saves()
         self.assertFalse(w.dirty)
-        self.assertEqual(Profile.read(read_json(w.path)).rows[0].x,125)
+        self.assertEqual(Profile.read(self.saved(w.path)).rows[0].x,125)
         w.table.item(0, 4).setText("첫 번째 스킬")
         rid = w.profile.rows[0].id
         w.move_row(0, 2)
         self.assertEqual(w.profile.rows[2].id, rid)
         w.path = Path(self.directory.name) / "profile.json"
         self.assertTrue(w.save())
+        w.flush_pending_saves()
         self.assertFalse(w.dirty)
-        saved = Profile.read(read_json(w.path))
+        saved = Profile.read(self.saved(w.path))
         self.assertEqual(saved.rows[2].x, 125)
         self.assertEqual(saved.rows[2].memo, "첫 번째 스킬")
         w.add_row()
@@ -270,16 +333,19 @@ class UiTests(unittest.TestCase):
 
     def test_cancel_close_retains_unsaved_changes(self):
         w = self.window
-        with patch('app.atomic_json', side_effect=OSError('disk unavailable')):
+        with patch('persistence.atomic_json', side_effect=OSError('disk unavailable')):
             w.changed()
+            w.flush_pending_saves()
         with patch.object(QMessageBox, "exec", return_value=QMessageBox.StandardButton.Cancel):
             self.assertFalse(w.confirm_changes())
+        w.flush_pending_saves()
         self.assertTrue(w.dirty)
 
     def test_save_dialog_korean_buttons_and_actions(self):
         w = self.window
-        with patch('app.atomic_json', side_effect=OSError('disk unavailable')):
+        with patch('persistence.atomic_json', side_effect=OSError('disk unavailable')):
             w.changed()
+            w.flush_pending_saves()
         for answer, expected in ((QMessageBox.StandardButton.Save, True),
                                  (QMessageBox.StandardButton.Discard, True),
                                  (QMessageBox.StandardButton.Cancel, False)):
@@ -389,7 +455,7 @@ class UiTests(unittest.TestCase):
         row.script = script
         w.path = Path(self.directory.name) / 'script.json'
         self.assertTrue(w.save())
-        loaded = Profile.read(read_json(w.path))
+        loaded = Profile.read(self.saved(w.path))
         self.assertEqual(loaded.rows[0].script, script)
         w.table.cellWidget(0, 3).setCurrentIndex(list(MODES).index('move_only'))
         self.qt.processEvents()
@@ -446,7 +512,7 @@ class UiTests(unittest.TestCase):
         from domain import atomic_json
         directory = Path(self.directory.name)
         self.assertTrue((directory / 'macro.json').is_file())
-        self.assertEqual(read_json(directory / 'setting.json')['last_profile'], 'macro.json')
+        self.assertEqual(self.saved(directory / 'setting.json')['last_profile'], 'macro.json')
         profile = Profile.default()
         profile.rows[0].memo = '기존 내용 보존'
         atomic_json(directory / 'macro.json', profile.export())
@@ -481,13 +547,13 @@ class UiTests(unittest.TestCase):
             atomic_json(source, profile.export())
             with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(source), '')):
                 w.open_profile()
-            recent = read_json(w.settings_path)['last_profile']
+            recent = self.saved(w.settings_path)['last_profile']
             self.assertEqual(recent, 'macro_1.json')
             self.assertEqual(local.read_bytes(), original)
             w.profile.rows[0].memo = '수정'
             self.assertTrue(w.save())
-            self.assertEqual(read_json(w.settings_path)['last_profile'], recent)
-            copied = Profile.read(read_json(Path(self.directory.name) / recent))
+            self.assertEqual(self.saved(w.settings_path)['last_profile'], recent)
+            copied = Profile.read(self.saved(Path(self.directory.name) / recent))
             self.assertEqual(copied.rows[0].memo, '수정')
 
     def test_external_unsaved_edits_are_not_copied_by_settings(self):
@@ -501,7 +567,7 @@ class UiTests(unittest.TestCase):
             w.profile.rows[0].memo = '저장하지 않은 변경'
             w.persist_settings()
             copy = Path(self.directory.name) / w.settings.last_profile
-            self.assertEqual(Profile.read(read_json(copy)).rows[0].memo, '')
+            self.assertEqual(Profile.read(self.saved(copy)).rows[0].memo, '')
 
     def test_script_save_error_log_and_immediate_cancel(self):
         dialog = ScriptEditor('click mouse', self.window.native, 0, self.window)
@@ -534,7 +600,7 @@ class UiTests(unittest.TestCase):
             self.assertEqual(submit.call_args.args[0].curve_duration, 25)
         w.persist_settings()
         from domain import Settings
-        loaded = Settings.read(read_json(w.settings_path))
+        loaded = Settings.read(self.saved(w.settings_path))
         self.assertEqual(loaded.curve_duration, 25)
         self.assertTrue(loaded.exclusive_hook)
         self.assertEqual(Settings.read({}).curve_duration, 10)
@@ -552,15 +618,15 @@ class UiTests(unittest.TestCase):
         w.set_value(row.id,'x',12345)
         w.set_value(row.id,'action_mode','script')
         w.set_value(row.id,'script','click mouse')
-        saved=Profile.read(read_json(w.path)).rows[0]
+        saved=Profile.read(self.saved(w.path)).rows[0]
         self.assertEqual((saved.memo,saved.x,saved.action_mode,saved.script),('자동 메모',12345,'script','click mouse'))
         w.add_row()
-        self.assertEqual(len(Profile.read(read_json(w.path)).rows),4)
+        self.assertEqual(len(Profile.read(self.saved(w.path)).rows),4)
         w.move_row(3,0)
-        self.assertEqual(Profile.read(read_json(w.path)).rows[0].id,w.profile.rows[0].id)
+        self.assertEqual(Profile.read(self.saved(w.path)).rows[0].id,w.profile.rows[0].id)
         w.table.selectRow(0)
         w.delete_rows()
-        self.assertEqual(len(Profile.read(read_json(w.path)).rows),3)
+        self.assertEqual(len(Profile.read(self.saved(w.path)).rows),3)
         old_path,old_bytes=w.path,w.path.read_bytes()
         with patch.object(QFileDialog,'getSaveFileName') as save_dialog:
             w.new_profile()
@@ -568,7 +634,8 @@ class UiTests(unittest.TestCase):
         self.assertNotEqual(w.path,old_path)
         self.assertEqual(old_path.read_bytes(),old_bytes)
         self.assertTrue(w.path.exists())
-        self.assertEqual(read_json(w.settings_path)['last_profile'],w.path.name)
+        self.assertEqual(self.saved(w.settings_path)['last_profile'],w.path.name)
+        w.flush_pending_saves()
         self.assertFalse(w.dirty)
 
     def test_live_memo_is_saved_before_editor_closes(self):
@@ -579,21 +646,25 @@ class UiTests(unittest.TestCase):
         editor=self.qt.focusWidget()
         self.assertIsInstance(editor,QLineEdit)
         QTest.keyClicks(editor,'live memo')
-        self.assertEqual(Profile.read(read_json(w.path)).rows[0].memo,'live memo')
+        self.assertEqual(Profile.read(self.saved(w.path)).rows[0].memo,'live memo')
+        w.flush_pending_saves()
         self.assertFalse(w.dirty)
 
     def test_autosave_failure_preserves_file_and_reports_error(self):
         w=self.window
         original=w.path.read_bytes()
-        with patch('app.atomic_json',side_effect=OSError('disk unavailable')), patch.object(QMessageBox,'warning') as popup:
+        with patch('persistence.atomic_json',side_effect=OSError('disk unavailable')), patch.object(QMessageBox,'warning') as popup:
             w.set_value(w.profile.rows[0].id,'memo','pending')
+            w.flush_pending_saves()
             popup.assert_not_called()
+        w.flush_pending_saves()
         self.assertTrue(w.dirty)
         self.assertIn('자동저장 실패',w.statusBar().currentMessage())
         self.assertEqual(w.path.read_bytes(),original)
         self.assertTrue(w.save(automatic=True))
+        w.flush_pending_saves()
         self.assertFalse(w.dirty)
-        self.assertEqual(Profile.read(read_json(w.path)).rows[0].memo,'pending')
+        self.assertEqual(Profile.read(self.saved(w.path)).rows[0].memo,'pending')
 
     def test_script_accept_is_automatically_saved(self):
         w=self.window
@@ -603,5 +674,6 @@ class UiTests(unittest.TestCase):
             editor.return_value.exec.return_value=QDialog.DialogCode.Accepted
             editor.return_value.source='click 100,200'
             w.edit_script(row.id)
-        self.assertEqual(Profile.read(read_json(w.path)).rows[0].script,'click 100,200')
+        self.assertEqual(Profile.read(self.saved(w.path)).rows[0].script,'click 100,200')
+        w.flush_pending_saves()
         self.assertFalse(w.dirty)
