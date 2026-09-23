@@ -9,12 +9,70 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QDialog, QFileDialog, Q
 from PySide6.QtTest import QTest
 from PySide6.QtCore import Qt, QPoint
 from domain import Profile, read_json
-from app import MainWindow, KeyDialog, SettingsDialog, ResizeDialog
+from app import MainWindow, InlineKeyEdit, SettingsDialog, ResizeDialog
 from script_editor import ScriptEditor
 from domain import MODES
 
 
 class UiTests(unittest.TestCase):
+    def test_inline_hotkey_duplicate_cancel_and_save(self):
+        from PySide6.QtGui import QKeySequence
+        w = self.window
+        row = w.profile.rows[0]
+        with patch.object(QMessageBox, 'warning') as warning:
+            w.edit_key(row.id)
+            editor = w.table.cellWidget(0, 0)
+            self.assertIsInstance(editor, InlineKeyEdit)
+            self.assertTrue(w.editing)
+            editor.setKeySequence(QKeySequence('w'))
+            editor.editingFinished.emit()
+            self.assertEqual(row.move_hk, 'q')
+            self.assertIn('중복', w.statusBar().currentMessage())
+            warning.assert_not_called()
+            self.assertFalse(w.editing)
+        w.edit_key(row.id)
+        editor = w.table.cellWidget(0, 0)
+        editor.setKeySequence(QKeySequence('ctrl+r'))
+        editor.editingFinished.emit()
+        self.assertEqual(row.move_hk, 'ctrl+r')
+        self.assertEqual(Profile.read(read_json(w.path)).rows[0].move_hk, 'ctrl+r')
+        w.edit_key(row.id)
+        QTest.keyClick(w.table.cellWidget(0, 0), Qt.Key.Key_Escape)
+        self.assertEqual(row.move_hk, 'ctrl+r')
+        w.edit_key(row.id)
+        QTest.keyClick(w.table.cellWidget(0, 0), Qt.Key.Key_Backspace)
+        self.assertEqual(row.move_hk, '')
+        self.assertFalse(w.editing)
+
+    def test_log_expires_and_new_row_has_empty_memo(self):
+        w = self.window
+        w.add_row()
+        self.assertEqual(w.profile.rows[-1].memo, '')
+        self.assertEqual(Profile.read(read_json(w.path)).rows[-1].memo, '')
+        w.statusBar().showMessage('잠시 안내')
+        self.assertEqual(w.statusBar().currentMessage(), '잠시 안내')
+        QTest.qWait(4200)
+        self.assertEqual(w.statusBar().currentMessage(), '')
+
+    def test_editor_covers_frame_and_hides_unused_labels(self):
+        from PySide6.QtWidgets import QLabel
+        w = self.window
+        w.statusBar().showMessage('메인 로그')
+        dialog = ScriptEditor('', w.native, 0, w)
+        dialog.show()
+        self.qt.processEvents()
+        self.assertEqual(dialog.geometry(), w.frameGeometry())
+        self.assertTrue(dialog.validation.isHidden())
+        self.assertFalse(hasattr(dialog, 'position'))
+        self.assertNotIn('드래그로 이동', [label.text() for label in dialog.findChildren(QLabel)])
+        dialog.log_timer.setInterval(20)
+        dialog.log('오류 안내', error=True)
+        self.assertFalse(dialog.validation.isHidden())
+        QTest.qWait(60)
+        self.assertTrue(dialog.validation.isHidden())
+        dialog.reject()
+        dialog.deleteLater()
+
     def test_new_settings_and_legacy_options(self):
         from dataclasses import asdict
         from domain import Settings
@@ -75,13 +133,13 @@ class UiTests(unittest.TestCase):
         dialog = ScriptEditor('', w.native, 0, w)
         dialog.show()
         self.qt.processEvents()
-        self.assertEqual(dialog.size(), w.size())
+        self.assertEqual(dialog.size(), w.frameGeometry().size())
         w.resize(650, 480)
         self.qt.processEvents()
-        self.assertEqual(dialog.size(), w.size())
+        self.assertEqual(dialog.size(), w.frameGeometry().size())
         dialog.resize(580, 450)
         self.qt.processEvents()
-        self.assertEqual(dialog.size(), w.size())
+        self.assertEqual(dialog.size(), w.frameGeometry().size())
         self.assertEqual(dialog.panel.size(), dialog.size())
         with patch.object(w.native, 'cursor', return_value=(123, 456)):
             dialog.update_cursor()
@@ -196,8 +254,6 @@ class UiTests(unittest.TestCase):
             w.apply_theme()
             self.qt.processEvents()
             self.assertFalse(w.grab().isNull())
-        key = KeyDialog("ctrl+q", w)
-        self.assertEqual(key.value(), "ctrl+q")
         dialog = SettingsDialog(w.settings, w)
         self.assertEqual(dialog.value().click_duration, 50)
         self.assertEqual(dialog.value().curve_duration, 10)
@@ -206,7 +262,6 @@ class UiTests(unittest.TestCase):
         self.assertEqual(dialog.value().curve_duration, 25)
         dialog.times["click_duration"].setValue(-1)
         self.assertEqual(dialog.value().click_duration, 1)
-        key.deleteLater()
         dialog.deleteLater()
 
     def test_open_legacy_profile(self):

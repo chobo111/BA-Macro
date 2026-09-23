@@ -30,42 +30,32 @@ class ScriptEditor(QDialog):
         super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setWindowTitle('스크립트 작성')
         self.setObjectName('scriptOverlay')
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.coordinate_hook = None
         self.coordinate_clicked.connect(self.capture_screen_point, Qt.ConnectionType.QueuedConnection)
         self.source = source
         self.native, self.target = native, target
-        area = parent.screen().availableGeometry()
+        self.syncing_geometry = False
 
         self.drag_offset = None
         panel = self.panel = QFrame(self)
         panel.setObjectName('editorPanel')
         self.setMinimumSize(400, 340)
-        self.resize(parent.size())
+        self.setGeometry(parent.frameGeometry())
         panel.resize(self.size())
-        origin = parent.frameGeometry().topLeft()
-        origin.setX(max(area.left(), min(origin.x(), area.right() - self.width() + 1)))
-        origin.setY(max(area.top(), min(origin.y(), area.bottom() - self.height() + 1)))
-        self.move(origin)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 12, 12, 12)
         self.titlebar = QFrame(panel)
         self.titlebar.setObjectName('editorTitlebar')
         self.titlebar.setFixedHeight(42)
-        self.titlebar.setToolTip('드래그하여 메인 창과 함께 이동')
         header = QHBoxLayout(self.titlebar)
         header.setContentsMargins(12, 0, 12, 0)
         heading = QLabel('스크립트 작성')
         heading.setStyleSheet('font-size: 15px; font-weight: 600;')
         header.addWidget(heading)
         header.addStretch()
-        drag_hint = QLabel('드래그로 이동')
-        drag_hint.setStyleSheet('color: #b2c9dc; font-size: 12px;')
-        header.addWidget(drag_hint)
-        self.position = QLabel()
         layout.addWidget(self.titlebar)
-        for widget in (self.titlebar, heading, drag_hint):
+        for widget in (self.titlebar, heading):
             widget.setCursor(Qt.CursorShape.SizeAllCursor)
             widget.installEventFilter(self)
         toolbar = QHBoxLayout()
@@ -79,14 +69,12 @@ class ScriptEditor(QDialog):
         self.cursor_label = QLabel()
         coordinates.addWidget(self.cursor_label)
         coordinates.addStretch()
-        coordinates.addWidget(self.position)
         layout.addLayout(coordinates)
         body = QHBoxLayout()
         self.editor = QPlainTextEdit(source)
         self.editor.setObjectName('codeEditor')
         self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.editor.setPlaceholderText('프로그램 밖에서 우클릭하면\n현재 입력 위치에 좌표(x,y)가 추가됩니다.')
-        self.editor.cursorPositionChanged.connect(self.update_position)
         self.highlighter = Highlighter(self.editor.document())
         body.addWidget(self.editor, 1)
         layout.addLayout(body, 1)
@@ -95,6 +83,11 @@ class ScriptEditor(QDialog):
         self.validation.setTextFormat(Qt.TextFormat.PlainText)
         self.validation.setWordWrap(True)
         self.validation.setMinimumHeight(36)
+        self.validation.hide()
+        self.log_timer = QTimer(self)
+        self.log_timer.setSingleShot(True)
+        self.log_timer.setInterval(4000)
+        self.log_timer.timeout.connect(self.validation.hide)
         footer = QHBoxLayout()
         footer.addStretch()
         cancel = QPushButton('취소')
@@ -107,7 +100,7 @@ class ScriptEditor(QDialog):
         layout.addLayout(footer)
         layout.addWidget(self.validation)
         self.setStyleSheet('''
-            #editorPanel { background: #182634; border: 1px solid #3a5269; border-radius: 10px; }
+            #editorPanel { background: #182634; border: 1px solid #3a5269; border-radius: 0px; }
             QWidget { color: #e8f1fa; font-size: 13px; }
             QLabel { background: transparent; border: none; }
             #scriptLog { background: #0e1822; color: #a8bdd0; border: 1px solid #33495d; border-radius: 4px; padding: 6px 8px; }
@@ -118,7 +111,6 @@ class ScriptEditor(QDialog):
             QPushButton, QComboBox { background: #263c50; border: 1px solid #4a6780; padding: 7px 12px; border-radius: 5px; }
             QPushButton:hover { background: #315779; }
         ''')
-        self.update_position()
         self.cursor_timer = QTimer(self)
         self.cursor_timer.setInterval(100)
         self.cursor_timer.timeout.connect(self.update_cursor)
@@ -127,7 +119,7 @@ class ScriptEditor(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         self.parentWidget().installEventFilter(self)
-        self.resize(self.parentWidget().size())
+        self.sync_to_parent()
         self.update_cursor()
         self.cursor_timer.start()
         if self.parentWidget().hook_enabled and self.coordinate_hook is None:
@@ -158,10 +150,6 @@ class ScriptEditor(QDialog):
         except OSError as error:
             self.log(str(error), error=True)
 
-    def update_position(self):
-        cursor = self.editor.textCursor()
-        self.position.setText(f'{cursor.blockNumber()+1}행 · {cursor.positionInBlock()+1}열')
-
     def validate(self):
         try:
             compile_script(self.editor.toPlainText())
@@ -182,6 +170,8 @@ class ScriptEditor(QDialog):
     def log(self, message, error=False):
         self.validation.setText(('오류 · ' if error else '') + message)
         self.validation.setProperty('error', error)
+        self.validation.show()
+        self.log_timer.start()
         self.validation.style().unpolish(self.validation)
         self.validation.style().polish(self.validation)
 
@@ -201,18 +191,33 @@ class ScriptEditor(QDialog):
         except OSError:
             self.cursor_label.setText('— , —')
 
+    def sync_to_parent(self):
+        self.syncing_geometry = True
+        try:
+            self.setGeometry(self.parentWidget().frameGeometry())
+        finally:
+            self.syncing_geometry = False
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, 'panel'):
             self.panel.resize(event.size())
         parent = self.parentWidget()
-        if self.isVisible() and parent.size() != event.size():
-            parent.resize(event.size())
+        if self.isVisible() and not self.syncing_geometry:
+            frame = parent.frameGeometry().size() - parent.size()
+            client = event.size() - frame
+            if parent.size() != client:
+                self.syncing_geometry = True
+                try:
+                    parent.resize(client)
+                finally:
+                    self.syncing_geometry = False
+                self.sync_to_parent()
 
     def eventFilter(self, watched, event):
         if watched is self.parentWidget():
-            if event.type() == QEvent.Type.Resize and self.size() != event.size():
-                self.resize(event.size())
+            if event.type() in (QEvent.Type.Resize, QEvent.Type.Move) and not self.syncing_geometry:
+                self.sync_to_parent()
             return super().eventFilter(watched, event)
         if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
             self.drag_offset = event.globalPosition().toPoint() - self.panel.mapToGlobal(QPoint())

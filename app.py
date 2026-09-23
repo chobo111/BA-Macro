@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
     QSpinBox, QLineEdit, QFileDialog, QMessageBox, QDialog, QFormLayout,
-    QDialogButtonBox, QCheckBox, QKeySequenceEdit, QSystemTrayIcon, QMenu, QGroupBox, QStyledItemDelegate, QSizePolicy,
+    QDialogButtonBox, QCheckBox, QKeySequenceEdit, QSystemTrayIcon, QMenu, QGroupBox, QStyledItemDelegate, QSizePolicy, QStatusBar,
 )
 
 from domain import MODES, Profile, Row, Settings, atomic_json, read_json, hotkey
@@ -142,26 +142,24 @@ class RowsTable(QTableWidget):
             event.ignore()
 
 
-class KeyDialog(QDialog):
-    def __init__(self, value, parent):
-        super().__init__(parent)
-        self.setWindowTitle("단축키 지정")
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("입력 칸을 클릭한 뒤 사용할 키 조합을 누르세요."))
-        self.editor = QKeySequenceEdit(QKeySequence(value), self)
-        self.editor.setMaximumSequenceLength(1)
-        layout.addWidget(self.editor)
-        clear = QPushButton("지정 해제")
-        clear.clicked.connect(self.editor.clear)
-        layout.addWidget(clear)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        self.editor.setFocus()
+class BriefStatusBar(QStatusBar):
+    def showMessage(self, message, timeout=4000):
+        super().showMessage(message, timeout)
 
-    def value(self):
-        return hotkey(self.editor.keySequence().toString(QKeySequence.SequenceFormat.PortableText))
+
+class InlineKeyEdit(QKeySequenceEdit):
+    cancelled = Signal()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.cancelled.emit()
+            event.accept()
+        elif event.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
+            self.clear()
+            self.editingFinished.emit()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
 
 class SettingsDialog(QDialog):
@@ -333,6 +331,7 @@ class MainWindow(QMainWindow):
         self.hooks = Hotkeys(self.bridge.action.emit, self.eligible, self.engine.stop)
         self.bridge.action.connect(self.dispatch, Qt.ConnectionType.QueuedConnection)
         self.bridge.error.connect(self.on_engine_error, Qt.ConnectionType.QueuedConnection)
+        self.setStatusBar(BriefStatusBar(self))
         self.build_ui()
         self.build_menu()
         self.build_tray()
@@ -605,7 +604,7 @@ class MainWindow(QMainWindow):
             self.restart_hooks()
 
     def eligible(self, action):
-        if self.closing:
+        if self.closing or self.editing:
             return False
         if self.modal:
             if self.settings.auto_pause or action == "capture_selected":
@@ -765,29 +764,53 @@ class MainWindow(QMainWindow):
 
     def edit_key(self, rid):
         row = self.row(rid)
+        if row is None or self.editing:
+            return
         self.pause_for_configuration()
-        self.modal = True
-        if self.settings.auto_pause:
-            self.hooks.close()
-        try:
-            dialog = KeyDialog(row.move_hk, self)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                value = dialog.value()
-                Hotkeys.compile(value)
-                old = row.move_hk
-                row.move_hk = value
-                try:
-                    self.rebind()
-                except Exception:
-                    row.move_hk = old
-                    raise
-                self.changed()
-                self.rebuild(rid)
-        except Exception as error:
-            self.error(str(error))
-        finally:
-            self.modal = False
-            self.restart_hooks()
+        self.editing = True
+        self.hooks.close()
+        index = next(i for i, item in enumerate(self.profile.rows) if item.id == rid)
+        editor = InlineKeyEdit(QKeySequence(row.move_hk))
+        editor.setMaximumSequenceLength(1)
+        editor.setToolTip('단축키 입력 · Esc 취소 · Backspace/Delete 해제')
+        completed = False
+
+        def finish(cancelled=False):
+            nonlocal completed
+            if completed:
+                return
+            completed = True
+            old = row.move_hk
+            try:
+                if not cancelled:
+                    value = hotkey(editor.keySequence().toString(QKeySequence.SequenceFormat.PortableText))
+                    Hotkeys.compile(value)
+                    row.move_hk = value
+                    try:
+                        self.rebind()
+                    except Exception:
+                        row.move_hk = old
+                        raise
+                    if value != old:
+                        self.changed()
+                        if not self.dirty:
+                            self.statusBar().showMessage('단축키를 변경하고 자동저장했습니다.')
+            except Exception as error:
+                self.statusBar().showMessage(str(error))
+            finally:
+                self.editing = False
+                if not self.closing:
+                    button = self.button(row.move_hk.upper() or '지정',
+                                         lambda checked=False: self.edit_key(rid))
+                    current = next((i for i, item in enumerate(self.profile.rows) if item.id == rid), -1)
+                    if current >= 0:
+                        self.table.setCellWidget(current, 0, button)
+                    self.restart_hooks()
+
+        editor.editingFinished.connect(finish)
+        editor.cancelled.connect(lambda: finish(True))
+        self.table.setCellWidget(index, 0, editor)
+        editor.setFocus()
 
     def restart_hooks(self):
         try:
@@ -800,7 +823,7 @@ class MainWindow(QMainWindow):
     def add_row(self):
         if len(self.profile.rows) >= 200:
             return
-        row = Row(memo="새 동작")
+        row = Row()
         self.profile.rows.append(row)
         self.changed()
         self.rebuild(row.id)
