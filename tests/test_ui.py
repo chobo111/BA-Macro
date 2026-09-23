@@ -9,40 +9,35 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QDialog, QFileDialog, Q
 from PySide6.QtTest import QTest
 from PySide6.QtCore import Qt, QPoint
 from domain import Profile, read_json
-from app import MainWindow, InlineKeyEdit, SettingsDialog, ResizeDialog
+from app import MainWindow, KeyDialog, SettingsDialog, ResizeDialog
 from script_editor import ScriptEditor
 from domain import MODES
 
 
 class UiTests(unittest.TestCase):
-    def test_inline_hotkey_duplicate_cancel_and_save(self):
-        from PySide6.QtGui import QKeySequence
+    def test_hotkey_dialog_duplicate_cancel_and_save(self):
         w = self.window
         row = w.profile.rows[0]
-        with patch.object(QMessageBox, 'warning') as warning:
+        with patch('app.KeyDialog') as dialog, patch.object(QMessageBox, 'warning') as warning:
+            dialog.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            dialog.return_value.value.return_value = 'w'
             w.edit_key(row.id)
-            editor = w.table.cellWidget(0, 0)
-            self.assertIsInstance(editor, InlineKeyEdit)
-            self.assertTrue(w.editing)
-            editor.setKeySequence(QKeySequence('w'))
-            editor.editingFinished.emit()
             self.assertEqual(row.move_hk, 'q')
             self.assertIn('중복', w.statusBar().currentMessage())
             warning.assert_not_called()
-            self.assertFalse(w.editing)
-        w.edit_key(row.id)
-        editor = w.table.cellWidget(0, 0)
-        editor.setKeySequence(QKeySequence('ctrl+r'))
-        editor.editingFinished.emit()
-        self.assertEqual(row.move_hk, 'ctrl+r')
-        self.assertEqual(Profile.read(read_json(w.path)).rows[0].move_hk, 'ctrl+r')
-        w.edit_key(row.id)
-        QTest.keyClick(w.table.cellWidget(0, 0), Qt.Key.Key_Escape)
-        self.assertEqual(row.move_hk, 'ctrl+r')
-        w.edit_key(row.id)
-        QTest.keyClick(w.table.cellWidget(0, 0), Qt.Key.Key_Backspace)
-        self.assertEqual(row.move_hk, '')
-        self.assertFalse(w.editing)
+            dialog.return_value.value.return_value = 'ctrl+r'
+            w.edit_key(row.id)
+            self.assertEqual(Profile.read(read_json(w.path)).rows[0].move_hk, 'ctrl+r')
+            dialog.return_value.exec.return_value = QDialog.DialogCode.Rejected
+            dialog.return_value.value.return_value = 'ctrl+t'
+            w.edit_key(row.id)
+            self.assertEqual(row.move_hk, 'ctrl+r')
+            dialog.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            dialog.return_value.value.return_value = ''
+            w.edit_key(row.id)
+            self.assertEqual(row.move_hk, '')
+        self.assertIsInstance(w.table.cellWidget(0, 0), QPushButton)
+        self.assertFalse(w.modal)
 
     def test_log_expires_and_new_row_has_empty_memo(self):
         w = self.window
