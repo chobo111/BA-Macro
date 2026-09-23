@@ -15,7 +15,6 @@ class Command:
     click_duration: int
     return_delay: int
     after_action_delay: int
-    repeat: bool
     script: str = ''
     curve_duration: int = 10
 
@@ -121,11 +120,8 @@ class Engine:
                     continue
                 # A coordinate action must not inherit a script's latched inputs.
                 self.runtime.release_all()
-                while True:
-                    self.execute(c)
-                    self.wait(c.after_action_delay, c)
-                    if not c.repeat or c.mode != "move_and_click" or not self.held(c.key):
-                        break
+                self.execute(c)
+                self.wait(c.after_action_delay, c)
             except Cancelled:
                 pass
             except Exception as error:

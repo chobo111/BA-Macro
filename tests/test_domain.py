@@ -25,7 +25,7 @@ class DomainTests(unittest.TestCase):
             Profile.default().validate(["q"])
 
     def test_bad_values(self):
-        for data in ({"click_duration": -1}, {"return_delay": -1}, {"auto_fire": "yes"},
+        for data in ({"click_duration": -1}, {"return_delay": -1}, {"auto_pause": "yes"},
                      {"capture_hk": "ctrl+s", "pause_hk": "ctrl+s"}, {"click_delay": 1.5}):
             with self.subTest(data=data), self.assertRaises(ValueError):
                 Settings.read(data)

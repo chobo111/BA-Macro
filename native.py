@@ -152,6 +152,11 @@ class Windows:
     def exists(self, hwnd):
         return bool(hwnd and valid_window(hwnd))
 
+    def foreground_owned_by(self, process_id):
+        pid = W.DWORD()
+        get_pid(foreground(), C.byref(pid))
+        return pid.value == process_id
+
     def foreground(self):
         return int(foreground() or 0)
 

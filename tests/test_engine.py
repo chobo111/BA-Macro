@@ -36,7 +36,7 @@ class EngineTests(unittest.TestCase):
         self.native = FakeWindows()
         self.errors = []
         self.engine = Engine(self.native, lambda key: False, self.errors.append)
-        self.command = Command(1, 30, 40, "move_and_click", "q", 0, 1, 0, 0, False)
+        self.command = Command(1, 30, 40, "move_and_click", "q", 0, 1, 0, 0)
 
     def tearDown(self):
         self.engine.shutdown()
@@ -98,11 +98,11 @@ class EngineTests(unittest.TestCase):
             self.engine.execute(self.command)
         self.assertIn(("button", False), self.native.events)
 
-    def test_repeat_stops_on_release(self):
-        self.engine.held = lambda key: sum(e == ("button", True) for e in self.native.events) < 4
-        self.engine.submit(replace(self.command, repeat=True))
+    def test_held_coordinate_key_clicks_only_once(self):
+        self.engine.held = lambda key: True
+        self.engine.submit(self.command)
         self.wait_idle()
-        self.assertEqual(sum(e == ("button", True) for e in self.native.events), 4)
+        self.assertEqual(sum(e == ("button", True) for e in self.native.events), 1)
 
     def test_fullscreen_accepts_negative_coordinates_without_active_window(self):
         self.native.active_value = False

@@ -1,9 +1,9 @@
 """Modal overlay for editing and validating per-row scripts."""
 import re
-from PySide6.QtCore import Qt, QEvent, QPoint, Signal
+from PySide6.QtCore import Qt, QEvent, QPoint, Signal, QTimer
 from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel,
-                             QPushButton, QPlainTextEdit, QComboBox)
+                             QPushButton, QPlainTextEdit, QComboBox, QSizeGrip)
 from mouse_hook import CoordinateHook
 from native import to_client, check
 import ctypes as C
@@ -41,8 +41,9 @@ class ScriptEditor(QDialog):
         self.drag_offset = None
         panel = self.panel = QFrame(self)
         panel.setObjectName('editorPanel')
-        panel.setFixedSize(min(600, area.width()-32), min(540, area.height()-32))
-        self.setFixedSize(panel.size())
+        self.setMinimumSize(400, 340)
+        self.resize(parent.size())
+        panel.resize(self.size())
         origin = parent.frameGeometry().topLeft()
         origin.setX(max(area.left(), min(origin.x(), area.right() - self.width() + 1)))
         origin.setY(max(area.top(), min(origin.y(), area.bottom() - self.height() + 1)))
@@ -55,11 +56,11 @@ class ScriptEditor(QDialog):
         self.titlebar.setToolTip('드래그하여 메인 창과 함께 이동')
         header = QHBoxLayout(self.titlebar)
         header.setContentsMargins(12, 0, 12, 0)
-        heading = QLabel('⠿  스크립트 작성')
+        heading = QLabel('스크립트 작성')
         heading.setStyleSheet('font-size: 15px; font-weight: 600;')
         header.addWidget(heading)
         header.addStretch()
-        drag_hint = QLabel('메인 창과 함께 이동')
+        drag_hint = QLabel('드래그로 이동')
         drag_hint.setStyleSheet('color: #b2c9dc; font-size: 12px;')
         header.addWidget(drag_hint)
         self.position = QLabel()
@@ -69,12 +70,17 @@ class ScriptEditor(QDialog):
             widget.installEventFilter(self)
         toolbar = QHBoxLayout()
         self.templates = QComboBox()
-        self.templates.addItems(['예제 선택', '클릭 후 원위치', '누르는 동안 반복', '키 누름 / 해제', '드래그'])
+        self.templates.addItems(['예제 선택', '스킬 카드 > 마우스 슬라이드', '마우스 > 스킬 카드 슬라이드'])
         self.templates.activated.connect(self.insert_template)
         toolbar.addWidget(self.templates)
         toolbar.addStretch()
-        toolbar.addWidget(self.position)
         layout.addLayout(toolbar)
+        coordinates = QHBoxLayout()
+        self.cursor_label = QLabel()
+        coordinates.addWidget(self.cursor_label)
+        coordinates.addStretch()
+        coordinates.addWidget(self.position)
+        layout.addLayout(coordinates)
         body = QHBoxLayout()
         self.editor = QPlainTextEdit(source)
         self.editor.setObjectName('codeEditor')
@@ -93,10 +99,11 @@ class ScriptEditor(QDialog):
         footer.addStretch()
         cancel = QPushButton('취소')
         cancel.clicked.connect(self.reject)
-        save = QPushButton('스크립트 저장')
+        save = QPushButton('저장')
         save.clicked.connect(self.save)
         footer.addWidget(cancel)
         footer.addWidget(save)
+        footer.addWidget(QSizeGrip(self))
         layout.addLayout(footer)
         layout.addWidget(self.validation)
         self.setStyleSheet('''
@@ -112,10 +119,17 @@ class ScriptEditor(QDialog):
             QPushButton:hover { background: #315779; }
         ''')
         self.update_position()
+        self.cursor_timer = QTimer(self)
+        self.cursor_timer.setInterval(100)
+        self.cursor_timer.timeout.connect(self.update_cursor)
         self.editor.setFocus()
 
     def showEvent(self, event):
         super().showEvent(event)
+        self.parentWidget().installEventFilter(self)
+        self.resize(self.parentWidget().size())
+        self.update_cursor()
+        self.cursor_timer.start()
         if self.parentWidget().hook_enabled and self.coordinate_hook is None:
             hook = CoordinateHook(self.coordinate_clicked.emit)
             try:
@@ -126,6 +140,8 @@ class ScriptEditor(QDialog):
                 self.log(f'좌표 입력 초기화 실패: {error}', error=True)
 
     def hideEvent(self, event):
+        self.cursor_timer.stop()
+        self.parentWidget().removeEventFilter(self)
         if self.coordinate_hook is not None:
             self.coordinate_hook.close()
             self.coordinate_hook = None
@@ -170,15 +186,34 @@ class ScriptEditor(QDialog):
         self.validation.style().polish(self.validation)
 
     def insert_template(self, index):
-        examples = ['', 'click 420,280\nsleep 120\nmove mouse\n',
-            'loop\n  click mouse\n  sleep 80\nloop_end\n',
-            'key_press space\nrelease_actions\nkey_release space\n',
-            'curve_first_time 80\ncurve_last_time 80\ncurve 180,240 480,240\n']
-        if index:
-            self.editor.insertPlainText(examples[index])
+        examples = ['',
+            'loop\ncurve_first_time 5\ncurve_last_time 5\ncurve X,Y mouse // 스킬 카드 좌표 XY의 스킬 카드를 마우스 위치에 연사\nsleep 5\nloop_end',
+            'loop\ncurve_first_time 5\ncurve_last_time 5\ncurve mouse X,Y // 스킬 카드에 마우스를 올리고 사용하면, XY좌표에 스킬을 연사\nsleep 5\nloop_end']
+        if 0 < index < len(examples):
+            self.editor.setPlainText(examples[index])
             self.templates.setCurrentIndex(0)
+            self.log('X,Y를 실제 좌표로 바꾼 뒤 저장하세요.')
+
+    def update_cursor(self):
+        try:
+            x, y = self.native.cursor(self.target)
+            self.cursor_label.setText(f'{x}, {y}')
+        except OSError:
+            self.cursor_label.setText('— , —')
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'panel'):
+            self.panel.resize(event.size())
+        parent = self.parentWidget()
+        if self.isVisible() and parent.size() != event.size():
+            parent.resize(event.size())
 
     def eventFilter(self, watched, event):
+        if watched is self.parentWidget():
+            if event.type() == QEvent.Type.Resize and self.size() != event.size():
+                self.resize(event.size())
+            return super().eventFilter(watched, event)
         if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
             self.drag_offset = event.globalPosition().toPoint() - self.panel.mapToGlobal(QPoint())
             self.drag_panel_origin = self.pos()

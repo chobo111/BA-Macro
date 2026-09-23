@@ -15,6 +15,83 @@ from domain import MODES
 
 
 class UiTests(unittest.TestCase):
+    def test_new_settings_and_legacy_options(self):
+        from dataclasses import asdict
+        from domain import Settings
+        settings = Settings.read({'auto_fire': True, 'show_realtime': False})
+        self.assertTrue(settings.auto_pause)
+        self.assertEqual(settings.pause_hk, 'ctrl+`')
+        self.assertEqual(Settings.read({'pause_hk': 'ctrl+tab'}).pause_hk, 'ctrl+tab')
+        self.assertNotIn('auto_fire', asdict(settings))
+        self.assertNotIn('show_realtime', asdict(settings))
+        dialog = SettingsDialog(settings, self.window)
+        self.assertEqual(set(dialog.checks), {'auto_pause', 'exclusive_hook'})
+        dialog.checks['auto_pause'].setChecked(False)
+        self.assertFalse(dialog.value().auto_pause)
+        dialog.deleteLater()
+
+    def test_optional_pause_and_modal_shortcuts(self):
+        w = self.window
+        for automatic in (True, False):
+            w.settings.auto_pause = automatic
+            w.armed = True
+            with patch('app.SettingsDialog') as dialog:
+                dialog.return_value.exec.return_value = QDialog.DialogCode.Rejected
+                w.settings_dialog()
+            self.assertEqual(w.armed, not automatic)
+        w.modal = True
+        w.target = 99
+        with patch.object(w.native, 'foreground_owned_by', return_value=False), patch.object(w.native, 'active', return_value=True):
+            self.assertTrue(w.eligible('move'))
+            self.assertFalse(w.eligible('capture_selected'))
+            w.dispatch('pause', '')
+            self.assertFalse(w.armed)
+        w.modal = False
+        w.settings.auto_pause = False
+        w.armed = True
+        w.set_value(w.profile.rows[0].id, 'memo', '계속 준비 상태')
+        self.assertTrue(w.armed)
+
+    def test_editor_templates_replace_and_validate_after_coordinates(self):
+        dialog = ScriptEditor('old content', self.window.native, 0, self.window)
+        self.assertEqual(dialog.templates.count(), 3)
+        for index, curve in ((1, 'curve X,Y mouse'), (2, 'curve mouse X,Y')):
+            dialog.insert_template(index)
+            source = dialog.editor.toPlainText()
+            self.assertNotIn('old content', source)
+            self.assertEqual(source.count('loop_end'), 1)
+            self.assertIn(curve, source)
+            self.assertFalse(dialog.validate())
+            dialog.editor.setPlainText(source.replace('X,Y', '100,200'))
+            self.assertTrue(dialog.validate())
+        self.assertIn('저장', [b.text() for b in dialog.findChildren(QPushButton)])
+        dialog.deleteLater()
+
+    def test_editor_resize_sync_and_live_coordinates(self):
+        w = self.window
+        w.resize(520, 440)
+        self.qt.processEvents()
+        self.assertNotEqual(w.minimumWidth(), w.maximumWidth())
+        dialog = ScriptEditor('', w.native, 0, w)
+        dialog.show()
+        self.qt.processEvents()
+        self.assertEqual(dialog.size(), w.size())
+        w.resize(650, 480)
+        self.qt.processEvents()
+        self.assertEqual(dialog.size(), w.size())
+        dialog.resize(580, 450)
+        self.qt.processEvents()
+        self.assertEqual(dialog.size(), w.size())
+        self.assertEqual(dialog.panel.size(), dialog.size())
+        with patch.object(w.native, 'cursor', return_value=(123, 456)):
+            dialog.update_cursor()
+            w.tick()
+        self.assertEqual(dialog.cursor_label.text(), '123, 456')
+        self.assertIn('123', w.cursor_label.text())
+        dialog.reject()
+        self.assertFalse(dialog.cursor_timer.isActive())
+        dialog.deleteLater()
+
     def test_remember_target_restore_and_missing_window(self):
         w = self.window
         identity = {'exe': r'C:\Games\Game.exe', 'class': 'GameWindow', 'title': 'Game'}

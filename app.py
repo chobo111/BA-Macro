@@ -63,6 +63,23 @@ def make_pin_icon():
     return icon
 
 
+def make_trash_icon():
+    pixmap = QPixmap(24, 24)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(QColor('#91a6ba'), 2))
+    painter.drawLine(5, 6, 19, 6)
+    painter.drawLine(9, 3, 15, 3)
+    painter.drawLine(7, 9, 8, 21)
+    painter.drawLine(17, 9, 16, 21)
+    painter.drawLine(8, 21, 16, 21)
+    painter.drawLine(10, 10, 10, 17)
+    painter.drawLine(14, 10, 14, 17)
+    painter.end()
+    return QIcon(pixmap)
+
+
 class TargetCombo(QComboBox):
     opening = Signal()
 
@@ -171,9 +188,8 @@ class SettingsDialog(QDialog):
             self.times[name] = spin
             form.addRow(label, spin)
         self.checks = {}
-        for name, label in (("auto_fire", "좌표 클릭 단축키를 누르는 동안 반복"),
-                            ("exclusive_hook", "처리한 단축키를 다른 앱에 전달하지 않기"),
-                            ("show_realtime", "실시간 커서 좌표 표시")):
+        for name, label in (("exclusive_hook", "처리한 단축키를 다른 앱에 전달하지 않기"),
+                            ("auto_pause", "설정·편집 창을 열거나 변경할 때 자동 중지")):
             checkbox = QCheckBox(label)
             checkbox.setChecked(getattr(settings, name))
             self.checks[name] = checkbox
@@ -182,10 +198,12 @@ class SettingsDialog(QDialog):
         self.theme.addItems(["Dark", "Light", "System"])
         self.theme.setCurrentText(settings.theme)
         form.addRow("테마", self.theme)
-        note = QLabel("전체화면은 화면 좌표로, 창 선택 시 해당 창이 활성화된 동안 실행됩니다.\n설정 창을 닫은 뒤 작동 버튼을 눌러 다시 시작하세요.")
+        note = QLabel("전체화면은 화면 좌표로, 창 선택 시 해당 창이 활성화된 동안 실행됩니다.\n자동 중지가 켜져 있을 때는 설정·편집 후 다시 시작하세요.")
         note.setWordWrap(True)
         form.addRow(note)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText('저장')
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('취소')
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
@@ -392,8 +410,14 @@ class MainWindow(QMainWindow):
 
         toolbar = QHBoxLayout()
         toolbar.setSpacing(4)
-        for text, callback in (("＋ 행 추가", self.add_row), ("선택 삭제", self.delete_rows)):
-            toolbar.addWidget(self.button(text, callback))
+        for text, name, callback in (("+", "행 추가", self.add_row), ("", "선택 삭제", self.delete_rows)):
+            button = self.button(text, callback)
+            button.setFixedSize(32, 30)
+            button.setAccessibleName(name)
+            button.setToolTip(name)
+            if not text:
+                button.setIcon(make_trash_icon())
+            toolbar.addWidget(button)
         toolbar.addStretch()
         layout.addLayout(toolbar)
         self.table = RowsTable()
@@ -422,7 +446,11 @@ class MainWindow(QMainWindow):
         if screen:
             frame = max(0, self.frameGeometry().width() - self.geometry().width())
             width = min(width, screen.availableGeometry().width() - frame)
-        self.setFixedWidth(width)
+        previous = getattr(self, "_content_width", None)
+        self._content_width = width
+        self.setMinimumWidth(400)
+        if previous is None or (width > previous and width > self.width()):
+            self.resize(width, self.height())
 
     def build_menu(self):
         file_menu = self.menuBar().addMenu("파일")
@@ -486,7 +514,7 @@ class MainWindow(QMainWindow):
             self.tray.setToolTip("Blue Archive Studio · " + ("작동 중" if self.armed else "일시정지"))
 
     def changed(self):
-        self.stop()
+        self.pause_for_configuration()
         self.dirty = True
         self.update_labels()
         return self.save(automatic=True)
@@ -560,9 +588,10 @@ class MainWindow(QMainWindow):
         row = self.row(rid)
         if row is None:
             return
-        self.stop()
+        self.pause_for_configuration()
         self.modal = True
-        self.hooks.close()
+        if self.settings.auto_pause:
+            self.hooks.close()
         try:
             dialog = ScriptEditor(row.script, self.native, self.target, self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -576,8 +605,13 @@ class MainWindow(QMainWindow):
             self.restart_hooks()
 
     def eligible(self, action):
-        if self.modal or self.closing:
+        if self.closing:
             return False
+        if self.modal:
+            if self.settings.auto_pause or action == "capture_selected":
+                return False
+            if action != "pause" and self.native.foreground_owned_by(os.getpid()):
+                return False
         if action in ("pause", "capture_selected"):
             return True
         if action == "move":
@@ -591,6 +625,10 @@ class MainWindow(QMainWindow):
             values.append((row.move_hk, "move", row.id))
         self.hooks.configure(values, self.settings.exclusive_hook)
 
+    def pause_for_configuration(self):
+        if self.settings.auto_pause:
+            self.stop()
+
     def stop(self):
         self.armed = False
         self.engine.stop()
@@ -598,7 +636,7 @@ class MainWindow(QMainWindow):
             self.update_labels()
 
     def toggle(self):
-        if self.modal:
+        if self.modal and self.settings.auto_pause:
             return
         if self.armed:
             self.stop()
@@ -620,7 +658,7 @@ class MainWindow(QMainWindow):
                                      "작동 준비 완료. 대상 창으로 전환하면 실행 키를 사용할 수 있습니다.")
 
     def dispatch(self, action, rid):
-        if self.modal or self.closing:
+        if not self.eligible(action):
             return
         if action == "pause":
             self.toggle()
@@ -642,7 +680,7 @@ class MainWindow(QMainWindow):
                     self.on_engine_error(str(error))
                     return
             command = Command(self.target, row.x, row.y, row.action_mode, row.move_hk,
-                              s.click_delay, s.click_duration, s.return_delay, s.after_action_delay, s.auto_fire, row.script, curve_duration=s.curve_duration)
+                              s.click_delay, s.click_duration, s.return_delay, s.after_action_delay, row.script, curve_duration=s.curve_duration)
             if not self.engine.submit(command):
                 self.statusBar().showMessage("실행기가 종료되어 실행할 수 없습니다.")
 
@@ -720,18 +758,17 @@ class MainWindow(QMainWindow):
                 self.target_info.setText(f"{w} × {h}  ·  {'활성' if self.native.active(self.target) else '대기'}")
             else:
                 self.target_info.setText("대상 창을 선택하세요")
-            self.cursor_label.setVisible(self.settings.show_realtime)
-            if self.settings.show_realtime:
-                x, y = self.native.cursor(self.target or None)
-                self.cursor_label.setText(f"{x:>5}, {y:>5}")
+            x, y = self.native.cursor(self.target or None)
+            self.cursor_label.setText(f"{x:>5}, {y:>5}")
         except OSError:
             self.target_info.setText("창 상태 확인 중")
 
     def edit_key(self, rid):
         row = self.row(rid)
-        self.stop()
+        self.pause_for_configuration()
         self.modal = True
-        self.hooks.close()
+        if self.settings.auto_pause:
+            self.hooks.close()
         try:
             dialog = KeyDialog(row.move_hk, self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -789,7 +826,7 @@ class MainWindow(QMainWindow):
         self.rebuild(row.id)
 
     def confirm_changes(self):
-        self.stop()
+        self.pause_for_configuration()
         if not self.dirty:
             return True
         self.modal = True
@@ -877,7 +914,7 @@ class MainWindow(QMainWindow):
             return False
 
     def save_as(self):
-        self.stop()
+        self.pause_for_configuration()
         self.modal = True
         try:
             path, _ = QFileDialog.getSaveFileName(self, "프로필 저장", str(self.path or self.data_dir / "macro.json"), "매크로 프로필 (*.json)")
@@ -911,9 +948,10 @@ class MainWindow(QMainWindow):
         atomic_json(self.settings_path, asdict(self.settings))
 
     def settings_dialog(self):
-        self.stop()
+        self.pause_for_configuration()
         self.modal = True
-        self.hooks.close()
+        if self.settings.auto_pause:
+            self.hooks.close()
         try:
             dialog = SettingsDialog(self.settings, self)
             while dialog.exec() == QDialog.DialogCode.Accepted:
@@ -951,7 +989,7 @@ class MainWindow(QMainWindow):
         return [spin.value() for spin in spins] if dialog.exec() == QDialog.DialogCode.Accepted else None
 
     def resize_dialog(self):
-        self.stop()
+        self.pause_for_configuration()
         if not self.native.exists(self.target):
             self.statusBar().showMessage("대상 창을 먼저 선택하세요.")
             return
@@ -967,7 +1005,7 @@ class MainWindow(QMainWindow):
             self.modal = False
 
     def convert_dialog(self):
-        self.stop()
+        self.pause_for_configuration()
         self.modal = True
         try:
             current = self.native.size(self.target if self.native.exists(self.target) else 0)
@@ -1020,14 +1058,14 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     def help_dialog(self):
-        self.stop()
+        self.pause_for_configuration()
         self.modal = True
         QMessageBox.information(self, "사용 방법", "1. 대상 게임/에뮬레이터 창을 선택합니다.\n"
             "2. 행을 선택하고 대상 창의 원하는 위치에 커서를 놓은 뒤 좌표 캡처 키(기본 Ctrl+S)를 누릅니다.\n"
             "3. 단축키와 동작을 지정하면 변경사항이 자동저장됩니다.\n"
             "4. 스크립트 실행 모드는 스크립트 작성 버튼에서 명령을 작성합니다.\n"
             "5. 작동 시작을 누른 뒤 단축키를 누릅니다.\n\n"
-            "좌표를 수정하면 일시정지됩니다. 작동/정지 키는 일시정지 중에도 유지됩니다.\n"
+            "자동 중지 옵션이 켜져 있으면 편집 시 일시정지됩니다. 작동/정지 키는 일시정지 중에도 유지됩니다.\n"
             "기존 매크로의 JSON 프로필을 열 수 있습니다. 다른 매크로 앱은 종료한 뒤 사용하세요.")
         self.modal = False
 
