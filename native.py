@@ -49,6 +49,12 @@ send_input = bind("SendInput", [W.UINT, C.POINTER(Input), C.c_int], W.UINT)
 get_title = bind("GetWindowTextW", [W.HWND, W.LPWSTR, C.c_int], C.c_int)
 get_pid = bind("GetWindowThreadProcessId", [W.HWND, C.POINTER(W.DWORD)], W.DWORD)
 get_long = bind("GetWindowLongW", [W.HWND, C.c_int], W.LONG)
+get_window = bind("GetWindow", [W.HWND, W.UINT], W.HWND)
+get_shell_window = bind("GetShellWindow", [], W.HWND)
+DWM = C.WinDLL('dwmapi')
+get_dwm_attribute = DWM.DwmGetWindowAttribute
+get_dwm_attribute.argtypes = [W.HWND, W.DWORD, C.c_void_p, W.DWORD]
+get_dwm_attribute.restype = C.c_long
 get_menu = bind("GetMenu", [W.HWND], W.HMENU)
 set_position = bind("SetWindowPos", [W.HWND, W.HWND, C.c_int, C.c_int, C.c_int, C.c_int, W.UINT], W.BOOL)
 adjust = bind("AdjustWindowRectEx", [C.POINTER(W.RECT), W.DWORD, W.BOOL, W.DWORD], W.BOOL)
@@ -66,6 +72,20 @@ def check(value):
 
 
 class Windows:
+    def taskbar_window(self, hwnd):
+        if not visible(hwnd) or hwnd == get_shell_window():
+            return False
+        cloaked = W.DWORD()
+        # Cloaked UWP hosts retain WS_VISIBLE even after their UI is closed.
+        if get_dwm_attribute(hwnd, 14, C.byref(cloaked), C.sizeof(cloaked)) == 0 and cloaked.value:
+            return False
+        style = get_long(hwnd, -20) & 0xffffffff
+        if style & 0x00000080:  # WS_EX_TOOLWINDOW
+            return False
+        if style & 0x00040000:  # WS_EX_APPWINDOW explicitly requests a taskbar entry.
+            return True
+        return not (style & 0x08000000 or get_window(hwnd, 4))  # NOACTIVATE / GW_OWNER
+
     def windows(self, exclude_pid):
         result = []
         @ENUM
@@ -74,7 +94,7 @@ class Windows:
             get_pid(hwnd, C.byref(pid))
             text = C.create_unicode_buffer(1024)
             get_title(hwnd, text, len(text))
-            if visible(hwnd) and text.value and pid.value != exclude_pid:
+            if text.value and pid.value != exclude_pid and self.taskbar_window(hwnd):
                 result.append((int(hwnd), text.value))
             return True
         check(enum_windows(visit, 0))

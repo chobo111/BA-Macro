@@ -679,7 +679,7 @@ class MainWindow(QMainWindow):
         self.targets.addItem("전체화면", 0)
         try:
             for hwnd, title in self.native.windows(os.getpid()):
-                self.targets.addItem(f"{title}  ·  {hwnd:X}", hwnd)
+                self.targets.addItem(title, hwnd)
             index = self.targets.findData(self.target)
             self.targets.setCurrentIndex(max(0, index))
         except Exception as error:
