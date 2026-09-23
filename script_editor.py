@@ -8,6 +8,7 @@ from native import to_client, check
 import ctypes as C
 from ctypes import wintypes as W
 from script_language import compile_script, ScriptError
+from script_help import ScriptHelpDialog
 
 class Highlighter(QSyntaxHighlighter):
     def highlightBlock(self, text):
@@ -63,6 +64,9 @@ class ScriptEditor(QDialog):
         self.templates.activated.connect(self.insert_template)
         toolbar.addWidget(self.templates)
         toolbar.addStretch()
+        help_button = QPushButton('도움말')
+        help_button.clicked.connect(self.show_help)
+        toolbar.addWidget(help_button)
         layout.addLayout(toolbar)
         coordinates = QHBoxLayout()
         self.cursor_label = QLabel()
@@ -95,7 +99,9 @@ class ScriptEditor(QDialog):
         save.clicked.connect(self.save)
         footer.addWidget(cancel)
         footer.addWidget(save)
-        footer.addWidget(QSizeGrip(self))
+        self.size_grip = QSizeGrip(self)
+        self.size_grip.resize(self.size_grip.sizeHint())
+        footer.addSpacing(self.size_grip.width())
         layout.addLayout(footer)
         layout.addWidget(self.validation)
         self.setStyleSheet('''
@@ -114,6 +120,19 @@ class ScriptEditor(QDialog):
         self.cursor_timer.setInterval(100)
         self.cursor_timer.timeout.connect(self.update_cursor)
         self.editor.setFocus()
+        self.position_size_grip()
+
+    def show_help(self):
+        dialog = ScriptHelpDialog(self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+
+    def position_size_grip(self):
+        if hasattr(self, 'size_grip'):
+            self.size_grip.move(self.width() - self.size_grip.width(), self.height() - self.size_grip.height())
+            self.size_grip.raise_()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -199,6 +218,7 @@ class ScriptEditor(QDialog):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self.position_size_grip()
         if hasattr(self, 'panel'):
             self.panel.resize(event.size())
         parent = self.parentWidget()

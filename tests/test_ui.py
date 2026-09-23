@@ -15,6 +15,58 @@ from domain import MODES
 
 
 class UiTests(unittest.TestCase):
+    def test_delete_selects_previous_survivor_and_blank_hotkey(self):
+        from PySide6.QtCore import QItemSelectionModel
+        w = self.window
+        previous = w.profile.rows[1].id
+        w.table.selectRow(2)
+        w.delete_rows()
+        self.assertEqual(w.table.currentRow(), 1)
+        self.assertEqual(w.profile.rows[w.table.currentRow()].id, previous)
+        w.table.selectRow(0)
+        w.delete_rows()
+        self.assertEqual(w.table.currentRow(), 0)
+        for _ in range(4):
+            w.add_row()
+        self.assertEqual(w.table.cellWidget(4, 0).text(), '')
+        previous = w.profile.rows[1].id
+        w.table.clearSelection()
+        for index in (2, 4):
+            w.table.selectionModel().select(w.table.model().index(index, 0),
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+        w.delete_rows()
+        self.assertEqual(w.profile.rows[w.table.currentRow()].id, previous)
+
+    def test_info_menu_editor_help_and_corner_grip(self):
+        from script_help import ScriptHelpDialog, help_html
+        from version import VERSION
+        from PySide6.QtWidgets import QTextBrowser
+        w = self.window
+        menus = {action.text(): action.menu() for action in w.menuBar().actions()}
+        self.assertIn('정보', menus)
+        self.assertNotIn('도움말', menus)
+        self.assertIn(VERSION, menus['정보'].actions()[0].text())
+        editor = ScriptEditor('', w.native, 0, w)
+        editor.show()
+        for width, height in ((500, 430), (700, 520)):
+            editor.resize(width, height)
+            self.qt.processEvents()
+            grip = editor.size_grip.geometry()
+            self.assertEqual(grip.right(), editor.width() - 1)
+            self.assertEqual(grip.bottom(), editor.height() - 1)
+        self.assertIn('도움말', [button.text() for button in editor.findChildren(QPushButton)])
+        help_dialog = ScriptHelpDialog(editor)
+        text = help_dialog.findChild(QTextBrowser).toPlainText()
+        for command in ('move', 'click', 'press', 'release', 'switch', 'mouse_press',
+                        'mouse_release', 'mouse_switch', 'key_press', 'key_release', 'key_switch',
+                        'text', 'sleep', 'curve', 'curve_first_time', 'curve_last_time',
+                        'curve_release', 'release_all', 'loop', 'loop_end', 'release_actions'):
+            self.assertIn(command, text)
+        self.assertIn('실행을 시작할 때', text)
+        help_dialog.deleteLater()
+        editor.reject()
+        editor.deleteLater()
+
     def test_partial_save_does_not_mark_profile_unsaved(self):
         from domain import atomic_json
         w = self.window

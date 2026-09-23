@@ -20,6 +20,7 @@ from hotkeys import Hotkeys
 from script_language import compile_script
 from script_editor import ScriptEditor
 from persistence import ProfileStore
+from version import APP_NAME, VERSION
 from session import ExecutionSession, editing_dialog
 from widgets import (make_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
                      BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog)
@@ -199,8 +200,8 @@ class MainWindow(QMainWindow):
         tools = self.menuBar().addMenu("설정")
         tools.addAction("환경설정", self.settings_dialog)
         tools.addAction("해상도에 맞춰 좌표 변환…", self.convert_dialog)
-        about = self.menuBar().addMenu("도움말")
-        about.addAction("사용 방법", self.help_dialog)
+        about = self.menuBar().addMenu("정보")
+        about.addAction(f"{APP_NAME} · {VERSION}", self.about_dialog)
 
     def build_tray(self):
         self.tray = QSystemTrayIcon(self.windowIcon(), self)
@@ -270,7 +271,9 @@ class MainWindow(QMainWindow):
             item = QTableWidgetItem(row.memo)
             item.setData(Qt.ItemDataRole.UserRole, row.id)
             self.table.setItem(i, 4, item)
-            button = self.button(row.move_hk.upper() or "지정", lambda checked=False, rid=row.id: self.edit_key(rid))
+            button = self.button(row.move_hk.upper(), lambda checked=False, rid=row.id: self.edit_key(rid))
+            button.setToolTip('단축키 지정')
+            button.setAccessibleName('단축키 지정')
             self.table.setCellWidget(i, 0, button)
             if row.action_mode == 'script':
                 self.table.setSpan(i, 1, 1, 2)
@@ -531,8 +534,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("최소 한 행은 남겨 주세요.")
             return
         self.profile.rows = [r for i, r in enumerate(self.profile.rows) if i not in selected]
+        focus_row = self.profile.rows[max(0, min(selected) - 1)]
         self.changed()
-        self.rebuild()
+        self.rebuild(focus_row.id)
         self.rebind()
 
     def move_row(self, origin, target):
@@ -765,14 +769,8 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     @editing_dialog(hooks=False)
-    def help_dialog(self):
-        QMessageBox.information(self, "사용 방법", "1. 대상 게임/에뮬레이터 창을 선택합니다.\n"
-            "2. 행을 선택하고 대상 창의 원하는 위치에 커서를 놓은 뒤 좌표 캡처 키(기본 Ctrl+S)를 누릅니다.\n"
-            "3. 단축키와 동작을 지정하면 변경사항이 자동저장됩니다.\n"
-            "4. 스크립트 실행 모드는 스크립트 작성 버튼에서 명령을 작성합니다.\n"
-            "5. 작동 시작을 누른 뒤 단축키를 누릅니다.\n\n"
-            "자동 중지 옵션이 켜져 있으면 편집 시 일시정지됩니다. 작동/정지 키는 일시정지 중에도 유지됩니다.\n"
-            "기존 매크로의 JSON 프로필을 열 수 있습니다. 다른 매크로 앱은 종료한 뒤 사용하세요.")
+    def about_dialog(self):
+        QMessageBox.information(self, '정보', f'{APP_NAME}\n버전: {VERSION}')
 
     def shutdown(self):
         if self.closing:
@@ -806,6 +804,7 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("BlueArchiveStudio")
+    app.setApplicationVersion(VERSION)
     app.setOrganizationName("Chobo")
     app.setStyle("Fusion")
     app.setQuitOnLastWindowClosed(False)
