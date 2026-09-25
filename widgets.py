@@ -136,10 +136,17 @@ class KeyDialog(QDialog):
     def __init__(self, value, parent):
         super().__init__(parent)
         self.setWindowTitle("단축키 지정")
+        self.setFixedWidth(280)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("입력 칸을 클릭한 뒤 사용할 키 조합을 누르세요."))
+        hint = QLabel("입력 칸을 클릭한 뒤\n사용할 키 조합을 누르세요.")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
         self.editor = QKeySequenceEdit(QKeySequence(value), self)
         self.editor.setMaximumSequenceLength(1)
+        line_edit = self.editor.findChild(QLineEdit)
+        if line_edit is not None:
+            line_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.editor)
         clear = QPushButton("지정 해제")
         clear.clicked.connect(self.editor.clear)
