@@ -741,3 +741,106 @@ class UiTests(unittest.TestCase):
         self.assertEqual(Profile.read(self.saved(w.path)).rows[0].script,'click 100,200')
         w.flush_pending_saves()
         self.assertFalse(w.dirty)
+
+    def test_conversion_dialog_unknown_resolution_presets_and_errors(self):
+        from conversion_dialog import ConversionDialog
+        w = self.window
+        dialog = ConversionDialog(w.profile,w.path,None,lambda *args: False,w)
+        self.assertFalse(dialog.copy_button.isEnabled())
+        self.assertEqual(dialog.source.value(),(0,0))
+        dialog.source.set_value((1920,1080))
+        dialog.destination.mode.setCurrentText('4:3')
+        dialog.refresh()
+        self.assertEqual(dialog.destination.value(),(640,480))
+        self.assertTrue(dialog.copy_button.isEnabled())
+        self.assertIn('비율',dialog.notice.text())
+        dialog.profile.rows[0].x=1920
+        dialog.refresh()
+        self.assertFalse(dialog.copy_button.isEnabled())
+        dialog.profile.rows[0].x=0
+        dialog.refresh()
+        self.assertTrue(dialog.copy_button.isEnabled())
+        dialog.close()
+
+    def test_conversion_copy_preserves_original_and_switches_recent_profile(self):
+        from conversion import plan_conversion
+        w=self.window
+        w.profile.resolution=(1920,1080)
+        w.profile.rows[0].x=960
+        w.profile.rows[0].script='click 960,540'
+        w.save()
+        original_path,original_bytes=w.path,w.path.read_bytes()
+        plan=plan_conversion(w.profile,(1920,1080),(1280,720))
+        output=w.data_dir/'converted.json'
+        with patch.object(QFileDialog,'getSaveFileName',return_value=(str(output),'')):
+            self.assertTrue(w.save_conversion(plan.profile,'copy',w))
+        self.assertEqual(original_path.read_bytes(),original_bytes)
+        self.assertEqual(w.path,output)
+        self.assertEqual(w.profile.rows[0].script,'click 640,360')
+        self.assertEqual(read_json(w.settings_path)['last_profile'],output.name)
+        self.assertEqual(Profile.read(read_json(output)).resolution,(1280,720))
+
+    def test_conversion_failure_cancel_and_same_path_leave_source(self):
+        from conversion import plan_conversion
+        w=self.window
+        original=w.profile.export()
+        original_path=w.path
+        original_bytes=w.path.read_bytes()
+        plan=plan_conversion(w.profile,(1920,1080),(1280,720))
+        with patch.object(QFileDialog,'getSaveFileName',return_value=('','')):
+            self.assertFalse(w.save_conversion(plan.profile,'copy',w))
+        with patch.object(QFileDialog,'getSaveFileName',return_value=(str(w.path),'')):
+            with self.assertRaises(ValueError):
+                w.save_conversion(plan.profile,'copy',w)
+        with patch('persistence.atomic_json',side_effect=OSError('disk full')):
+            with self.assertRaisesRegex(ValueError,'disk full'):
+                w.save_conversion(plan.profile,'apply',w)
+        self.assertEqual(w.path,original_path)
+        self.assertEqual(w.profile.export(),original)
+        self.assertEqual(w.path.read_bytes(),original_bytes)
+
+    def test_capture_resolution_mismatch_does_not_mix_coordinates(self):
+        w=self.window
+        w.target=99
+        for resolution in ((1920,1080),None):
+            w.profile.resolution=resolution
+            w.profile.rows[0].x=300
+            original=w.profile.export()
+            with patch.object(w.native,'exists',return_value=True), \
+                 patch.object(w.native,'cursor',return_value=(400,500)), \
+                 patch.object(w.native,'bounds',return_value=(0,0,1280,720)), \
+                 patch.object(w.native,'size',return_value=(1280,720)), \
+                 patch.object(w,'convert_dialog') as dialog:
+                w.capture(w.profile.rows[0].id)
+                dialog.assert_called_once()
+            self.assertEqual(w.profile.export(),original)
+
+    def test_converter_without_target_does_not_use_desktop_resolution(self):
+        w=self.window
+        w.target=0
+        with patch('app.ConversionDialog') as dialog, patch.object(w.native,'size') as size:
+            w.convert_dialog()
+            self.assertIsNone(dialog.call_args.args[2])
+            size.assert_not_called()
+
+    def test_script_capture_blocks_mismatched_resolution(self):
+        w=self.window
+        w.profile.resolution=(1920,1080)
+        editor=ScriptEditor('',w.native,99,w)
+        with patch.object(w.native,'size',return_value=(1280,720)), \
+             patch.object(w.native,'bounds',return_value=(0,0,1280,720)):
+            editor.pick_coordinate((100,200))
+        self.assertEqual(editor.editor.toPlainText(),'')
+        self.assertIsNone(editor.capture_resolution)
+        editor.close()
+
+    def test_script_capture_new_profile_records_basis_only_on_save(self):
+        w=self.window
+        editor=ScriptEditor('',w.native,99,w)
+        with patch.object(w.native,'size',return_value=(1280,720)), \
+             patch.object(w.native,'bounds',return_value=(0,0,1280,720)):
+            editor.pick_coordinate((100,200))
+        self.assertEqual(editor.editor.toPlainText(),'100,200')
+        self.assertEqual(editor.capture_resolution,(1280,720))
+        self.assertIsNone(w.profile.resolution)
+        editor.close()

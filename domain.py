@@ -145,13 +145,12 @@ class Profile:
                             "script": r.script} for r in self.rows]}
 
     def convert(self, source, destination):
-        sw, sh, dw, dh = [bounded_int(v, 1, 100000, "해상도") for v in (*source, *destination)]
-        coords = [(round(r.x * dw / sw), round(r.y * dh / sh)) for r in self.rows]
-        if any(abs(v) > 99999 for pair in coords for v in pair):
-            raise ValueError("변환 결과가 좌표 범위를 초과합니다.")
-        for row, (x, y) in zip(self.rows, coords):
-            row.x, row.y = x, y
-        self.resolution = (dw, dh)
+        from conversion import plan_conversion
+        plan = plan_conversion(self, source, destination)
+        if plan.errors:
+            raise ValueError("\n".join(plan.errors))
+        self.rows = plan.profile.rows
+        self.resolution = plan.profile.resolution
 
 
 @dataclass

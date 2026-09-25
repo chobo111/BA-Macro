@@ -9,8 +9,8 @@ from PySide6.QtCore import Qt, Signal, QObject, QTimer, QStandardPaths, QLockFil
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QComboBox, QTableWidgetItem, QSpinBox, QFileDialog, QMessageBox, QDialog, QFormLayout,
-    QDialogButtonBox, QSystemTrayIcon, QMenu, QGroupBox, QSizePolicy,
+    QComboBox, QTableWidgetItem, QSpinBox, QFileDialog, QMessageBox, QDialog,
+    QSystemTrayIcon, QMenu, QGroupBox, QSizePolicy,
 )
 
 from domain import MODES, Profile, Row, Settings, read_json
@@ -20,6 +20,7 @@ from hotkeys import Hotkeys
 from script_language import compile_script
 from script_editor import ScriptEditor
 from persistence import ProfileStore
+from conversion_dialog import ConversionDialog
 from version import APP_NAME, VERSION
 from session import ExecutionSession, editing_dialog
 from widgets import (make_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
@@ -199,7 +200,7 @@ class MainWindow(QMainWindow):
             file_menu.addAction(text, callback)
         tools = self.menuBar().addMenu("설정")
         tools.addAction("환경설정", self.settings_dialog)
-        tools.addAction("해상도에 맞춰 좌표 변환…", self.convert_dialog)
+        tools.addAction("프로필 해상도 변환…", self.convert_dialog)
         about = self.menuBar().addMenu("정보")
         about.addAction(f"{APP_NAME} · {VERSION}", self.about_dialog)
 
@@ -334,6 +335,8 @@ class MainWindow(QMainWindow):
         dialog = ScriptEditor(row.script, self.native, self.target, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             row.script = dialog.source
+            if isinstance(dialog.capture_resolution, tuple):
+                self.profile.resolution = dialog.capture_resolution
             self.changed()
             self.rebuild(rid)
             if not self.dirty:
@@ -427,6 +430,11 @@ class MainWindow(QMainWindow):
                 raise ValueError("커서를 대상 영역 안으로 옮겨 주세요.")
             if abs(x) > 99999 or abs(y) > 99999:
                 raise ValueError('좌표는 부호를 제외하고 최대 5자리까지 저장할 수 있습니다.')
+            has_coordinates = any(r.x or r.y or r.script.strip() for r in self.profile.rows)
+            if ((self.profile.resolution and self.profile.resolution != (w, h)) or
+                    (not self.profile.resolution and has_coordinates)):
+                self.convert_dialog(reason="저장 좌표와 현재 화면의 해상도 기준을 먼저 맞춰 주세요. 변환 후 좌표를 다시 캡처하세요.")
+                return
             row.x, row.y = x, y
             self.profile.resolution = (w, h)
             self.changed()
@@ -600,7 +608,7 @@ class MainWindow(QMainWindow):
             self.rebuild()
             self.rebind()
             self.persist_settings()
-            self.statusBar().showMessage("프로필을 불러왔습니다. 대상 창과 해상도를 확인하세요.")
+            self.statusBar().showMessage("프로필을 불러왔습니다. 설정 → 프로필 해상도 변환에서 내 해상도에 맞출 수 있습니다.")
         except Exception as error:
             self.error(str(error))
 
@@ -688,23 +696,6 @@ class MainWindow(QMainWindow):
             except Exception as error:
                 self.error(str(error))
 
-    def dimensions_dialog(self, title, labels, values):
-        dialog = QDialog(self)
-        dialog.setWindowTitle(title)
-        form = QFormLayout(dialog)
-        spins = []
-        for label, value in zip(labels, values):
-            spin = QSpinBox()
-            spin.setRange(1, 16384)
-            spin.setValue(value)
-            form.addRow(label, spin)
-            spins.append(spin)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        form.addRow(buttons)
-        return [spin.value() for spin in spins] if dialog.exec() == QDialog.DialogCode.Accepted else None
-
     @editing_dialog(hooks=False)
     def resize_dialog(self):
         if not self.native.exists(self.target):
@@ -713,25 +704,59 @@ class MainWindow(QMainWindow):
         try:
             dialog = ResizeDialog(self.native.size(self.target), self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.stop()
                 self.native.resize(self.target, *dialog.value())
-                self.statusBar().showMessage("창 크기 변경을 요청했습니다. 저장 좌표는 설정 → 좌표 변환에서 조정하세요.")
+                self.statusBar().showMessage("창 크기를 변경했습니다. 실제 내부 크기로 좌표 변환을 준비합니다.")
+                QTimer.singleShot(200, lambda: self.convert_dialog(reason="창 크기가 바뀌었습니다. 저장 좌표도 새 해상도에 맞출 수 있습니다."))
         except Exception as error:
             self.error(str(error))
 
     @editing_dialog(hooks=False)
-    def convert_dialog(self):
+    def convert_dialog(self, *, reason=""):
+        self.stop()
+        self.flush_pending_saves()
         try:
-            current = self.native.size(self.target if self.native.exists(self.target) else 0)
-            values = self.dimensions_dialog("프로필 좌표 변환", ["원본 너비", "원본 높이", "변경 너비", "변경 높이"],
-                                             (*(self.profile.resolution or current), *current))
-            if values:
-                self.profile.convert(values[:2], values[2:])
-                self.changed()
-                self.rebuild()
-                if not self.dirty:
-                    self.statusBar().showMessage("좌표를 변환하고 자동저장했습니다.")
+            current = self.native.size(self.target) if self.target and self.native.exists(self.target) else None
+            dialog = ConversionDialog(self.profile, self.path or self.data_dir / "macro.json",
+                                      current, self.save_conversion, self, reason)
+            dialog.exec()
         except Exception as error:
             self.error(str(error))
+
+    def save_conversion(self, profile, mode, dialog):
+        self.flush_pending_saves()
+        path = self.path or self.data_dir / "macro.json"
+        if mode == 'copy':
+            stem = f"{path.stem}_{profile.resolution[0]}x{profile.resolution[1]}"
+            suggested = path.with_name(stem + '.json')
+            number = 2
+            while suggested.exists():
+                suggested = path.with_name(f'{stem}_{number}.json')
+                number += 1
+            selected, _ = QFileDialog.getSaveFileName(dialog, "변환본으로 저장", str(suggested), "매크로 프로필 (*.json)")
+            if not selected:
+                return False
+            path = Path(selected)
+            if not path.suffix:
+                path = path.with_suffix('.json')
+            if self.path and path.resolve() == self.path.resolve():
+                raise ValueError('원본을 보존하려면 다른 파일명을 지정하세요. 덮어쓰려면 현재 프로필에 적용을 사용하세요.')
+        profile.validate((self.settings.capture_hk, self.settings.pause_hk))
+        result = self.store.save(path, profile.export(), asdict(self.settings)).result()
+        if not result.profile_saved:
+            raise ValueError(result.error)
+        self.profile, self.path, self.dirty = profile, path, False
+        self.settings_error = result.error
+        if result.recent_name:
+            self.settings.last_profile = result.recent_name
+        self.rebuild()
+        self.rebind()
+        self.update_labels()
+        message = f'변환 완료: {path.name}'
+        if result.error:
+            message += f' · 최근 프로필 정보 저장 실패: {result.error}'
+        self.statusBar().showMessage(message)
+        return True
 
     def on_engine_error(self, text):
         self.stop()

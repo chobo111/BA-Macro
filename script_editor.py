@@ -33,6 +33,7 @@ class ScriptEditor(QDialog):
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.coordinate_hook = None
         self.coordinate_clicked.connect(self.capture_screen_point, Qt.ConnectionType.QueuedConnection)
+        self.capture_resolution = None
         self.source = source
         self.native, self.target = native, target
         self.syncing_geometry = False
@@ -273,6 +274,14 @@ class ScriptEditor(QDialog):
             if not (l <= x < r and t <= y < b and abs(x) <= 99999 and abs(y) <= 99999):
                 self.log('대상 영역 안의 좌표를 우클릭하세요. 좌표는 최대 5자리입니다.', error=True)
                 return
+            size = self.native.size(self.target)
+            profile = self.parentWidget().profile
+            basis = self.capture_resolution or profile.resolution
+            has_coordinates = any(row.x or row.y or row.script.strip() for row in profile.rows)
+            if (basis and basis != size) or (not basis and has_coordinates):
+                self.log('해상도 기준이 다릅니다. 편집기를 닫고 설정 → 프로필 해상도 변환을 먼저 진행하세요.', error=True)
+                return
+            self.capture_resolution = size
             self.editor.insertPlainText(f'{x},{y}')
             self.log(f'좌표 추가: {x}, {y}')
             self.editor.setFocus()
