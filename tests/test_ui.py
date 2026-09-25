@@ -844,3 +844,22 @@ class UiTests(unittest.TestCase):
         self.assertEqual(editor.capture_resolution,(1280,720))
         self.assertIsNone(w.profile.resolution)
         editor.close()
+
+    def test_click_shortcut_box_prompts_without_erasing_saved_key(self):
+        from PySide6.QtWidgets import QLineEdit
+        dialog=KeyDialog('q',self.window)
+        dialog.show()
+        self.qt.processEvents()
+        field=dialog.editor.findChild(QLineEdit)
+        QTest.mouseClick(field,Qt.MouseButton.LeftButton)
+        self.assertEqual(field.text(),'입력 대기중...')
+        self.assertEqual(dialog.value(),'q')
+        QTest.keyClick(dialog.editor,Qt.Key.Key_K,Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(dialog.value(),'ctrl+k')
+        self.assertEqual(field.text(),'Ctrl+K')
+        QTest.mouseClick(field,Qt.MouseButton.LeftButton)
+        self.assertEqual(field.text(),'입력 대기중...')
+        dialog.editor.clearFocus()
+        self.assertEqual(field.text(),'Ctrl+K')
+        self.assertEqual(dialog.value(),'ctrl+k')
+        dialog.close()

@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict
 
 
-from PySide6.QtCore import Qt, Signal, QTimer, QPoint
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolygon, QPen
 from PySide6.QtWidgets import (
     QVBoxLayout, QLabel, QPushButton, QComboBox, QTableWidget, QHeaderView, QAbstractItemView,
@@ -132,6 +132,39 @@ class BriefStatusBar(QStatusBar):
         super().showMessage(message, timeout)
 
 
+class ClickToCaptureEdit(QKeySequenceEdit):
+    """Display a capture prompt without clearing the stored shortcut."""
+    def __init__(self, sequence, parent=None):
+        super().__init__(sequence, parent)
+        self.waiting = False
+        self.field = self.findChild(QLineEdit)
+        self.installEventFilter(self)
+        if self.field is not None:
+            self.field.installEventFilter(self)
+        self.keySequenceChanged.connect(self.finish_waiting)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            self.waiting = True
+            if self.field is not None:
+                self.field.setText("입력 대기중...")
+        return super().eventFilter(watched, event)
+
+    def finish_waiting(self, *_):
+        if self.waiting:
+            self.waiting = False
+            if self.field is not None:
+                self.field.setText(self.keySequence().toString(QKeySequence.SequenceFormat.NativeText))
+
+    def keyPressEvent(self, event):
+        self.finish_waiting()
+        super().keyPressEvent(event)
+
+    def focusOutEvent(self, event):
+        self.finish_waiting()
+        super().focusOutEvent(event)
+
+
 class KeyDialog(QDialog):
     def __init__(self, value, parent):
         super().__init__(parent)
@@ -142,7 +175,7 @@ class KeyDialog(QDialog):
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setWordWrap(True)
         layout.addWidget(hint)
-        self.editor = QKeySequenceEdit(QKeySequence(value), self)
+        self.editor = ClickToCaptureEdit(QKeySequence(value), self)
         self.editor.setMaximumSequenceLength(1)
         line_edit = self.editor.findChild(QLineEdit)
         if line_edit is not None:
