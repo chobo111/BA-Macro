@@ -132,79 +132,17 @@ class BriefStatusBar(QStatusBar):
         super().showMessage(message, timeout)
 
 
-class ShortcutCaptureEdit(QKeySequenceEdit):
-    feedback = Signal(str)
-
-    def show_capture_state(self, active):
-        self.setProperty("capturing", active)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        self.update()
-
-    def focusInEvent(self, event):
-        super().focusInEvent(event)
-        self.show_capture_state(True)
-        self.feedback.emit("키 입력 대기 중…\n사용할 키 조합을 누르세요.")
-
-    def focusOutEvent(self, event):
-        super().focusOutEvent(event)
-        self.show_capture_state(False)
-
-    def keyPressEvent(self, event):
-        super().keyPressEvent(event)
-        if not event.isAutoRepeat():
-            modifiers = []
-            for flag, key, name in (
-                (Qt.KeyboardModifier.ControlModifier, Qt.Key.Key_Control, 'Ctrl'),
-                (Qt.KeyboardModifier.AltModifier, Qt.Key.Key_Alt, 'Alt'),
-                (Qt.KeyboardModifier.ShiftModifier, Qt.Key.Key_Shift, 'Shift'),
-                (Qt.KeyboardModifier.MetaModifier, Qt.Key.Key_Meta, 'Win'),
-            ):
-                if event.modifiers() & flag or event.key() == key:
-                    modifiers.append(name)
-            modifier_keys = {Qt.Key.Key_Control, Qt.Key.Key_Alt, Qt.Key.Key_Shift, Qt.Key.Key_Meta}
-            self.modifier_only = event.key() in modifier_keys
-            if self.modifier_only:
-                text = '+'.join(modifiers) + '+…'
-                self.feedback.emit(f"입력 중: {text}\n함께 사용할 키를 누르세요.")
-            else:
-                text = QKeySequence(event.keyCombination()).toString(QKeySequence.SequenceFormat.NativeText)
-                self.feedback.emit(f"입력 중: {text}\n키를 놓으면 입력이 완료됩니다.")
-
-    def keyReleaseEvent(self, event):
-        super().keyReleaseEvent(event)
-        if getattr(self, 'modifier_only', False):
-            remaining = []
-            for flag, key, name in (
-                (Qt.KeyboardModifier.ControlModifier, Qt.Key.Key_Control, 'Ctrl'),
-                (Qt.KeyboardModifier.AltModifier, Qt.Key.Key_Alt, 'Alt'),
-                (Qt.KeyboardModifier.ShiftModifier, Qt.Key.Key_Shift, 'Shift'),
-                (Qt.KeyboardModifier.MetaModifier, Qt.Key.Key_Meta, 'Win'),
-            ):
-                if event.modifiers() & flag and event.key() != key:
-                    remaining.append(name)
-            self.feedback.emit(f"입력 중: {'+'.join(remaining)}+…\n함께 사용할 키를 누르세요." if remaining else
-                               "키 입력 대기 중…\n사용할 키 조합을 누르세요.")
-
-
 class KeyDialog(QDialog):
     def __init__(self, value, parent):
         super().__init__(parent)
         self.setWindowTitle("단축키 지정")
         self.setFixedWidth(280)
         layout = QVBoxLayout(self)
-        hint = self.feedback = QLabel("키 입력 대기 중…\n사용할 키 조합을 누르세요.")
+        hint = QLabel("입력 칸을 클릭한 뒤\n사용할 키 조합을 누르세요.")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setWordWrap(True)
         layout.addWidget(hint)
-        self.editor = ShortcutCaptureEdit(QKeySequence(value), self)
-        self.editor.setStyleSheet(
-            'QKeySequenceEdit { border: 2px solid palette(mid); border-radius: 4px; padding: 4px; }'
-            'QKeySequenceEdit[capturing="true"] { border-color: #47b8ed; }'
-            'QLineEdit { border: none; background: transparent; }'
-        )
-        self.editor.feedback.connect(hint.setText)
-        self.editor.keySequenceChanged.connect(self.show_key_feedback)
+        self.editor = QKeySequenceEdit(QKeySequence(value), self)
         self.editor.setMaximumSequenceLength(1)
         line_edit = self.editor.findChild(QLineEdit)
         if line_edit is not None:
@@ -218,11 +156,6 @@ class KeyDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self.editor.setFocus()
-
-    def show_key_feedback(self, sequence):
-        text = sequence.toString(QKeySequence.SequenceFormat.NativeText)
-        self.feedback.setText(f"입력됨: {text}\n확인을 누르면 적용됩니다." if text else
-                              "지정 해제 예정\n확인을 누르면 적용됩니다.")
 
     def value(self):
         return hotkey(self.editor.keySequence().toString(QKeySequence.SequenceFormat.PortableText))
