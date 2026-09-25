@@ -1,9 +1,8 @@
-"""Preview and save a converted profile without mutating the source."""
+"""Validate and save a converted profile without mutating the source."""
 from pathlib import Path
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox,
-    QComboBox, QPushButton, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QAbstractItemView)
+    QComboBox, QPushButton, QGroupBox)
 from conversion import plan_conversion
 from widgets import ResizeDialog
 
@@ -60,7 +59,7 @@ class ConversionDialog(QDialog):
         self.save_callback = save_callback
         self.plan = None
         self.setWindowTitle('프로필 해상도 변환')
-        self.resize(670, 580)
+        self.resize(600, 320)
         layout = QVBoxLayout(self)
         title = QLabel(f'프로필: {self.path.name}')
         title.setToolTip(str(self.path))
@@ -87,11 +86,6 @@ class ConversionDialog(QDialog):
         self.notice = QLabel()
         self.notice.setWordWrap(True)
         layout.addWidget(self.notice)
-        self.preview = QTableWidget(0, 3)
-        self.preview.setHorizontalHeaderLabels(['위치', '원본 좌표', '변환 좌표'])
-        self.preview.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.preview.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        layout.addWidget(self.preview)
         note = QLabel('표와 보관된 스크립트의 숫자 좌표를 함께 변환합니다. mouse·시간·반복 횟수·주석은 유지됩니다.\n해상도는 게임 화면 내부 크기 기준입니다. 변환본 저장 후 해당 프로필로 전환합니다.')
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -121,8 +115,6 @@ class ConversionDialog(QDialog):
 
     def refresh(self):
         self.plan = None
-        self.preview.clearSpans()
-        self.preview.setRowCount(0)
         self.error.clear()
         try:
             if 0 in (*self.source.value(), *self.destination.value()):
@@ -132,15 +124,10 @@ class ConversionDialog(QDialog):
             changed = sum(before != after for _, before, after in plan.changes)
             self.summary.setText(f'표 {len(plan.profile.rows)}행 · 스크립트 좌표 {plan.script_points}개 · 변경 {changed}개')
             self.notice.setText('\n'.join(plan.warnings))
-            self.preview.setRowCount(len(plan.changes) + len(plan.errors))
-            for i, (label, before, after) in enumerate(plan.changes):
-                for j, value in enumerate((label, '%d, %d' % before, '%d, %d' % after)):
-                    self.preview.setItem(i, j, QTableWidgetItem(value))
-            for i, error in enumerate(plan.errors, len(plan.changes)):
-                self.preview.setItem(i, 0, QTableWidgetItem(error))
-                self.preview.setSpan(i, 0, 1, 3)
             if plan.errors:
-                self.error.setText(f'오류 {len(plan.errors)}개: 원본 좌표 또는 스크립트를 수정한 뒤 다시 변환하세요.')
+                details = '\n'.join(plan.errors[:3])
+                remaining = f'\n외 {len(plan.errors) - 3}개' if len(plan.errors) > 3 else ''
+                self.error.setText(f'오류 {len(plan.errors)}개: 원본 좌표 또는 스크립트를 수정하세요.\n{details}{remaining}')
         except ValueError as error:
             self.summary.clear()
             self.notice.clear()
