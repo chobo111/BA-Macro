@@ -21,5 +21,7 @@ if ($LASTEXITCODE -ne 0) {
     & $studioPython -m pip install -r (Join-Path $PSScriptRoot 'requirements.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
 }
-& $studioPython (Join-Path $PSScriptRoot 'app.py')
-exit $LASTEXITCODE
+& (Join-Path $PSScriptRoot 'create-shortcut.ps1')
+$studioGuiPython = Join-Path $PSScriptRoot '.venv\Scripts\pythonw.exe'
+Start-Process -FilePath $studioGuiPython -ArgumentList ('"' + (Join-Path $PSScriptRoot 'app.py') + '"') -WorkingDirectory $PSScriptRoot
+exit 0

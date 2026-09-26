@@ -7,3 +7,6 @@ dist/
 # Local profiles and runtime settings
 /*.json
 *.log
+
+# Local shortcut contains absolute installation paths
+/Blue Archive Studio.lnk

@@ -6,7 +6,9 @@ Python + PySide6로 새로 작성한 Windows용 좌표·단축키 매크로입�
 ## 실행
 
 Windows 10/11, Python 3.10 이상(개발 검증: Python 3.12)이 필요합니다.
-`launch.cmd`를 두 번 클릭하세요. 첫 실행은 전용 `.venv`를 만들고 라이브러리를 설치하므로 인터넷 연결이 필요합니다.
+**`Blue Archive Studio.lnk` 바로가기를 두 번 클릭하면 검은 콘솔 창 없이 실행됩니다.**
+처음 설치할 때는 `launch.cmd`를 실행하세요. 전용 `.venv`와 라이브러리를 설치하고 바로가기를 만듭니다. 최초 설치에는 인터넷 연결이 필요합니다.
+폴더를 옮겨 바로가기 경로가 달라지면 `launch.cmd`를 다시 실행하거나 `create-shortcut.ps1`로 바로가기를 재생성하세요.
 이미 설치된 Python 또는 이 PC의 Codex Python 런타임을 찾습니다.
 
 직접 실행할 수도 있습니다.
