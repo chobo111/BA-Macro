@@ -160,7 +160,6 @@ class Settings:
     click_delay: int = 15
     click_duration: int = 50
     curve_duration: int = 10
-    after_action_delay: int = 30
     exclusive_hook: bool = True
     auto_pause: bool = True
     theme: str = "Dark"
@@ -176,7 +175,7 @@ class Settings:
             setattr(obj, name, hotkey(data.get(name, getattr(obj, name))))
         if not obj.pause_hk or not obj.capture_hk or obj.pause_hk == obj.capture_hk:
             raise ValueError("캡처와 작동/정지 단축키는 서로 다르게 지정하세요.")
-        for name in ("click_delay", "click_duration", "curve_duration", "after_action_delay"):
+        for name in ("click_delay", "click_duration", "curve_duration"):
             setattr(obj, name, bounded_int(data.get(name, getattr(obj, name)), 1 if name == "click_duration" else 0, 10000, name))
         for name in ("exclusive_hook", "auto_pause"):
             value = data.get(name, getattr(obj, name))

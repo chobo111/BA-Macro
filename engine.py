@@ -13,7 +13,6 @@ class Command:
     key: str
     click_delay: int
     click_duration: int
-    after_action_delay: int
     script: str = ''
     curve_duration: int = 10
     program: Program | None = None
@@ -125,7 +124,6 @@ class Engine:
                 # A coordinate action must not inherit a script's latched inputs.
                 self.runtime.release_all()
                 self.execute(c)
-                self.wait(c.after_action_delay, c)
             except Cancelled:
                 pass
             except Exception as error:

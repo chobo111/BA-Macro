@@ -27,7 +27,7 @@ class ScriptTests(unittest.TestCase):
     def setUp(self):
         self.native = ScriptWindows()
         self.waits = []
-        self.command = Command(1, 0, 0, 'script', 'q', 0, 1, 0)
+        self.command = Command(1, 0, 0, 'script', 'q', 0, 1)
         self.runtime = ScriptRuntime(self.native, lambda c: None, lambda ms, c: self.waits.append(ms), lambda k: False)
 
     def run_script(self, source):

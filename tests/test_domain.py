@@ -35,7 +35,7 @@ class DomainTests(unittest.TestCase):
             Profile.default().validate(["q"])
 
     def test_bad_values(self):
-        for data in ({"click_duration": -1}, {"after_action_delay": -1}, {"auto_pause": "yes"},
+        for data in ({"click_duration": -1}, {"auto_pause": "yes"},
                      {"capture_hk": "ctrl+s", "pause_hk": "ctrl+s"}, {"click_delay": 1.5}):
             with self.subTest(data=data), self.assertRaises(ValueError):
                 Settings.read(data)
@@ -55,6 +55,12 @@ class DomainTests(unittest.TestCase):
     def test_unknown_mode_rejected(self):
         with self.assertRaises(ValueError):
             Profile.read({"macros": [{"action_mode": "unknown"}]})
+
+    def test_removed_completion_delay_is_ignored_in_older_settings(self):
+        from dataclasses import asdict
+        settings = Settings.read({"after_action_delay": 10000, "click_duration": 75})
+        self.assertEqual(settings.click_duration, 75)
+        self.assertNotIn("after_action_delay", asdict(settings))
 
 
 if __name__ == "__main__":

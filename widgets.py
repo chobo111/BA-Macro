@@ -229,8 +229,7 @@ class SettingsDialog(QDialog):
             form.addRow(label, editor)
         self.times = {}
         for name, label in (("click_delay", "이동 후 클릭 대기"), ("click_duration", "클릭 유지 시간"),
-                            ("curve_duration", "드래그 이동 시간 (좌표 구간당)"),
-                            ("after_action_delay", "동작 완료 후 대기")):
+                            ("curve_duration", "드래그 이동 시간 (좌표 구간당)")):
             spin = QSpinBox()
             spin.setRange(1 if name == "click_duration" else 0, 10000)
             spin.setSuffix(" ms")
@@ -251,7 +250,7 @@ class SettingsDialog(QDialog):
         note = QLabel("대상 창을 선택하면 디스플레이 설정과 무관하게 창 내부 좌표를 사용합니다.\n전체화면은 선택한 모니터의 왼쪽 위가 0,0입니다.\n기존 바탕화면 좌표는 디스플레이 선택 후 다시 지정해야 합니다.")
         note.setWordWrap(True)
         form.addRow(note)
-        action_note = QLabel("클릭 유지 시간은 스크립트의 click 명령에도 적용됩니다.\n동작 완료 후 대기는 일반 동작과 스크립트에 공통으로 적용됩니다.")
+        action_note = QLabel("클릭 유지 시간은 스크립트의 click 명령에도 적용됩니다.")
         action_note.setWordWrap(True)
         forms["동작"].addRow(action_note)
         script_note = QLabel("curve 명령에서 좌표 사이를 이동하는 시간입니다.\ncurve_first_time과 curve_last_time의 대기는 별도로 적용됩니다.")

@@ -45,7 +45,7 @@ class EngineTests(unittest.TestCase):
         self.native = FakeWindows()
         self.errors = []
         self.engine = Engine(self.native, lambda key: False, self.errors.append)
-        self.command = Command(1, 30, 40, "move_and_click", "q", 0, 1, 0)
+        self.command = Command(1, 30, 40, "move_and_click", "q", 0, 1)
 
     def tearDown(self):
         self.engine.shutdown()
