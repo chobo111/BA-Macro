@@ -65,6 +65,8 @@ class Engine:
         self.worker.join(timeout=2)
 
     def guard(self, command):
+        if hasattr(self.native, "validate_context"):
+            self.native.validate_context(command.hwnd)
         if self.cancel.is_set() or (command.hwnd and not self.native.active(command.hwnd)):
             raise Cancelled()
 
@@ -81,6 +83,8 @@ class Engine:
     def click(self, command):
         self.guard(command)
         try:
+            if hasattr(self.native, "validate_pointer"):
+                self.native.validate_pointer(command.hwnd)
             self.native.button(True)
             self.wait(command.click_duration, command)
         finally:

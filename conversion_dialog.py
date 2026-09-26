@@ -53,7 +53,7 @@ class ResolutionInput(QGroupBox):
 
 
 class ConversionDialog(QDialog):
-    def __init__(self, profile, path, destination, save_callback, parent=None, reason=''):
+    def __init__(self, profile, path, destination, save_callback, parent=None, reason='', target_label='대상 창 내부'):
         super().__init__(parent)
         self.profile, self.path = profile, Path(path)
         self.save_callback = save_callback
@@ -66,7 +66,7 @@ class ConversionDialog(QDialog):
         layout.addWidget(title)
         baseline = '%d × %d' % profile.resolution if profile.resolution else '알 수 없음'
         target_size = '%d × %d' % destination if destination else '대상 창 미선택'
-        layout.addWidget(QLabel(f'프로필 기록: {baseline}  ·  현재 대상 창 내부: {target_size}'))
+        layout.addWidget(QLabel(f'프로필 기록: {baseline}  ·  현재 {target_label}: {target_size}'))
         if reason:
             notice = QLabel(reason)
             notice.setWordWrap(True)

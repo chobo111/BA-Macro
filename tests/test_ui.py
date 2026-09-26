@@ -863,3 +863,46 @@ class UiTests(unittest.TestCase):
         self.assertEqual(field.text(),'Ctrl+K')
         self.assertEqual(dialog.value(),'ctrl+k')
         dialog.close()
+
+    def test_display_settings_selection_and_missing_device(self):
+        from displays import Display
+        from domain import Settings
+        monitor=Display('test-monitor','Test display',12,'DISPLAY2',-1920,0,1920,1080,False)
+        dialog=SettingsDialog(Settings(),self.window,[monitor])
+        self.assertEqual(dialog.displays.count(),2)
+        dialog.displays.setCurrentIndex(1)
+        self.assertEqual(dialog.value().display_id,'test-monitor')
+        dialog.close()
+        dialog=SettingsDialog(Settings(display_id='missing'),self.window,[monitor])
+        self.assertIn('연결되지 않은',dialog.displays.currentText())
+        self.assertEqual(dialog.value().display_id,'missing')
+        dialog.close()
+
+    def test_disconnected_display_stops_fullscreen_but_not_target_window(self):
+        w=self.window
+        w.native.display_id='missing'
+        with patch.object(w.native,'refresh_displays',return_value=()):
+            w.native.displays=()
+            w.display_ticks=9
+            w.target=0
+            w.armed=True
+            w.tick()
+            self.assertFalse(w.armed)
+            w.target=99
+            w.armed=True
+            w.display_ticks=9
+            with patch.object(w.native,'exists',return_value=True), \
+                 patch.object(w.native,'size',return_value=(1920,1080)), \
+                 patch.object(w.native,'cursor',return_value=(10,20)), \
+                 patch.object(w.native,'active',return_value=True):
+                w.tick()
+                self.assertTrue(w.armed)
+
+    def test_selected_monitor_used_as_conversion_destination(self):
+        w=self.window
+        w.target=0
+        w.native.display_id='test-monitor'
+        with patch('app.ConversionDialog') as dialog, patch.object(w.native,'size',return_value=(1920,1080)):
+            w.convert_dialog()
+            self.assertEqual(dialog.call_args.args[2],(1920,1080))
+            self.assertEqual(dialog.call_args.kwargs['target_label'],'선택한 디스플레이')

@@ -195,12 +195,23 @@ class KeyDialog(QDialog):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, settings, parent):
+    def __init__(self, settings, parent, displays=()):
         super().__init__(parent)
         self.setWindowTitle("환경설정")
         self.setMinimumWidth(470)
         self.original = settings
         form = QFormLayout(self)
+        self.displays = QComboBox()
+        self.displays.addItem("전체 바탕화면 (기존 좌표 방식)", '')
+        for index, display in enumerate(displays, 1):
+            main = ' · 주 모니터' if display.primary else ''
+            self.displays.addItem(f'{index}번{main} · {display.name} · {display.width}×{display.height}', display.id)
+        selected = self.displays.findData(settings.display_id)
+        if selected < 0:
+            self.displays.addItem('연결되지 않은 디스플레이 · 다시 선택하세요', settings.display_id)
+            selected = self.displays.count()-1
+        self.displays.setCurrentIndex(selected)
+        form.addRow("작동 디스플레이", self.displays)
         self.keys = {}
         for name, label in (("pause_hk", "작동 / 정지"), ("capture_hk", "선택한 행 좌표 캡처")):
             editor = QKeySequenceEdit(QKeySequence(getattr(settings, name)))
@@ -228,7 +239,7 @@ class SettingsDialog(QDialog):
         self.theme.addItems(["Dark", "Light", "System"])
         self.theme.setCurrentText(settings.theme)
         form.addRow("테마", self.theme)
-        note = QLabel("전체화면은 화면 좌표로, 창 선택 시 해당 창이 활성화된 동안 실행됩니다.\n자동 중지가 켜져 있을 때는 설정·편집 후 다시 시작하세요.")
+        note = QLabel("대상 창을 선택하면 디스플레이 설정과 무관하게 창 내부 좌표를 사용합니다.\n전체화면은 선택한 모니터의 왼쪽 위가 0,0입니다.\n기존 바탕화면 좌표는 디스플레이 선택 후 다시 지정해야 합니다.")
         note.setWordWrap(True)
         form.addRow(note)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
@@ -245,6 +256,7 @@ class SettingsDialog(QDialog):
         data.update({name: spin.value() for name, spin in self.times.items()})
         data.update({name: checkbox.isChecked() for name, checkbox in self.checks.items()})
         data["theme"] = self.theme.currentText()
+        data["display_id"] = self.displays.currentData()
         return Settings.read(data)
 
 

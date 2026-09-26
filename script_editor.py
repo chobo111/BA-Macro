@@ -4,9 +4,6 @@ from PySide6.QtCore import Qt, QEvent, QPoint, Signal, QTimer
 from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QPlainTextEdit, QComboBox, QSizeGrip
 from mouse_hook import CoordinateHook
-from native import to_client, check
-import ctypes as C
-from ctypes import wintypes as W
 from script_language import compile_script, ScriptError
 from script_help import ScriptHelpDialog
 
@@ -162,10 +159,7 @@ class ScriptEditor(QDialog):
         if not self.isVisible():
             return
         try:
-            point = W.POINT(x, y)
-            if self.target:
-                check(to_client(self.target, C.byref(point)))
-            self.pick_coordinate((point.x, point.y))
+            self.pick_coordinate(self.native.local_point(self.target, x, y))
         except OSError as error:
             self.log(str(error), error=True)
 

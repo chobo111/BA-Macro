@@ -67,6 +67,12 @@ class MainWindow(QMainWindow):
         loaded = self.store.load()
         self.settings, self.profile, self.path = loaded.settings, loaded.profile, loaded.path
         self.load_error = loaded.warning
+        self.native.display_id = self.settings.display_id
+        self.display_ticks = 0
+        try:
+            self.native.refresh_displays()
+        except OSError as error:
+            self.load_error = str(error)
         self.bridge = Bridge()
         self.engine = Engine(self.native, lambda key: self.hooks.held(key), self.bridge.error.emit)
         self.hooks = Hotkeys(self.bridge.action.emit, self.eligible, self.engine.stop)
@@ -373,6 +379,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("먼저 대상 창을 선택하세요.")
             return
         try:
+            if not self.target:
+                self.native.refresh_displays()
+                self.native.validate_context(0)
             self.rebind()
             if self.hook_enabled:
                 self.hooks.start()
@@ -479,6 +488,17 @@ class MainWindow(QMainWindow):
 
     def tick(self):
         try:
+            self.display_ticks += 1
+            if self.display_ticks % 10 == 0:
+                previous = self.native.displays
+                self.native.refresh_displays()
+                if not self.target and self.native.display_id:
+                    before = [d for d in previous if d.id == self.native.display_id]
+                    after = [d for d in self.native.displays if d.id == self.native.display_id]
+                    if before != after:
+                        self.stop()
+                        self.statusBar().showMessage('디스플레이 연결·배치가 변경되어 중지했습니다. 환경설정에서 확인하세요.')
+                    self.native.validate_context(0)
             if self.target and not self.native.exists(self.target):
                 self.stop()
                 self.target = 0
@@ -493,8 +513,14 @@ class MainWindow(QMainWindow):
                 self.target_info.setText("대상 창을 선택하세요")
             x, y = self.native.cursor(self.target or None)
             self.cursor_label.setText(f"{x:>5}, {y:>5}")
-        except OSError:
-            self.target_info.setText("창 상태 확인 중")
+        except OSError as error:
+            if not self.target and self.native.display_id:
+                if self.armed:
+                    self.stop()
+                    self.statusBar().showMessage(str(error))
+                self.cursor_label.setText('디스플레이 확인 필요')
+            else:
+                self.target_info.setText("창 상태 확인 중")
 
     @editing_dialog(hooks=True)
     def edit_key(self, rid):
@@ -681,14 +707,22 @@ class MainWindow(QMainWindow):
 
     @editing_dialog(hooks=True)
     def settings_dialog(self):
-        dialog = SettingsDialog(self.settings, self)
+        try:
+            displays = self.native.refresh_displays()
+        except OSError as error:
+            self.statusBar().showMessage(str(error))
+            displays = self.native.displays
+        dialog = SettingsDialog(self.settings, self, displays)
         while dialog.exec() == QDialog.DialogCode.Accepted:
             try:
                 settings = dialog.value()
                 self.profile.validate((settings.capture_hk, settings.pause_hk))
                 Hotkeys.compile(settings.capture_hk)
                 Hotkeys.compile(settings.pause_hk)
+                if settings.display_id != self.settings.display_id:
+                    self.stop()
                 self.settings = settings
+                self.native.display_id = settings.display_id
                 self.persist_settings()
                 self.apply_theme()
                 self.update_labels()
@@ -716,9 +750,10 @@ class MainWindow(QMainWindow):
         self.stop()
         self.flush_pending_saves()
         try:
-            current = self.native.size(self.target) if self.target and self.native.exists(self.target) else None
+            current = self.native.size(self.target) if (self.target and self.native.exists(self.target)) or (not self.target and self.native.display_id) else None
             dialog = ConversionDialog(self.profile, self.path or self.data_dir / "macro.json",
-                                      current, self.save_conversion, self, reason)
+                                      current, self.save_conversion, self, reason,
+                                      target_label="선택한 디스플레이" if not self.target and self.native.display_id else "대상 창 내부")
             dialog.exec()
         except Exception as error:
             self.error(str(error))
