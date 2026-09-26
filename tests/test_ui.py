@@ -203,7 +203,7 @@ class UiTests(unittest.TestCase):
         self.assertNotIn('auto_fire', asdict(settings))
         self.assertNotIn('show_realtime', asdict(settings))
         dialog = SettingsDialog(settings, self.window)
-        self.assertEqual(set(dialog.checks), {'auto_pause', 'exclusive_hook'})
+        self.assertEqual(set(dialog.checks), {'auto_pause', 'exclusive_hook', 'return_cursor'})
         dialog.checks['auto_pause'].setChecked(False)
         self.assertFalse(dialog.value().auto_pause)
         dialog.deleteLater()
@@ -906,3 +906,17 @@ class UiTests(unittest.TestCase):
             w.convert_dialog()
             self.assertEqual(dialog.call_args.args[2],(1920,1080))
             self.assertEqual(dialog.call_args.kwargs['target_label'],'선택한 디스플레이')
+
+    def test_settings_units_are_outside_inputs_and_return_option_controls_delay(self):
+        dialog = SettingsDialog(self.window.settings, self.window)
+        for spin in dialog.times.values():
+            self.assertEqual(spin.suffix(), '')
+            self.assertNotIn('ms', spin.text())
+        self.assertTrue(dialog.value().return_cursor)
+        dialog.checks['return_cursor'].setChecked(False)
+        self.assertFalse(dialog.times['cursor_return_delay_ms'].isEnabled())
+        self.assertFalse(dialog.value().return_cursor)
+        dialog.checks['return_cursor'].setChecked(True)
+        self.assertTrue(dialog.times['cursor_return_delay_ms'].isEnabled())
+        self.assertIn('자동 정지', dialog.checks['auto_pause'].text())
+        dialog.close()

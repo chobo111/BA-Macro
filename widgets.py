@@ -7,7 +7,7 @@ from dataclasses import asdict
 from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolygon, QPen
 from PySide6.QtWidgets import (
-    QVBoxLayout, QLabel, QPushButton, QComboBox, QTableWidget, QHeaderView, QAbstractItemView,
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QTableWidget, QHeaderView, QAbstractItemView,
     QSpinBox, QLineEdit, QDialog, QFormLayout, QDialogButtonBox, QCheckBox, QKeySequenceEdit,
     QStyledItemDelegate, QStatusBar, QTabWidget, QWidget, QFrame,
 )
@@ -238,24 +238,35 @@ class SettingsDialog(QDialog):
             self.keys[name] = editor
             form.addRow(label, editor)
         self.times = {}
+        self.checks = {}
         for name, label in (("move_to_click_delay_ms", "이동 후 클릭 대기시간"), ("click_hold_ms", "클릭 유지 시간"),
                             ("cursor_return_delay_ms", "클릭 후 커서 복귀 대기시간"),
                             ("drag_segment_duration_ms", "curve 드래그 시간")):
             spin = QSpinBox()
             spin.setRange(1 if name == "click_hold_ms" else 0, 10000)
-            spin.setSuffix(" ms")
             spin.setValue(getattr(settings, name))
             self.times[name] = spin
+            field = QWidget()
+            field_layout = QHBoxLayout(field)
+            field_layout.setContentsMargins(0, 0, 0, 0)
+            field_layout.addWidget(spin, 1)
+            field_layout.addWidget(QLabel("ms"))
             action_form = forms["동작 / 스크립트"]
+            if name == "cursor_return_delay_ms":
+                return_cursor = QCheckBox("클릭 후 원래 커서 위치로 복귀")
+                return_cursor.setChecked(settings.return_cursor)
+                return_cursor.toggled.connect(field.setEnabled)
+                field.setEnabled(settings.return_cursor)
+                self.checks["return_cursor"] = return_cursor
+                action_form.addRow(return_cursor)
             if name == "drag_segment_duration_ms":
                 separator = QFrame()
                 separator.setFrameShape(QFrame.Shape.HLine)
                 separator.setFrameShadow(QFrame.Shadow.Sunken)
                 action_form.addRow(separator)
-            action_form.addRow(label, spin)
-        self.checks = {}
+            action_form.addRow(label, field)
         for name, label in (("exclusive_hook", "처리한 단축키를 다른 앱에 전달하지 않기"),
-                            ("auto_pause", "설정·편집 창을 열거나 변경할 때 자동 중지")):
+                            ("auto_pause", "설정·편집 창을 열거나 변경할 때 자동 정지")):
             checkbox = QCheckBox(label)
             checkbox.setChecked(getattr(settings, name))
             self.checks[name] = checkbox

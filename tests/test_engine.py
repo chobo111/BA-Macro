@@ -131,6 +131,15 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.native.position, (200, 300))
         self.assertEqual(self.errors, [])
 
+    def test_disabled_cursor_return_skips_restore_and_return_wait(self):
+        from unittest.mock import patch
+        with patch.object(self.engine, 'wait') as wait, patch.object(self.native, 'cursor_screen') as cursor:
+            self.engine.execute(replace(self.command, return_cursor=False, cursor_return_delay_ms=5000))
+            cursor.assert_not_called()
+        self.assertEqual([call.args[0] for call in wait.call_args_list], [0, 1])
+        self.assertEqual(self.native.events, [("move", 30, 40), ("button", True), ("button", False)])
+        self.assertEqual(self.native.position, (30, 40))
+
     def test_inactive_window_never_receives_input(self):
         self.native.active_value = False
         with self.assertRaises(Cancelled):
