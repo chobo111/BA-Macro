@@ -202,10 +202,9 @@ class SettingsDialog(QDialog):
         self.original = settings
         form = QFormLayout(self)
         self.displays = QComboBox()
-        self.displays.addItem("전체 바탕화면 (기존 좌표 방식)", '')
+        self.displays.addItem("전체 디스플레이", '')
         for index, display in enumerate(displays, 1):
-            main = ' · 주 모니터' if display.primary else ''
-            self.displays.addItem(f'{index}번{main} · {display.name} · {display.width}×{display.height}', display.id)
+            self.displays.addItem(f'{index}번 · {display.name} · {display.width}×{display.height}', display.id)
         selected = self.displays.findData(settings.display_id)
         if selected < 0:
             self.displays.addItem('연결되지 않은 디스플레이 · 다시 선택하세요', settings.display_id)

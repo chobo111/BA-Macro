@@ -95,3 +95,16 @@ class DisplayTests(TestCase):
                 self.assertEqual(mouse_button.call_args_list[0].args,('left',True))
             finally:
                 engine.shutdown()
+
+    def test_monitor_model_name_and_unavailable_edid_fallback(self):
+        from displays import monitor_name
+        from unittest.mock import MagicMock
+        edid=bytearray(128)
+        edid[:8]=b'\x00\xff\xff\xff\xff\xff\xff\x00'
+        edid[54:72]=b'\x00\x00\x00\xfc\x00PHL 279M1RV\n '
+        identity=r'\\?\DISPLAY#PHLC254#instance#guid'
+        with patch('displays.winreg.OpenKey',return_value=MagicMock()), \
+             patch('displays.winreg.QueryValueEx',return_value=(bytes(edid),3)):
+            self.assertEqual(monitor_name(identity,'Generic PnP Monitor'),'PHL 279M1RV')
+        with patch('displays.winreg.OpenKey',side_effect=OSError):
+            self.assertEqual(monitor_name(identity,'Generic PnP Monitor'),'Generic PnP Monitor')

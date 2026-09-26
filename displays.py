@@ -2,6 +2,7 @@
 import ctypes as C
 from ctypes import wintypes as W
 from dataclasses import dataclass
+import winreg
 
 user32 = C.WinDLL('user32', use_last_error=True)
 
@@ -42,6 +43,28 @@ def monitor_info(handle):
     return info
 
 
+def monitor_name(identity, fallback):
+    """Read the monitor's EDID name; generic driver labels are only a fallback."""
+    parts = identity.split('#')
+    if len(parts) < 3 or not parts[0].upper().endswith('DISPLAY'):
+        return fallback
+    path = rf'SYSTEM\CurrentControlSet\Enum\DISPLAY\{parts[1]}\{parts[2]}\Device Parameters'
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+            edid, _ = winreg.QueryValueEx(key, 'EDID')
+        if not isinstance(edid, bytes) or len(edid) < 128 or edid[:8] != b'\x00\xff\xff\xff\xff\xff\xff\x00':
+            return fallback
+        for offset in (54, 72, 90, 108):
+            block = edid[offset:offset+18]
+            if block[:5] == b'\x00\x00\x00\xfc\x00':
+                name = block[5:18].split(b'\n', 1)[0].split(b'\x00', 1)[0].decode('ascii', errors='replace').strip()
+                if name:
+                    return name
+    except OSError:
+        pass
+    return fallback
+
+
 def enumerate_displays():
     result = []
     errors = []
@@ -54,7 +77,7 @@ def enumerate_displays():
             found = user32.EnumDisplayDevicesW(info.device, 0, C.byref(device), 1)
             identity = device.device_id if found and device.device_id else info.device
             r = info.monitor
-            result.append(Display(identity, device.description if found else info.device,
+            result.append(Display(identity, monitor_name(identity, device.description if found else info.device),
                                   int(handle), info.device, r.left, r.top,
                                   r.right-r.left, r.bottom-r.top, bool(info.flags & 1)))
         except OSError as error:
