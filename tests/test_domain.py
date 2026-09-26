@@ -75,8 +75,8 @@ class DomainTests(unittest.TestCase):
     def test_cursor_return_delay_default_and_range(self):
         self.assertEqual(Settings.read({}).cursor_return_delay_ms, 50)
         self.assertEqual(Settings.read({'cursor_return_delay_ms': 0}).cursor_return_delay_ms, 0)
-        self.assertEqual(Settings.read({'cursor_return_delay_ms': 10000}).cursor_return_delay_ms, 10000)
-        for value in (-1, 10001, 1.5):
+        self.assertEqual(Settings.read({'cursor_return_delay_ms': 99999}).cursor_return_delay_ms, 99999)
+        for value in (-1, 100000, 1.5):
             with self.assertRaises(ValueError):
                 Settings.read({'cursor_return_delay_ms': value})
 

@@ -183,7 +183,7 @@ class Settings:
         if not obj.pause_hk or not obj.capture_hk or obj.pause_hk == obj.capture_hk:
             raise ValueError("캡처와 작동/정지 단축키는 서로 다르게 지정하세요.")
         for name in ("move_to_click_delay_ms", "click_hold_ms", "cursor_return_delay_ms", "drag_segment_duration_ms"):
-            setattr(obj, name, bounded_int(data.get(name, getattr(obj, name)), 1 if name == "click_hold_ms" else 0, 10000, name))
+            setattr(obj, name, bounded_int(data.get(name, getattr(obj, name)), 1 if name == "click_hold_ms" else 0, 99999, name))
         for name in ("exclusive_hook", "auto_pause", "return_cursor"):
             value = data.get(name, getattr(obj, name))
             if not isinstance(value, bool):

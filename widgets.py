@@ -243,7 +243,7 @@ class SettingsDialog(QDialog):
                             ("cursor_return_delay_ms", "클릭 후 커서 복귀 대기시간"),
                             ("drag_segment_duration_ms", "curve 드래그 시간")):
             spin = QSpinBox()
-            spin.setRange(1 if name == "click_hold_ms" else 0, 10000)
+            spin.setRange(1 if name == "click_hold_ms" else 0, 99999)
             spin.setValue(getattr(settings, name))
             spin.setFixedWidth(spin.fontMetrics().horizontalAdvance("10000") + spin.fontMetrics().horizontalAdvance("0") + 36)
             self.times[name] = spin

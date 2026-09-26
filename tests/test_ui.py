@@ -670,7 +670,7 @@ class UiTests(unittest.TestCase):
         self.assertEqual(Settings.read({}).drag_segment_duration_ms, 10)
         self.assertTrue(Settings.read({}).exclusive_hook)
         self.assertFalse(Settings.read({'exclusive_hook': False}).exclusive_hook)
-        for value in (-1, 10001):
+        for value in (-1, 100000):
             with self.assertRaises(ValueError):
                 Settings.read({'drag_segment_duration_ms': value})
 
@@ -919,4 +919,19 @@ class UiTests(unittest.TestCase):
         dialog.checks['return_cursor'].setChecked(True)
         self.assertTrue(dialog.times['cursor_return_delay_ms'].isEnabled())
         self.assertIn('자동 정지', dialog.checks['auto_pause'].text())
+        dialog.close()
+
+    def test_timing_fields_accept_five_digit_keyboard_input(self):
+        dialog = SettingsDialog(self.window.settings, self.window)
+        dialog.tabs.setCurrentIndex(1)
+        dialog.show()
+        self.qt.processEvents()
+        for name, spin in dialog.times.items():
+            for value in (12345, 99999):
+                spin.setFocus()
+                spin.selectAll()
+                QTest.keyClicks(spin, str(value))
+                spin.interpretText()
+                self.assertEqual(spin.value(), value, name)
+                self.assertEqual(getattr(dialog.value(), name), value)
         dialog.close()
