@@ -245,7 +245,7 @@ class SettingsDialog(QDialog):
             spin = QSpinBox()
             spin.setRange(1 if name == "click_hold_ms" else 0, 10000)
             spin.setValue(getattr(settings, name))
-            spin.setFixedWidth(spin.fontMetrics().horizontalAdvance("10000") + 36)
+            spin.setFixedWidth(spin.fontMetrics().horizontalAdvance("10000") + spin.fontMetrics().horizontalAdvance("0") + 36)
             self.times[name] = spin
             field = QWidget()
             field_layout = QHBoxLayout(field)
