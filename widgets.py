@@ -245,12 +245,15 @@ class SettingsDialog(QDialog):
             spin = QSpinBox()
             spin.setRange(1 if name == "click_hold_ms" else 0, 10000)
             spin.setValue(getattr(settings, name))
+            spin.setFixedWidth(spin.fontMetrics().horizontalAdvance("10000") + 36)
             self.times[name] = spin
             field = QWidget()
             field_layout = QHBoxLayout(field)
             field_layout.setContentsMargins(0, 0, 0, 0)
-            field_layout.addWidget(spin, 1)
+            field_layout.setSpacing(6)
+            field_layout.addWidget(spin)
             field_layout.addWidget(QLabel("ms"))
+            field_layout.addStretch()
             action_form = forms["동작 / 스크립트"]
             if name == "cursor_return_delay_ms":
                 return_cursor = QCheckBox("클릭 후 원래 커서 위치로 복귀")
