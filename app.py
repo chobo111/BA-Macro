@@ -24,7 +24,7 @@ from conversion_dialog import ConversionDialog
 from version import APP_NAME, VERSION
 from session import ExecutionSession, editing_dialog
 from widgets import (make_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
-                     BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog)
+                     BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog, NoWheelCombo, NoWheelSpinBox)
 
 BASE = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
 MODE_LABELS = MODES
@@ -292,14 +292,14 @@ class MainWindow(QMainWindow):
                 self.table.setCellWidget(i, 1, script_button)
             else:
                 for column, field in ((1, "x"), (2, "y")):
-                    spin = QSpinBox()
+                    spin = NoWheelSpinBox()
                     spin.setRange(-99999, 99999)
                     spin.setValue(getattr(row, field))
                     spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
                     self.table.setColumnWidth(column, spin.fontMetrics().horizontalAdvance("-99999") + 16)
                     spin.valueChanged.connect(lambda value, rid=row.id, f=field: self.set_value(rid, f, value))
                     self.table.setCellWidget(i, column, spin)
-            mode = QComboBox()
+            mode = NoWheelCombo()
             mode.setMinimumContentsLength(1)
             mode.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             for value, label in MODES.items():

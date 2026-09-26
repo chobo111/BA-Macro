@@ -65,7 +65,17 @@ def make_trash_icon():
     return QIcon(pixmap)
 
 
-class TargetCombo(QComboBox):
+class NoWheelCombo(QComboBox):
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class NoWheelSpinBox(QSpinBox):
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class TargetCombo(NoWheelCombo):
     opening = Signal()
 
     def showPopup(self):
