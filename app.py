@@ -234,6 +234,9 @@ class MainWindow(QMainWindow):
             QLabel {{background: transparent;}}
             QLabel#muted {{color: {muted};}}
             QLabel#cursor {{color: #47b8ed; font-family: Consolas; font-weight: 600;}}
+            QTabWidget::pane {{border: 1px solid {border}; border-radius: 4px;}}
+            QTabBar::tab {{background: {panel}; color: {muted}; padding: 7px 18px; border: 1px solid {border};}}
+            QTabBar::tab:selected {{color: {text}; border-bottom: 2px solid #47b8ed;}}
             QGroupBox {{background: {panel}; border: 1px solid {border}; border-radius: 6px; margin-top: 8px; padding: 4px 2px 2px;}}
             QGroupBox::title {{subcontrol-origin: margin; left: 15px; padding: 0 5px; color: {muted};}}
             QPushButton {{background: {panel}; border: 1px solid {border}; border-radius: 5px; padding: 4px 7px;}}

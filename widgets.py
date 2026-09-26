@@ -9,7 +9,7 @@ from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolyg
 from PySide6.QtWidgets import (
     QVBoxLayout, QLabel, QPushButton, QComboBox, QTableWidget, QHeaderView, QAbstractItemView,
     QSpinBox, QLineEdit, QDialog, QFormLayout, QDialogButtonBox, QCheckBox, QKeySequenceEdit,
-    QStyledItemDelegate, QStatusBar,
+    QStyledItemDelegate, QStatusBar, QTabWidget, QWidget,
 )
 
 from domain import Settings, hotkey
@@ -200,7 +200,17 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("환경설정")
         self.setMinimumWidth(470)
         self.original = settings
-        form = QFormLayout(self)
+        layout = QVBoxLayout(self)
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
+        forms = {}
+        for label in ("일반", "동작", "스크립트"):
+            page = QWidget()
+            form_layout = QFormLayout(page)
+            form_layout.setFormAlignment(Qt.AlignmentFlag.AlignTop)
+            forms[label] = form_layout
+            self.tabs.addTab(page, label)
+        form = forms["일반"]
         self.displays = QComboBox()
         self.displays.addItem("전체 디스플레이", '')
         for index, display in enumerate(displays, 1):
@@ -226,7 +236,7 @@ class SettingsDialog(QDialog):
             spin.setSuffix(" ms")
             spin.setValue(getattr(settings, name))
             self.times[name] = spin
-            form.addRow(label, spin)
+            forms["스크립트" if name == "curve_duration" else "동작"].addRow(label, spin)
         self.checks = {}
         for name, label in (("exclusive_hook", "처리한 단축키를 다른 앱에 전달하지 않기"),
                             ("auto_pause", "설정·편집 창을 열거나 변경할 때 자동 중지")):
@@ -241,12 +251,18 @@ class SettingsDialog(QDialog):
         note = QLabel("대상 창을 선택하면 디스플레이 설정과 무관하게 창 내부 좌표를 사용합니다.\n전체화면은 선택한 모니터의 왼쪽 위가 0,0입니다.\n기존 바탕화면 좌표는 디스플레이 선택 후 다시 지정해야 합니다.")
         note.setWordWrap(True)
         form.addRow(note)
+        action_note = QLabel("클릭 유지 시간은 스크립트의 click 명령에도 적용됩니다.\n동작 완료 후 대기는 일반 동작과 스크립트에 공통으로 적용됩니다.")
+        action_note.setWordWrap(True)
+        forms["동작"].addRow(action_note)
+        script_note = QLabel("curve 명령에서 좌표 사이를 이동하는 시간입니다.\ncurve_first_time과 curve_last_time의 대기는 별도로 적용됩니다.")
+        script_note.setWordWrap(True)
+        forms["스크립트"].addRow(script_note)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Save).setText('저장')
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('취소')
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
+        layout.addWidget(buttons)
 
     def value(self):
         data = asdict(self.original)
