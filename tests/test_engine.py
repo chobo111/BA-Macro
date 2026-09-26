@@ -73,7 +73,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(sum(e == ("button", True) for e in self.native.events), 1)
 
     def test_pause_releases_button_and_clears_pending_switch(self):
-        self.assertTrue(self.engine.submit(replace(self.command, click_duration=5000)))
+        self.assertTrue(self.engine.submit(replace(self.command, click_hold_ms=5000)))
         self.assertTrue(self.native.down.wait(1))
         start = time.monotonic()
         self.engine.stop()
@@ -83,7 +83,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.errors, [])
 
     def test_focus_loss_releases_button_without_second_click(self):
-        self.engine.submit(replace(self.command, click_duration=5000))
+        self.engine.submit(replace(self.command, click_hold_ms=5000))
         self.assertTrue(self.native.down.wait(1))
         self.native.active_value = False
         self.wait_idle()

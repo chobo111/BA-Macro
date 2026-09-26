@@ -420,7 +420,7 @@ class MainWindow(QMainWindow):
                     self.on_engine_error(str(error))
                     return
             command = Command(self.target, row.x, row.y, row.action_mode, row.move_hk,
-                              s.click_delay, s.click_duration, row.script, curve_duration=s.curve_duration, program=program)
+                              s.move_to_click_delay_ms, s.click_hold_ms, row.script, drag_segment_duration_ms=s.drag_segment_duration_ms, program=program)
             if not self.engine.submit(command):
                 self.statusBar().showMessage("실행기가 종료되어 실행할 수 없습니다.")
 

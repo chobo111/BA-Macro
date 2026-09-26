@@ -35,8 +35,8 @@ class DomainTests(unittest.TestCase):
             Profile.default().validate(["q"])
 
     def test_bad_values(self):
-        for data in ({"click_duration": -1}, {"auto_pause": "yes"},
-                     {"capture_hk": "ctrl+s", "pause_hk": "ctrl+s"}, {"click_delay": 1.5}):
+        for data in ({"click_hold_ms": -1}, {"auto_pause": "yes"},
+                     {"capture_hk": "ctrl+s", "pause_hk": "ctrl+s"}, {"move_to_click_delay_ms": 1.5}):
             with self.subTest(data=data), self.assertRaises(ValueError):
                 Settings.read(data)
         for coords in ("x, y", "1, 2, 3", "100001, 0"):
@@ -58,9 +58,19 @@ class DomainTests(unittest.TestCase):
 
     def test_removed_completion_delay_is_ignored_in_older_settings(self):
         from dataclasses import asdict
-        settings = Settings.read({"after_action_delay": 10000, "click_duration": 75})
-        self.assertEqual(settings.click_duration, 75)
+        settings = Settings.read({"after_action_delay": 10000, "click_hold_ms": 75})
+        self.assertEqual(settings.click_hold_ms, 75)
         self.assertNotIn("after_action_delay", asdict(settings))
+
+    def test_legacy_timing_names_migrate_without_losing_values(self):
+        from dataclasses import asdict
+        legacy = {"click_delay": 7, "click_duration": 83, "curve_duration": 19}
+        result = asdict(Settings.read(legacy))
+        self.assertEqual((result['move_to_click_delay_ms'], result['click_hold_ms'],
+                          result['drag_segment_duration_ms']), (7, 83, 19))
+        self.assertFalse(set(legacy) & set(result))
+        self.assertEqual(Settings.read({**legacy, 'click_hold_ms': 30}).click_hold_ms, 30)
+        self.assertEqual(legacy, {"click_delay": 7, "click_duration": 83, "curve_duration": 19})
 
 
 if __name__ == "__main__":

@@ -377,13 +377,13 @@ class UiTests(unittest.TestCase):
             self.qt.processEvents()
             self.assertFalse(w.grab().isNull())
         dialog = SettingsDialog(w.settings, w)
-        self.assertEqual(dialog.value().click_duration, 50)
-        self.assertEqual(dialog.value().curve_duration, 10)
+        self.assertEqual(dialog.value().click_hold_ms, 50)
+        self.assertEqual(dialog.value().drag_segment_duration_ms, 10)
         self.assertTrue(dialog.value().exclusive_hook)
-        dialog.times['curve_duration'].setValue(25)
-        self.assertEqual(dialog.value().curve_duration, 25)
-        dialog.times["click_duration"].setValue(-1)
-        self.assertEqual(dialog.value().click_duration, 1)
+        dialog.times['drag_segment_duration_ms'].setValue(25)
+        self.assertEqual(dialog.value().drag_segment_duration_ms, 25)
+        dialog.times["click_hold_ms"].setValue(-1)
+        self.assertEqual(dialog.value().click_hold_ms, 1)
         dialog.deleteLater()
 
     def test_open_legacy_profile(self):
@@ -657,22 +657,22 @@ class UiTests(unittest.TestCase):
         w = self.window
         row = w.profile.rows[0]
         row.action_mode, row.script = 'script', 'curve 10,20 30,40'
-        w.settings.curve_duration = 25
+        w.settings.drag_segment_duration_ms = 25
         w.armed = True
         with patch.object(w.engine, 'submit', return_value=True) as submit:
             w.dispatch('move', row.id)
-            self.assertEqual(submit.call_args.args[0].curve_duration, 25)
+            self.assertEqual(submit.call_args.args[0].drag_segment_duration_ms, 25)
         w.persist_settings()
         from domain import Settings
         loaded = Settings.read(self.saved(w.settings_path))
-        self.assertEqual(loaded.curve_duration, 25)
+        self.assertEqual(loaded.drag_segment_duration_ms, 25)
         self.assertTrue(loaded.exclusive_hook)
-        self.assertEqual(Settings.read({}).curve_duration, 10)
+        self.assertEqual(Settings.read({}).drag_segment_duration_ms, 10)
         self.assertTrue(Settings.read({}).exclusive_hook)
         self.assertFalse(Settings.read({'exclusive_hook': False}).exclusive_hook)
         for value in (-1, 10001):
             with self.assertRaises(ValueError):
-                Settings.read({'curve_duration': value})
+                Settings.read({'drag_segment_duration_ms': value})
 
     def test_autosave_all_edits_and_new_profile_preserves_old(self):
         w=self.window

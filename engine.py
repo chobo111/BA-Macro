@@ -11,10 +11,10 @@ class Command:
     y: int
     mode: str
     key: str
-    click_delay: int
-    click_duration: int
+    move_to_click_delay_ms: int
+    click_hold_ms: int
     script: str = ''
-    curve_duration: int = 10
+    drag_segment_duration_ms: int = 10
     program: Program | None = None
 
 
@@ -85,7 +85,7 @@ class Engine:
             if hasattr(self.native, "validate_pointer"):
                 self.native.validate_pointer(command.hwnd)
             self.native.button(True)
-            self.wait(command.click_duration, command)
+            self.wait(command.click_hold_ms, command)
         finally:
             self.native.button(False)
 
@@ -97,7 +97,7 @@ class Engine:
         self.guard(c)
         self.native.move(*self.native.screen(c.hwnd, c.x, c.y))
         if c.mode == "move_and_click":
-            self.wait(c.click_delay, c)
+            self.wait(c.move_to_click_delay_ms, c)
             self.click(c)
 
     def _run(self):

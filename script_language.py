@@ -262,7 +262,7 @@ class ScriptRuntime:
                         self.native.move(*position)
                         if name == 'click':
                             self.button('left', True)
-                            self.wait(c.click_duration, c)
+                            self.wait(c.click_hold_ms, c)
                             self.button('left', False)
                         elif name == 'switch':
                             down = 'left' not in self.buttons
@@ -302,12 +302,12 @@ class ScriptRuntime:
                     self.button('left', True)
                     self.wait(self.first_time, c)
                     # Avoid many tiny waits for short drags; duration is per segment.
-                    segments = max(1, min(10, c.curve_duration // 10))
+                    segments = max(1, min(10, c.drag_segment_duration_ms // 10))
                     for start, finish in zip(path, path[1:]):
                         for step in range(1, segments + 1):
                             self.guard(c)
                             self.native.move(*(round(a + (b-a)*step/segments) for a, b in zip(start, finish)))
-                            self.wait(c.curve_duration / segments, c)
+                            self.wait(c.drag_segment_duration_ms / segments, c)
                     if self.last_time != 'untilcmd':
                         self.wait(self.last_time, c)
                         self.button('left', False)

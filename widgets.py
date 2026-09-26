@@ -9,7 +9,7 @@ from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolyg
 from PySide6.QtWidgets import (
     QVBoxLayout, QLabel, QPushButton, QComboBox, QTableWidget, QHeaderView, QAbstractItemView,
     QSpinBox, QLineEdit, QDialog, QFormLayout, QDialogButtonBox, QCheckBox, QKeySequenceEdit,
-    QStyledItemDelegate, QStatusBar, QTabWidget, QWidget,
+    QStyledItemDelegate, QStatusBar, QTabWidget, QWidget, QFrame,
 )
 
 from domain import Settings, hotkey
@@ -214,7 +214,7 @@ class SettingsDialog(QDialog):
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
         forms = {}
-        for label in ("일반", "동작", "스크립트"):
+        for label in ("일반", "동작 / 스크립트"):
             page = QWidget()
             form_layout = QFormLayout(page)
             form_layout.setFormAlignment(Qt.AlignmentFlag.AlignTop)
@@ -238,14 +238,20 @@ class SettingsDialog(QDialog):
             self.keys[name] = editor
             form.addRow(label, editor)
         self.times = {}
-        for name, label in (("click_delay", "이동 후 클릭 대기"), ("click_duration", "클릭 유지 시간"),
-                            ("curve_duration", "드래그 이동 시간 (좌표 구간당)")):
+        for name, label in (("move_to_click_delay_ms", "이동 후 클릭 대기시간"), ("click_hold_ms", "클릭 유지 시간"),
+                            ("drag_segment_duration_ms", "curve 드래그 시간")):
             spin = QSpinBox()
-            spin.setRange(1 if name == "click_duration" else 0, 10000)
+            spin.setRange(1 if name == "click_hold_ms" else 0, 10000)
             spin.setSuffix(" ms")
             spin.setValue(getattr(settings, name))
             self.times[name] = spin
-            forms["스크립트" if name == "curve_duration" else "동작"].addRow(label, spin)
+            action_form = forms["동작 / 스크립트"]
+            if name == "drag_segment_duration_ms":
+                separator = QFrame()
+                separator.setFrameShape(QFrame.Shape.HLine)
+                separator.setFrameShadow(QFrame.Shadow.Sunken)
+                action_form.addRow(separator)
+            action_form.addRow(label, spin)
         self.checks = {}
         for name, label in (("exclusive_hook", "처리한 단축키를 다른 앱에 전달하지 않기"),
                             ("auto_pause", "설정·편집 창을 열거나 변경할 때 자동 중지")):

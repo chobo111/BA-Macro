@@ -157,9 +157,9 @@ class Profile:
 class Settings:
     capture_hk: str = "ctrl+s"
     pause_hk: str = "ctrl+`"
-    click_delay: int = 15
-    click_duration: int = 50
-    curve_duration: int = 10
+    move_to_click_delay_ms: int = 15
+    click_hold_ms: int = 50
+    drag_segment_duration_ms: int = 10
     exclusive_hook: bool = True
     auto_pause: bool = True
     theme: str = "Dark"
@@ -170,13 +170,18 @@ class Settings:
     def read(cls, data):
         if not isinstance(data, dict):
             raise ValueError("설정 형식이 잘못되었습니다.")
+        data = dict(data)
+        for old, new in {"click_delay": "move_to_click_delay_ms", "click_duration": "click_hold_ms",
+                         "curve_duration": "drag_segment_duration_ms"}.items():
+            if new not in data and old in data:
+                data[new] = data[old]
         obj = cls()
         for name in ("capture_hk", "pause_hk"):
             setattr(obj, name, hotkey(data.get(name, getattr(obj, name))))
         if not obj.pause_hk or not obj.capture_hk or obj.pause_hk == obj.capture_hk:
             raise ValueError("캡처와 작동/정지 단축키는 서로 다르게 지정하세요.")
-        for name in ("click_delay", "click_duration", "curve_duration"):
-            setattr(obj, name, bounded_int(data.get(name, getattr(obj, name)), 1 if name == "click_duration" else 0, 10000, name))
+        for name in ("move_to_click_delay_ms", "click_hold_ms", "drag_segment_duration_ms"):
+            setattr(obj, name, bounded_int(data.get(name, getattr(obj, name)), 1 if name == "click_hold_ms" else 0, 10000, name))
         for name in ("exclusive_hook", "auto_pause"):
             value = data.get(name, getattr(obj, name))
             if not isinstance(value, bool):

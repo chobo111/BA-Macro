@@ -105,7 +105,7 @@ class ScriptTests(unittest.TestCase):
             with self.subTest(duration=duration):
                 self.waits.clear()
                 self.native.events.clear()
-                self.command = replace(self.command, curve_duration=duration)
+                self.command = replace(self.command, drag_segment_duration_ms=duration)
                 self.run_script('curve_first_time 5\ncurve_last_time 7\ncurve 10,20 30,40 50,60')
                 self.assertAlmostEqual(sum(self.waits), duration * 2 + 12)
                 self.assertIn(('move', 30, 40), self.native.events)
