@@ -81,13 +81,15 @@ class DisplayTests(TestCase):
         info=SimpleNamespace(device=LEFT.device,monitor=W.RECT(-1920,-200,0,880))
         with patch('native.monitor_info',return_value=info), \
              patch.object(self.native,'cursor',return_value=(120,300)), \
+             patch.object(self.native,'cursor_screen',return_value=(-2300,50)), \
              patch.object(self.native,'move') as move, \
              patch.object(self.native,'button') as button, \
              patch.object(self.native,'mouse_button') as mouse_button:
             engine=Engine(self.native,lambda key:False)
             try:
                 engine.execute(command)
-                move.assert_called_with(-1800,100)
+                self.assertEqual(move.call_args_list[0].args,(-1800,100))
+                move.assert_called_with(-2300,50)
                 self.assertEqual(button.call_args_list[0].args,(True,))
                 runtime=ScriptRuntime(self.native,lambda c:None,lambda ms,c:None,lambda key:False)
                 runtime.run(compile_script('click 120,300\nmove mouse'),command)

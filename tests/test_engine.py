@@ -17,6 +17,7 @@ class FakeWindows:
     def size(self, hwnd): return (1920, 1080)
     def bounds(self, hwnd): return (0, 0, 1920, 1080) if hwnd else (-1920, -1080, 1920, 1080)
     def cursor(self, hwnd=None): return self.position
+    def cursor_screen(self): return self.position
     def screen(self, hwnd, x, y): return x, y
 
     def move(self, x, y):
@@ -62,14 +63,14 @@ class EngineTests(unittest.TestCase):
 
     def test_coordinate_modes(self):
         self.engine.execute(self.command)
-        self.assertEqual(self.native.events, [("move", 30, 40), ("button", True), ("button", False)])
+        self.assertEqual(self.native.events, [("move", 30, 40), ("button", True), ("button", False), ("move", 200, 300)])
         self.native.events.clear()
         self.engine.execute(replace(self.command, mode="move_only"))
         self.assertEqual(self.native.events, [("move", 30, 40)])
         self.native.events.clear()
         self.native.position = (200, 300)
         self.engine.execute(replace(self.command, mode="move_and_click"))
-        self.assertEqual(self.native.position, (30, 40))
+        self.assertEqual(self.native.position, (200, 300))
         self.assertEqual(sum(e == ("button", True) for e in self.native.events), 1)
 
     def test_pause_releases_button_and_clears_pending_switch(self):
@@ -80,6 +81,7 @@ class EngineTests(unittest.TestCase):
         self.wait_idle()
         self.assertLess(time.monotonic() - start, .5)
         self.assertIn(("button", False), self.native.events)
+        self.assertEqual(self.native.position, (200, 300))
         self.assertEqual(self.errors, [])
 
     def test_focus_loss_releases_button_without_second_click(self):
@@ -87,8 +89,14 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(self.native.down.wait(1))
         self.native.active_value = False
         self.wait_idle()
-        self.assertEqual(self.native.events[-1], ("button", False))
+        self.assertEqual(self.native.events[-2:], [("button", False), ("move", 200, 300)])
         self.assertEqual(sum(e == ("button", True) for e in self.native.events), 1)
+
+    def test_returns_to_original_screen_point_outside_target(self):
+        self.native.position = (-2200, -100)
+        self.engine.execute(self.command)
+        self.assertEqual(self.native.position, (-2200, -100))
+        self.assertEqual(self.native.events[-2:], [("button", False), ("move", -2200, -100)])
 
     def test_inactive_window_never_receives_input(self):
         self.native.active_value = False
@@ -106,6 +114,7 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(OSError):
             self.engine.execute(self.command)
         self.assertIn(("button", False), self.native.events)
+        self.assertEqual(self.native.position, (200, 300))
 
     def test_held_coordinate_key_clicks_only_once(self):
         self.engine.held = lambda key: True

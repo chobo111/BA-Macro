@@ -95,10 +95,19 @@ class Engine:
         if not left <= c.x < right or not top <= c.y < bottom:
             raise ValueError("저장 좌표가 대상 영역 밖에 있습니다. 좌표를 다시 캡처하세요.")
         self.guard(c)
-        self.native.move(*self.native.screen(c.hwnd, c.x, c.y))
-        if c.mode == "move_and_click":
+        destination = self.native.screen(c.hwnd, c.x, c.y)
+        if c.mode != "move_and_click":
+            self.native.move(*destination)
+            return
+        origin = self.native.cursor_screen()
+        try:
+            self.native.move(*destination)
             self.wait(c.move_to_click_delay_ms, c)
             self.click(c)
+        finally:
+            # Restore physical screen coordinates even after cancellation or focus loss.
+            # click() releases the button before this cleanup runs.
+            self.native.move(*origin)
 
     def _run(self):
         while True:

@@ -204,10 +204,13 @@ class Windows:
     def foreground(self):
         return int(foreground() or 0)
 
-    def cursor(self, hwnd=None):
+    def cursor_screen(self):
         point = W.POINT()
         check(get_cursor(C.byref(point)))
-        return self.local_point(hwnd, point.x, point.y)
+        return point.x, point.y
+
+    def cursor(self, hwnd=None):
+        return self.local_point(hwnd, *self.cursor_screen())
 
     def screen(self, hwnd, x, y):
         if not hwnd:
