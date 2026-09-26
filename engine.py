@@ -16,6 +16,7 @@ class Command:
     script: str = ''
     drag_segment_duration_ms: int = 10
     program: Program | None = None
+    cursor_return_delay_ms: int = 50
 
 
 class Cancelled(Exception):
@@ -104,6 +105,7 @@ class Engine:
             self.native.move(*destination)
             self.wait(c.move_to_click_delay_ms, c)
             self.click(c)
+            self.wait(c.cursor_return_delay_ms, c)
         finally:
             # Restore physical screen coordinates even after cancellation or focus loss.
             # click() releases the button before this cleanup runs.

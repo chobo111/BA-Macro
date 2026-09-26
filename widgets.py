@@ -239,6 +239,7 @@ class SettingsDialog(QDialog):
             form.addRow(label, editor)
         self.times = {}
         for name, label in (("move_to_click_delay_ms", "이동 후 클릭 대기시간"), ("click_hold_ms", "클릭 유지 시간"),
+                            ("cursor_return_delay_ms", "클릭 후 커서 복귀 대기시간"),
                             ("drag_segment_duration_ms", "curve 드래그 시간")):
             spin = QSpinBox()
             spin.setRange(1 if name == "click_hold_ms" else 0, 10000)

@@ -98,6 +98,39 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.native.position, (-2200, -100))
         self.assertEqual(self.native.events[-2:], [("button", False), ("move", -2200, -100)])
 
+    def test_cursor_return_wait_occurs_after_release_before_restore(self):
+        from unittest.mock import patch
+        def record_wait(milliseconds, command):
+            self.native.events.append(("wait", milliseconds))
+        with patch.object(self.engine, 'wait', side_effect=record_wait):
+            self.engine.execute(replace(self.command, cursor_return_delay_ms=80))
+        self.assertEqual(self.native.events, [
+            ("move", 30, 40), ("wait", 0), ("button", True), ("wait", 1),
+            ("button", False), ("wait", 80), ("move", 200, 300)])
+        self.native.events.clear()
+        with patch.object(self.engine, 'wait') as wait:
+            self.engine.execute(replace(self.command, mode='move_only'))
+            wait.assert_not_called()
+
+    def test_cursor_return_wait_can_be_cancelled_without_holding_button(self):
+        from unittest.mock import patch
+        entered = threading.Event()
+        original_wait = self.engine.wait
+        def wait(milliseconds, command):
+            if milliseconds == 5000:
+                entered.set()
+            original_wait(milliseconds, command)
+        with patch.object(self.engine, 'wait', side_effect=wait):
+            self.engine.submit(replace(self.command, cursor_return_delay_ms=5000))
+            self.assertTrue(entered.wait(1))
+            self.assertEqual(self.native.events[-1], ("button", False))
+            start = time.monotonic()
+            self.engine.stop()
+            self.wait_idle()
+            self.assertLess(time.monotonic() - start, .5)
+        self.assertEqual(self.native.position, (200, 300))
+        self.assertEqual(self.errors, [])
+
     def test_inactive_window_never_receives_input(self):
         self.native.active_value = False
         with self.assertRaises(Cancelled):

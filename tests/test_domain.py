@@ -72,6 +72,14 @@ class DomainTests(unittest.TestCase):
         self.assertEqual(Settings.read({**legacy, 'click_hold_ms': 30}).click_hold_ms, 30)
         self.assertEqual(legacy, {"click_delay": 7, "click_duration": 83, "curve_duration": 19})
 
+    def test_cursor_return_delay_default_and_range(self):
+        self.assertEqual(Settings.read({}).cursor_return_delay_ms, 50)
+        self.assertEqual(Settings.read({'cursor_return_delay_ms': 0}).cursor_return_delay_ms, 0)
+        self.assertEqual(Settings.read({'cursor_return_delay_ms': 10000}).cursor_return_delay_ms, 10000)
+        for value in (-1, 10001, 1.5):
+            with self.assertRaises(ValueError):
+                Settings.read({'cursor_return_delay_ms': value})
+
 
 if __name__ == "__main__":
     unittest.main()
