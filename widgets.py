@@ -302,49 +302,127 @@ class ResizeDialog(QDialog):
         "4:3": [(640, 480), (800, 600), (1024, 768), (1280, 960), (1600, 1200), (1920, 1440)],
     }
 
-    def __init__(self, size, parent=None):
+    def __init__(self, size, parent=None, *, convert_profile=True, request_resize=None, read_size=None):
         super().__init__(parent)
         self.setWindowTitle("대상 창 크기 조절")
-        self.form = QFormLayout(self)
-        self.ratio = QComboBox()
-        self.ratio.addItems(["16:9", "4:3", "직접 입력"])
-        self.presets = QComboBox()
-        self.width_input, self.height_input = QSpinBox(), QSpinBox()
+        self.resize(420, 230)
+        self.current_size = tuple(size)
+        self.request_resize, self.read_size = request_resize, read_size
+        self.pending = False
+        layout = QVBoxLayout(self)
+        self.current_label = QLabel()
+        layout.addWidget(self.current_label)
+        modes = QHBoxLayout()
+        self.mode_buttons = {}
+        for mode in ("16:9", "4:3", "직접 입력"):
+            button = QPushButton(mode)
+            button.setCheckable(True)
+            button.clicked.connect(lambda checked=False, value=mode: self.change_ratio(value))
+            self.mode_buttons[mode] = button
+            modes.addWidget(button)
+        layout.addLayout(modes)
+        self.form = QFormLayout()
+        layout.addLayout(self.form)
+        self.presets = NoWheelCombo()
+        self.form.addRow("해상도", self.presets)
+        self.custom_fields = QWidget()
+        fields = QHBoxLayout(self.custom_fields)
+        fields.setContentsMargins(0, 0, 0, 0)
+        self.width_input, self.height_input = NoWheelSpinBox(), NoWheelSpinBox()
         for spin, value in zip((self.width_input, self.height_input), size):
             spin.setRange(1, 16384)
             spin.setValue(value)
-            spin.setSuffix(" px")
-        self.form.addRow("화면 비율", self.ratio)
-        self.form.addRow("해상도", self.presets)
-        self.form.addRow("너비", self.width_input)
-        self.form.addRow("높이", self.height_input)
+            spin.setFixedWidth(spin.fontMetrics().horizontalAdvance("00000") + 36)
+        fields.addWidget(self.width_input)
+        fields.addWidget(QLabel("×"))
+        fields.addWidget(self.height_input)
+        fields.addWidget(QLabel("px"))
+        self.aspect_lock = QCheckBox("비율 고정")
+        fields.addWidget(self.aspect_lock)
+        fields.addStretch()
+        self.form.addRow("크기", self.custom_fields)
+        self.convert_profile = QCheckBox("변경 후 프로필 해상도 변환")
+        self.convert_profile.setChecked(convert_profile)
+        layout.addWidget(self.convert_profile)
+        self.message = QLabel()
+        self.message.setWordWrap(True)
+        self.message.hide()
+        layout.addWidget(self.message)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.apply_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.apply_button.setText("적용")
+        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
+        self.buttons.accepted.connect(self.apply)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
         self.custom_size = tuple(size)
         self.mode = "직접 입력"
         self.selections = {"16:9": (1280, 720), "4:3": (1024, 768)}
+        self.lock_ratio = tuple(size)
+        self.updating = False
+        self.aspect_lock.toggled.connect(self.set_aspect_lock)
+        self.width_input.valueChanged.connect(lambda value: self.dimension_changed(0))
+        self.height_input.valueChanged.connect(lambda value: self.dimension_changed(1))
+        self.presets.currentIndexChanged.connect(self.change_preset)
+        self.verify_timer = QTimer(self)
+        self.verify_timer.setInterval(100)
+        self.verify_timer.timeout.connect(self.verify_resize)
         initial = next((ratio for ratio, sizes in self.PRESETS.items() if tuple(size) in sizes), "직접 입력")
         if initial in self.PRESETS:
             self.selections[initial] = tuple(size)
-        self.ratio.setCurrentText(initial)
-        self.ratio.currentTextChanged.connect(self.change_ratio)
-        self.presets.currentIndexChanged.connect(self.change_preset)
         self.change_ratio(initial)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("적용")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        self.form.addRow(buttons)
+
+    def update_state(self):
+        self.current_label.setText('현재 %d × %d · 내부 화면' % self.current_size)
+        self.apply_button.setEnabled(not self.pending and self.value() != self.current_size)
+
+    def set_aspect_lock(self, enabled):
+        if enabled:
+            self.lock_ratio = self.value()
+
+    def dimension_changed(self, axis):
+        if self.updating:
+            return
+        if self.mode == '직접 입력' and self.aspect_lock.isChecked():
+            self.updating = True
+            try:
+                w, h = self.lock_ratio
+                if axis == 0:
+                    value = max(1, min(16384, round(self.width_input.value() * h / w)))
+                    self.height_input.setValue(value)
+                    if round(self.width_input.value() * h / w) > 16384:
+                        self.width_input.setValue(max(1, round(value * w / h)))
+                else:
+                    value = max(1, min(16384, round(self.height_input.value() * w / h)))
+                    self.width_input.setValue(value)
+                    if round(self.height_input.value() * w / h) > 16384:
+                        self.height_input.setValue(max(1, round(value * h / w)))
+            finally:
+                self.updating = False
+        self.update_state()
+
+    def set_size(self, size):
+        self.updating = True
+        try:
+            self.width_input.setValue(size[0])
+            self.height_input.setValue(size[1])
+        finally:
+            self.updating = False
+        self.update_state()
 
     def change_ratio(self, mode):
         if self.mode == "직접 입력":
             self.custom_size = self.value()
         self.mode = mode
         custom = mode == "직접 입력"
+        for label, button in self.mode_buttons.items():
+            button.setChecked(label == mode)
         self.form.setRowVisible(self.presets, not custom)
+        self.form.setRowVisible(self.custom_fields, custom)
         self.width_input.setEnabled(custom)
         self.height_input.setEnabled(custom)
         if custom:
-            size = self.custom_size
+            self.set_size(self.custom_size)
         else:
             self.presets.blockSignals(True)
             self.presets.clear()
@@ -353,18 +431,76 @@ class ResizeDialog(QDialog):
             size = self.selections[mode]
             self.presets.setCurrentIndex(self.PRESETS[mode].index(size))
             self.presets.blockSignals(False)
-        self.width_input.setValue(size[0])
-        self.height_input.setValue(size[1])
+            self.set_size(size)
 
     def change_preset(self, index):
         if index < 0:
             return
-        size = self.PRESETS[self.mode][index]
+        size = self.presets.itemData(index)
         self.selections[self.mode] = size
-        self.width_input.setValue(size[0])
-        self.height_input.setValue(size[1])
+        self.set_size(size)
 
     def value(self):
         return self.width_input.value(), self.height_input.value()
 
+    def show_message(self, text):
+        self.message.setText(text)
+        self.message.setVisible(bool(text))
 
+    def set_pending(self, pending):
+        self.pending = pending
+        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setEnabled(not pending)
+        for button in self.mode_buttons.values():
+            button.setEnabled(not pending)
+        self.presets.setEnabled(not pending)
+        self.custom_fields.setEnabled(not pending)
+        self.convert_profile.setEnabled(not pending)
+        self.update_state()
+
+    def apply(self):
+        if self.pending:
+            return
+        self.width_input.interpretText()
+        self.height_input.interpretText()
+        self.requested_size = self.value()
+        if self.requested_size == self.current_size:
+            return
+        if self.request_resize is None:
+            self.accept()
+            return
+        self.set_pending(True)
+        self.show_message('실제 창 크기를 확인하고 있습니다…')
+        try:
+            self.request_resize(self.requested_size)
+            self.attempts = self.matches = 0
+            self.verify_timer.start()
+        except Exception as error:
+            self.set_pending(False)
+            self.show_message(str(error))
+
+    def verify_resize(self):
+        try:
+            actual = tuple(self.read_size())
+            self.current_size = actual
+            self.attempts += 1
+            self.matches = self.matches + 1 if actual == self.requested_size else 0
+            self.update_state()
+            if self.matches >= 2:
+                self.verify_timer.stop()
+                self.set_pending(False)
+                self.accept()
+            elif self.attempts >= 10:
+                self.verify_timer.stop()
+                self.set_pending(False)
+                requested = '%d × %d' % self.requested_size
+                measured = '%d × %d' % actual
+                self.show_message(f'요청한 크기로 변경되지 않았습니다. 요청 {requested} / 실제 {measured}')
+        except Exception as error:
+            self.verify_timer.stop()
+            self.set_pending(False)
+            self.show_message(str(error))
+
+    def reject(self):
+        if not self.pending:
+            self.verify_timer.stop()
+            super().reject()

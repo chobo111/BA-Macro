@@ -456,16 +456,16 @@ class UiTests(unittest.TestCase):
 
     def test_resize_presets_and_custom_values(self):
         dialog = ResizeDialog((1234, 678), self.window)
-        self.assertEqual(dialog.ratio.currentText(), "직접 입력")
+        self.assertEqual(dialog.mode, "직접 입력")
         self.assertEqual(dialog.value(), (1234, 678))
         for ratio, aspect in (("16:9", (16, 9)), ("4:3", (4, 3))):
-            dialog.ratio.setCurrentText(ratio)
+            dialog.change_ratio(ratio)
             self.assertFalse(dialog.width_input.isEnabled())
             for index in range(dialog.presets.count()):
                 dialog.presets.setCurrentIndex(index)
                 w, h = dialog.value()
                 self.assertEqual(w * aspect[1], h * aspect[0])
-        dialog.ratio.setCurrentText("직접 입력")
+        dialog.change_ratio("직접 입력")
         self.assertTrue(dialog.width_input.isEnabled())
         self.assertEqual(dialog.value(), (1234, 678))
         dialog.deleteLater()
@@ -935,3 +935,83 @@ class UiTests(unittest.TestCase):
                 self.assertEqual(spin.value(), value, name)
                 self.assertEqual(getattr(dialog.value(), name), value)
         dialog.close()
+
+    def test_resize_compact_fields_and_aspect_lock(self):
+        dialog = ResizeDialog((1920,1080),self.window)
+        dialog.show()
+        self.qt.processEvents()
+        self.assertFalse(dialog.apply_button.isEnabled())
+        self.assertTrue(dialog.custom_fields.isHidden())
+        self.assertFalse(dialog.presets.isHidden())
+        dialog.mode_buttons['직접 입력'].click()
+        self.assertFalse(dialog.custom_fields.isHidden())
+        self.assertTrue(dialog.presets.isHidden())
+        dialog.aspect_lock.setChecked(True)
+        dialog.width_input.setFocus()
+        dialog.width_input.selectAll()
+        QTest.keyClicks(dialog.width_input,'1280')
+        self.assertEqual(dialog.value(),(1280,720))
+        self.assertTrue(dialog.apply_button.isEnabled())
+        dialog.height_input.setValue(900)
+        self.assertEqual(dialog.value(),(1600,900))
+        self.assertTrue(dialog.apply_button.isEnabled())
+        dialog.aspect_lock.setChecked(False)
+        dialog.width_input.setValue(1500)
+        self.assertEqual(dialog.value(),(1500,900))
+        dialog.close()
+
+    def test_resize_checks_actual_size_before_accepting(self):
+        from unittest.mock import Mock
+        request=Mock()
+        sizes=iter([(1920,1080),(1280,720),(1280,720)])
+        dialog=ResizeDialog((1920,1080),self.window,request_resize=request,read_size=lambda:next(sizes))
+        dialog.presets.setCurrentIndex(dialog.PRESETS['16:9'].index((1280,720)))
+        request.assert_not_called()
+        dialog.apply()
+        dialog.verify_timer.stop()
+        request.assert_called_once_with((1280,720))
+        dialog.verify_resize()
+        self.assertTrue(dialog.pending)
+        dialog.verify_resize()
+        self.assertTrue(dialog.pending)
+        dialog.verify_resize()
+        self.assertEqual(dialog.result(),QDialog.DialogCode.Accepted)
+        self.assertEqual(dialog.current_size,(1280,720))
+        dialog.close()
+
+    def test_resize_rejection_and_closed_target_do_not_accept(self):
+        dialog=ResizeDialog((1920,1080),self.window,request_resize=lambda size:None,read_size=lambda:(1920,1080))
+        dialog.presets.setCurrentIndex(dialog.PRESETS['16:9'].index((1280,720)))
+        dialog.apply()
+        dialog.verify_timer.stop()
+        for _ in range(10):
+            dialog.verify_resize()
+        self.assertFalse(dialog.pending)
+        self.assertNotEqual(dialog.result(),QDialog.DialogCode.Accepted)
+        self.assertIn('실제 1920 × 1080',dialog.message.text())
+        def closed():
+            raise OSError('대상 창이 닫혔습니다.')
+        dialog.read_size=closed
+        dialog.apply()
+        dialog.verify_timer.stop()
+        dialog.verify_resize()
+        self.assertFalse(dialog.pending)
+        self.assertIn('닫혔습니다',dialog.message.text())
+        self.assertNotEqual(dialog.result(),QDialog.DialogCode.Accepted)
+        dialog.close()
+
+    def test_resize_conversion_is_optional_and_choice_is_saved(self):
+        w=self.window
+        w.target=99
+        for accepted,convert,expected in ((True,False,False),(True,True,True),(False,False,False)):
+            with patch('app.ResizeDialog') as dialog, \
+                 patch.object(w.native,'exists',return_value=True), \
+                 patch.object(w.native,'size',return_value=(1920,1080)), \
+                 patch.object(w,'convert_dialog') as conversion:
+                dialog.return_value.exec.return_value=QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
+                dialog.return_value.convert_profile.isChecked.return_value=convert
+                dialog.return_value.current_size=(1280,720)
+                w.resize_dialog()
+                self.assertEqual(conversion.called,expected)
+                self.assertEqual(w.settings.resize_convert_profile,convert)
+                self.assertEqual(read_json(w.settings_path)['resize_convert_profile'],convert)

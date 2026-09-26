@@ -740,12 +740,26 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("대상 창을 먼저 선택하세요.")
             return
         try:
-            dialog = ResizeDialog(self.native.size(self.target), self)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
+            target = self.target
+            def read_size():
+                if target != self.target or not self.native.exists(target):
+                    raise OSError("대상 창이 닫혔거나 변경되었습니다.")
+                return self.native.size(target)
+            def request_resize(size):
+                read_size()
                 self.stop()
-                self.native.resize(self.target, *dialog.value())
-                self.statusBar().showMessage("창 크기를 변경했습니다. 실제 내부 크기로 좌표 변환을 준비합니다.")
-                QTimer.singleShot(200, lambda: self.convert_dialog(reason="창 크기가 바뀌었습니다. 저장 좌표도 새 해상도에 맞출 수 있습니다."))
+                self.native.resize(target, *size)
+            dialog = ResizeDialog(read_size(), self, convert_profile=self.settings.resize_convert_profile,
+                                  request_resize=request_resize, read_size=read_size)
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+            convert = dialog.convert_profile.isChecked()
+            if convert != self.settings.resize_convert_profile:
+                self.settings.resize_convert_profile = convert
+                self.persist_settings()
+            if accepted:
+                self.statusBar().showMessage('창 내부 크기 변경 완료: %d × %d' % dialog.current_size)
+                if convert:
+                    self.convert_dialog(reason="창 크기가 바뀌었습니다. 저장 좌표도 새 해상도에 맞출 수 있습니다.")
         except Exception as error:
             self.error(str(error))
 
