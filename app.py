@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, Signal, QObject, QTimer, QStandardPaths, QLockFil
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QTableWidgetItem, QSpinBox, QFileDialog, QMessageBox, QDialog,
-    QSystemTrayIcon, QMenu, QGroupBox, QSizePolicy,
+    QSystemTrayIcon, QMenu, QGroupBox, QSizePolicy, QFrame,
 )
 
 from domain import MODES, Profile, Row, Settings, read_json
@@ -124,22 +124,46 @@ class MainWindow(QMainWindow):
         self.targets.view().setMinimumWidth(360)
         self.targets.currentIndexChanged.connect(self.change_target)
         target_layout.addWidget(self.targets, 1)
-        target_layout.addWidget(self.button("창 크기", self.resize_dialog))
+        self.targets.setFixedHeight(30)
+        self.resize_button = self.button("창 크기", self.resize_dialog)
+        self.resize_button.setFixedSize(68, 30)
+        target_layout.addWidget(self.resize_button)
         self.target_info = QLabel("대상 창을 선택하세요")
+        self.target_info.setObjectName("muted")
         self.target_info.setMinimumWidth(0)
         self.target_info.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         target_layout.addWidget(self.target_info, 1)
         layout.addWidget(target_box)
 
-        profile_bar = QHBoxLayout()
-        profile_bar.setSpacing(6)
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(4)
+        toolbar.setContentsMargins(0, 2, 0, 2)
+        for text, name, callback, attribute in (
+                ("+", "행 추가", self.add_row, "add_button"),
+                ("", "선택 삭제", self.delete_rows, "delete_button")):
+            button = self.button(text, callback)
+            button.setFixedSize(32, 30)
+            button.setAccessibleName(name)
+            button.setToolTip(name)
+            if not text:
+                button.setIcon(make_trash_icon())
+                button.setIconSize(QSize(18, 18))
+            setattr(self, attribute, button)
+            toolbar.addWidget(button)
+        toolbar.addSpacing(4)
+        separator = QFrame()
+        separator.setObjectName("toolbarSeparator")
+        separator.setFixedSize(1, 20)
+        toolbar.addWidget(separator)
+        toolbar.addSpacing(4)
         self.cursor_label = QLabel("— , —")
         self.cursor_label.setObjectName("cursor")
-        self.cursor_label.setFixedWidth(128)
-        cursor_policy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        self.cursor_label.setFixedSize(120, 30)
+        self.cursor_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cursor_policy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         cursor_policy.setRetainSizeWhenHidden(True)
         self.cursor_label.setSizePolicy(cursor_policy)
-        profile_bar.addWidget(self.cursor_label)
+        toolbar.addWidget(self.cursor_label)
         self.pin_button = QPushButton()
         self.pin_button.setIcon(make_pin_icon())
         self.pin_button.setIconSize(QSize(20, 20))
@@ -148,23 +172,10 @@ class MainWindow(QMainWindow):
         self.pin_button.setCheckable(True)
         self.pin_button.setToolTip("다른 창보다 항상 위에 표시")
         self.pin_button.toggled.connect(self.pin)
-        profile_bar.addWidget(self.pin_button)
+        toolbar.addWidget(self.pin_button)
         self.pause_button = self.button("▶ 작동 시작", self.toggle, True)
-        self.pause_button.setFixedWidth(106)
-        profile_bar.addWidget(self.pause_button)
-        profile_bar.addStretch()
-        layout.addLayout(profile_bar)
-
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(4)
-        for text, name, callback in (("+", "행 추가", self.add_row), ("", "선택 삭제", self.delete_rows)):
-            button = self.button(text, callback)
-            button.setFixedSize(32, 30)
-            button.setAccessibleName(name)
-            button.setToolTip(name)
-            if not text:
-                button.setIcon(make_trash_icon())
-            toolbar.addWidget(button)
+        self.pause_button.setFixedSize(106, 30)
+        toolbar.addWidget(self.pause_button)
         toolbar.addStretch()
         layout.addLayout(toolbar)
         self.table = RowsTable()
@@ -233,6 +244,7 @@ class MainWindow(QMainWindow):
             QWidget {{font-family: 'Segoe UI', 'Malgun Gothic'; font-size: 13px; color: {text};}}
             QLabel {{background: transparent;}}
             QLabel#muted {{color: {muted};}}
+            QFrame#toolbarSeparator {{background: {border}; border: none;}}
             QLabel#cursor {{color: #47b8ed; font-family: Consolas; font-weight: 600;}}
             QTabWidget::pane {{border: 1px solid {border}; border-radius: 4px;}}
             QTabBar::tab {{background: {panel}; color: {muted}; padding: 7px 18px; border: 1px solid {border};}}
