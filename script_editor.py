@@ -1,8 +1,8 @@
-"""Modal overlay for editing and validating per-row scripts."""
+"""Embedded script editor that leaves the main title bar and menus accessible."""
 import re
-from PySide6.QtCore import Qt, QEvent, QPoint, Signal, QTimer
+from PySide6.QtCore import Qt, QEvent, Signal, QTimer
 from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QPlainTextEdit, QComboBox, QSizeGrip
+from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QPlainTextEdit, QComboBox, QSizeGrip, QApplication
 from mouse_hook import CoordinateHook
 from script_language import compile_script, ScriptError
 from script_help import ScriptHelpDialog
@@ -24,10 +24,11 @@ class ScriptEditor(QDialog):
     coordinate_clicked = Signal(int, int)
 
     def __init__(self, source, native, target, parent):
-        super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.Widget)
         self.setWindowTitle('스크립트 작성')
         self.setObjectName('scriptOverlay')
-        self.setWindowModality(Qt.WindowModality.ApplicationModal)
+        self.setWindowModality(Qt.WindowModality.NonModal)
         self.coordinate_hook = None
         self.coordinate_clicked.connect(self.capture_screen_point, Qt.ConnectionType.QueuedConnection)
         self.capture_resolution = None
@@ -35,27 +36,12 @@ class ScriptEditor(QDialog):
         self.native, self.target = native, target
         self.syncing_geometry = False
 
-        self.drag_offset = None
         panel = self.panel = QFrame(self)
         panel.setObjectName('editorPanel')
-        self.setMinimumSize(400, 340)
-        self.setGeometry(parent.frameGeometry())
+        self.setGeometry(self.parent_area())
         panel.resize(self.size())
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 12, 12, 12)
-        self.titlebar = QFrame(panel)
-        self.titlebar.setObjectName('editorTitlebar')
-        self.titlebar.setFixedHeight(42)
-        header = QHBoxLayout(self.titlebar)
-        header.setContentsMargins(12, 0, 12, 0)
-        heading = QLabel('스크립트 작성')
-        heading.setStyleSheet('font-size: 15px; font-weight: 600;')
-        header.addWidget(heading)
-        header.addStretch()
-        layout.addWidget(self.titlebar)
-        for widget in (self.titlebar, heading):
-            widget.setCursor(Qt.CursorShape.SizeAllCursor)
-            widget.installEventFilter(self)
         toolbar = QHBoxLayout()
         self.templates = QComboBox()
         self.templates.addItems(['예제 선택', '스킬 카드 > 마우스 슬라이드', '마우스 > 스킬 카드 슬라이드'])
@@ -108,7 +94,6 @@ class ScriptEditor(QDialog):
             QLabel { background: transparent; border: none; }
             #scriptLog { background: #0e1822; color: #a8bdd0; border: 1px solid #33495d; border-radius: 4px; padding: 6px 8px; }
             #scriptLog[error="true"] { color: #ffb0a6; border-color: #a55450; }
-            #editorTitlebar { background: #2d4860; border: 1px solid #52718a; border-radius: 6px; }
             QPlainTextEdit { background: #0e1822; border: 1px solid #33495d; padding: 10px; }
             #codeEditor { font-family: Consolas, 'Malgun Gothic'; font-size: 15px; }
             QPushButton, QComboBox { background: #263c50; border: 1px solid #4a6780; padding: 7px 12px; border-radius: 5px; }
@@ -156,7 +141,7 @@ class ScriptEditor(QDialog):
         super().hideEvent(event)
 
     def capture_screen_point(self, x, y):
-        if not self.isVisible():
+        if not self.isVisible() or QApplication.activeModalWidget() or QApplication.activePopupWidget():
             return
         try:
             self.pick_coordinate(self.native.local_point(self.target, x, y))
@@ -204,10 +189,16 @@ class ScriptEditor(QDialog):
         except OSError:
             self.cursor_label.setText('— , —')
 
+    def parent_area(self):
+        parent = self.parentWidget()
+        top = parent.menuBar().geometry().bottom() + 1
+        return parent.rect().adjusted(0, top, 0, 0)
+
     def sync_to_parent(self):
         self.syncing_geometry = True
         try:
-            self.setGeometry(self.parentWidget().frameGeometry())
+            self.setGeometry(self.parent_area())
+            self.raise_()
         finally:
             self.syncing_geometry = False
 
@@ -218,48 +209,19 @@ class ScriptEditor(QDialog):
             self.panel.resize(event.size())
         parent = self.parentWidget()
         if self.isVisible() and not self.syncing_geometry:
-            frame = parent.frameGeometry().size() - parent.size()
-            client = event.size() - frame
-            if parent.size() != client:
-                self.syncing_geometry = True
-                try:
-                    parent.resize(client)
-                finally:
-                    self.syncing_geometry = False
-                self.sync_to_parent()
+            top = parent.menuBar().geometry().bottom() + 1
+            self.syncing_geometry = True
+            try:
+                parent.resize(event.size().width(), event.size().height() + top)
+            finally:
+                self.syncing_geometry = False
+            self.sync_to_parent()
 
     def eventFilter(self, watched, event):
-        if watched is self.parentWidget():
-            if event.type() in (QEvent.Type.Resize, QEvent.Type.Move) and not self.syncing_geometry:
+        if watched is self.parentWidget() and event.type() in (QEvent.Type.Resize, QEvent.Type.Move):
+            if not self.syncing_geometry:
                 self.sync_to_parent()
-            return super().eventFilter(watched, event)
-        if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
-            self.drag_offset = event.globalPosition().toPoint() - self.panel.mapToGlobal(QPoint())
-            self.drag_panel_origin = self.pos()
-            self.drag_parent_origin = self.parentWidget().pos()
-            return True
-        if event.type() == QEvent.Type.MouseMove and self.drag_offset is not None:
-            position = event.globalPosition().toPoint() - self.drag_offset
-            self.parentWidget().move(self.drag_parent_origin + position - self.drag_panel_origin)
-            self.move(position)
-            return True
-        if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
-            self.drag_offset = None
-            return True
         return super().eventFilter(watched, event)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.RightButton:
-            local = event.position().toPoint()
-            parent = self.parentWidget()
-            if self.panel.geometry().contains(local):
-                return
-            if parent.isVisible() and parent.frameGeometry().contains(event.globalPosition().toPoint()):
-                return
-            self.pick_coordinate()
-            event.accept()
-            return
-        super().mousePressEvent(event)
 
     def pick_coordinate(self, point=None):
         try:

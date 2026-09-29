@@ -9,13 +9,14 @@ class ExecutionSession:
         self.native = native
         self.armed = False
         self.modal = False
+        self.editor_open = False
         self.closing = False
         self.target = 0
 
     def eligible(self, action, auto_pause):
         if self.closing:
             return False
-        if self.modal:
+        if self.modal or self.editor_open:
             if auto_pause or action == 'capture_selected':
                 return False
             if action != 'pause' and self.native.foreground_owned_by(os.getpid()):

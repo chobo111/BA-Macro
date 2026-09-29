@@ -52,6 +52,7 @@ class MainWindow(QMainWindow):
         self.session = ExecutionSession(self.native)
         self.dirty = False
         self.rebuilding = False
+        self.script_editor = None
         self.path = None
         self.data_dir = Path(data_dir or BASE).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -348,20 +349,41 @@ class MainWindow(QMainWindow):
             if field == 'action_mode':
                 QTimer.singleShot(0, lambda: self.rebuild(rid))
 
-    @editing_dialog(hooks=True)
     def edit_script(self, rid):
+        if self.script_editor is not None:
+            self.script_editor.editor.setFocus()
+            return
         row = self.row(rid)
         if row is None:
             return
+        self.pause_for_configuration()
+        profile = self.profile
         dialog = ScriptEditor(row.script, self.native, self.target, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            row.script = dialog.source
-            if isinstance(dialog.capture_resolution, tuple):
-                self.profile.resolution = dialog.capture_resolution
-            self.changed()
-            self.rebuild(rid)
-            if not self.dirty:
-                self.statusBar().showMessage('스크립트를 반영하고 자동저장했습니다.')
+        self.script_editor = dialog
+        self.session.editor_open = True
+        def finished(result):
+            self.script_editor = None
+            self.session.editor_open = False
+            if result == QDialog.DialogCode.Accepted and self.profile is profile and self.row(rid) is row:
+                row.script = dialog.source
+                if isinstance(dialog.capture_resolution, tuple):
+                    self.profile.resolution = dialog.capture_resolution
+                self.changed()
+                self.rebuild(rid)
+            dialog.deleteLater()
+        dialog.finished.connect(finished)
+        dialog.show()
+        dialog.editor.setFocus()
+
+    def finish_script_editor(self, save=False):
+        dialog = self.script_editor
+        if dialog is None:
+            return True
+        if save and dialog.editor.toPlainText() != dialog.source:
+            dialog.save()
+        else:
+            dialog.reject()
+        return self.script_editor is None
 
     def eligible(self, action):
         return self.session.eligible(action, self.settings.auto_pause)
@@ -384,7 +406,7 @@ class MainWindow(QMainWindow):
             self.update_labels()
 
     def toggle(self):
-        if self.modal and self.settings.auto_pause:
+        if (self.modal or self.session.editor_open) and self.settings.auto_pause:
             return
         if self.armed:
             self.stop()
@@ -600,7 +622,8 @@ class MainWindow(QMainWindow):
     def confirm_changes(self):
         self.flush_pending_saves()
         self.pause_for_configuration()
-        if not self.dirty:
+        script_dirty = self.script_editor is not None and self.script_editor.editor.toPlainText() != self.script_editor.source
+        if not self.dirty and not script_dirty:
             return True
         previous_modal = self.modal
         self.modal = True
@@ -620,10 +643,14 @@ class MainWindow(QMainWindow):
             self.modal = previous_modal
         if answer == QMessageBox.StandardButton.Cancel:
             return False
-        return self.save() if answer == QMessageBox.StandardButton.Save else True
+        if answer == QMessageBox.StandardButton.Save:
+            return self.save()
+        self.finish_script_editor()
+        return True
 
     def new_profile(self):
         if self.confirm_changes():
+            self.finish_script_editor()
             self.profile, self.path, self.dirty = Profile.default(), self.next_profile_path(), False
             self.target = 0
             self.refresh_windows()
@@ -643,6 +670,7 @@ class MainWindow(QMainWindow):
             profile.validate((self.settings.capture_hk, self.settings.pause_hk))
             for row in profile.rows:
                 Hotkeys.compile(row.move_hk)
+            self.finish_script_editor()
             self.profile, self.path, self.dirty = profile, Path(path), False
             self.stop()
             self.target = 0
@@ -659,6 +687,8 @@ class MainWindow(QMainWindow):
         return self.store.next_path()
 
     def save(self, automatic=False):
+        if not automatic and not self.finish_script_editor(save=True):
+            return False
         if self.path is None:
             if automatic:
                 self.path = self.next_profile_path()
@@ -706,6 +736,8 @@ class MainWindow(QMainWindow):
 
     @editing_dialog(hooks=False)
     def save_as(self):
+        if not self.finish_script_editor(save=True):
+            return False
         path, _ = QFileDialog.getSaveFileName(self, "프로필 저장", str(self.path or self.data_dir / "macro.json"), "매크로 프로필 (*.json)")
         if not path:
             return False
@@ -777,6 +809,8 @@ class MainWindow(QMainWindow):
 
     @editing_dialog(hooks=False)
     def convert_dialog(self, *, reason=""):
+        if not self.finish_script_editor(save=True):
+            return
         self.stop()
         self.flush_pending_saves()
         try:
@@ -866,6 +900,7 @@ class MainWindow(QMainWindow):
         if self.closing:
             return
         self.closing = True
+        self.finish_script_editor()
         self.timer.stop()
         self.stop()
         self.hooks.close()

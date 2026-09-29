@@ -174,14 +174,17 @@ class UiTests(unittest.TestCase):
         QTest.qWait(4200)
         self.assertEqual(w.statusBar().currentMessage(), '')
 
-    def test_editor_covers_frame_and_hides_unused_labels(self):
+    def test_editor_covers_body_and_exposes_main_menu(self):
         from PySide6.QtWidgets import QLabel
         w = self.window
         w.statusBar().showMessage('메인 로그')
         dialog = ScriptEditor('', w.native, 0, w)
         dialog.show()
         self.qt.processEvents()
-        self.assertEqual(dialog.geometry(), w.frameGeometry())
+        self.assertEqual(dialog.geometry(), dialog.parent_area())
+        self.assertFalse(dialog.isWindow())
+        self.assertFalse(hasattr(dialog, "titlebar"))
+        self.assertGreater(dialog.y(), w.menuBar().geometry().bottom())
         self.assertTrue(dialog.validation.isHidden())
         self.assertFalse(hasattr(dialog, 'position'))
         self.assertNotIn('드래그로 이동', [label.text() for label in dialog.findChildren(QLabel)])
@@ -253,13 +256,13 @@ class UiTests(unittest.TestCase):
         dialog = ScriptEditor('', w.native, 0, w)
         dialog.show()
         self.qt.processEvents()
-        self.assertEqual(dialog.size(), w.frameGeometry().size())
+        self.assertEqual(dialog.size(), dialog.parent_area().size())
         w.resize(650, 480)
         self.qt.processEvents()
-        self.assertEqual(dialog.size(), w.frameGeometry().size())
+        self.assertEqual(dialog.size(), dialog.parent_area().size())
         dialog.resize(580, 450)
         self.qt.processEvents()
-        self.assertEqual(dialog.size(), w.frameGeometry().size())
+        self.assertEqual(dialog.size(), dialog.parent_area().size())
         self.assertEqual(dialog.panel.size(), dialog.size())
         with patch.object(w.native, 'cursor', return_value=(123, 456)):
             dialog.update_cursor()
@@ -529,7 +532,7 @@ class UiTests(unittest.TestCase):
         self.assertEqual(row.script, script)
         dialog.deleteLater()
 
-    def test_editor_drag_and_background_right_click(self):
+    def test_editor_follows_main_window_and_captures_external_coordinates(self):
         w = self.window
         dialog = ScriptEditor('', w.native, 0, w)
         dialog.show()
@@ -539,16 +542,13 @@ class UiTests(unittest.TestCase):
         self.assertNotIn('click 420', dialog.editor.placeholderText())
         self.assertEqual(dialog.size(), dialog.panel.size())
         self.assertLessEqual(dialog.panel.width(), 600)
-        self.assertEqual(dialog.titlebar.height(), 42)
-        before = dialog.pos()
+        self.assertFalse(hasattr(dialog, 'titlebar'))
+        before = dialog.mapToGlobal(QPoint())
         parent_before = w.pos()
-        self.assertEqual(dialog.panel.mapToGlobal(QPoint()), w.frameGeometry().topLeft())
-        QTest.mousePress(dialog.titlebar, Qt.MouseButton.LeftButton, pos=QPoint(12, 12))
-        QTest.mouseMove(dialog.titlebar, QPoint(22, 22))
-        QTest.mouseRelease(dialog.titlebar, Qt.MouseButton.LeftButton, pos=QPoint(22, 22))
-        self.assertNotEqual(dialog.pos(), before)
-        self.assertEqual(dialog.size(), dialog.panel.size())
-        self.assertEqual(w.pos() - parent_before, dialog.pos() - before)
+        w.move(parent_before + QPoint(20, 20))
+        self.qt.processEvents()
+        self.assertEqual(dialog.mapToGlobal(QPoint()) - before, w.pos() - parent_before)
+        self.assertEqual(dialog.geometry(), dialog.parent_area())
         with patch.object(w.native, 'cursor', return_value=(-123, 456)), \
              patch.object(w.native, 'bounds', return_value=(-1920, 0, 1920, 1080)):
             self.assertEqual(dialog.editor.toPlainText(), '')
@@ -734,10 +734,9 @@ class UiTests(unittest.TestCase):
         w=self.window
         row=w.profile.rows[0]
         row.action_mode='script'
-        with patch('app.ScriptEditor') as editor:
-            editor.return_value.exec.return_value=QDialog.DialogCode.Accepted
-            editor.return_value.source='click 100,200'
-            w.edit_script(row.id)
+        w.edit_script(row.id)
+        w.script_editor.editor.setPlainText('click 100,200')
+        w.script_editor.save()
         self.assertEqual(Profile.read(self.saved(w.path)).rows[0].script,'click 100,200')
         w.flush_pending_saves()
         self.assertFalse(w.dirty)
@@ -1015,3 +1014,74 @@ class UiTests(unittest.TestCase):
                 self.assertEqual(conversion.called,expected)
                 self.assertEqual(w.settings.resize_convert_profile,convert)
                 self.assertEqual(read_json(w.settings_path)['resize_convert_profile'],convert)
+
+    def test_script_editor_leaves_menu_accessible_and_settings_preserve_draft(self):
+        w=self.window
+        w.edit_script(w.profile.rows[0].id)
+        editor=w.script_editor
+        editor.editor.setPlainText('sleep 123')
+        self.qt.processEvents()
+        self.assertTrue(w.session.editor_open)
+        self.assertFalse(w.modal)
+        self.assertFalse(editor.isWindow())
+        self.assertEqual(editor.windowModality(),Qt.WindowModality.NonModal)
+        action=w.menuBar().actions()[1]
+        QTest.mouseClick(w.menuBar(),Qt.MouseButton.LeftButton,pos=w.menuBar().actionGeometry(action).center())
+        self.qt.processEvents()
+        self.assertTrue(action.menu().isVisible())
+        action.menu().hide()
+        with patch('app.SettingsDialog') as settings:
+            settings.return_value.exec.return_value=QDialog.DialogCode.Rejected
+            action.menu().actions()[0].trigger()
+            settings.assert_called_once()
+        self.assertIs(w.script_editor,editor)
+        self.assertEqual(editor.editor.toPlainText(),'sleep 123')
+        self.assertFalse(w.modal)
+        self.assertFalse(w.eligible('capture_selected'))
+        editor.reject()
+        self.assertFalse(w.session.editor_open)
+
+    def test_file_save_commits_script_draft_and_validation_keeps_editor_open(self):
+        w=self.window
+        row=w.profile.rows[0]
+        row.action_mode='script'
+        w.edit_script(row.id)
+        editor=w.script_editor
+        editor.editor.setPlainText('bad_command')
+        self.assertFalse(w.save())
+        self.assertIs(w.script_editor,editor)
+        self.assertTrue(editor.validation.isVisible())
+        editor.editor.setPlainText('sleep 42')
+        self.assertTrue(w.save())
+        self.assertIsNone(w.script_editor)
+        self.assertEqual(Profile.read(read_json(w.path)).rows[0].script,'sleep 42')
+
+    def test_profile_switch_can_cancel_or_discard_script_draft(self):
+        w=self.window
+        previous=w.profile
+        w.edit_script(previous.rows[0].id)
+        editor=w.script_editor
+        editor.editor.setPlainText('sleep 42')
+        with patch.object(QMessageBox,'exec',return_value=QMessageBox.StandardButton.Cancel):
+            w.new_profile()
+        self.assertIs(w.profile,previous)
+        self.assertIs(w.script_editor,editor)
+        with patch.object(QMessageBox,'exec',return_value=QMessageBox.StandardButton.Discard):
+            w.new_profile()
+        self.assertIsNot(w.profile,previous)
+        self.assertIsNone(w.script_editor)
+        self.assertFalse(w.session.editor_open)
+        self.assertFalse(w.modal)
+        self.assertEqual(previous.rows[0].script,'')
+
+    def test_editor_cancel_does_not_prompt_or_change_script(self):
+        w=self.window
+        row=w.profile.rows[0]
+        row.script='sleep 1'
+        w.edit_script(row.id)
+        w.script_editor.editor.setPlainText('sleep 2')
+        with patch.object(QMessageBox,'exec') as confirmation:
+            w.script_editor.reject()
+            confirmation.assert_not_called()
+        self.assertEqual(row.script,'sleep 1')
+        self.assertIsNone(w.script_editor)
