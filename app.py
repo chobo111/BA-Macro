@@ -157,14 +157,6 @@ class MainWindow(QMainWindow):
         separator.setFixedSize(1, 20)
         toolbar.addWidget(separator)
         toolbar.addSpacing(4)
-        self.cursor_label = QLabel("— , —")
-        self.cursor_label.setObjectName("cursor")
-        self.cursor_label.setFixedSize(120, 30)
-        self.cursor_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cursor_policy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        cursor_policy.setRetainSizeWhenHidden(True)
-        self.cursor_label.setSizePolicy(cursor_policy)
-        toolbar.addWidget(self.cursor_label)
         self.pin_button = QPushButton()
         self.pin_button.setIcon(make_pin_icon())
         self.pin_button.setIconSize(QSize(20, 20))
@@ -221,6 +213,13 @@ class MainWindow(QMainWindow):
         tools.addAction("프로필 해상도 변환…", self.convert_dialog)
         about = self.menuBar().addMenu("정보")
         about.addAction(f"{APP_NAME} · {VERSION}", self.about_dialog)
+        self.cursor_label = QLabel("— , —")
+        self.cursor_label.setObjectName("cursor")
+        self.cursor_label.setFixedWidth(152)
+        self.cursor_label.setContentsMargins(6, 0, 8, 0)
+        self.cursor_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.cursor_label.setAccessibleName("실시간 커서 좌표")
+        self.menuBar().setCornerWidget(self.cursor_label, Qt.Corner.TopRightCorner)
 
     def build_tray(self):
         self.tray = QSystemTrayIcon(self.windowIcon(), self)
@@ -549,7 +548,8 @@ class MainWindow(QMainWindow):
                 self.target_info.setText(f"{w} × {h}  ·  {'활성' if self.native.active(self.target) else '대기'}")
             else:
                 self.target_info.clear()
-            x, y = self.native.cursor(self.target or None)
+            coordinate_target = self.script_editor.target if self.script_editor is not None else self.target
+            x, y = self.native.cursor(coordinate_target or None)
             self.cursor_label.setText(f"{x:>5}, {y:>5}")
         except OSError as error:
             if not self.target and self.native.display_id:
@@ -559,6 +559,7 @@ class MainWindow(QMainWindow):
                 self.cursor_label.setText('디스플레이 확인 필요')
             else:
                 self.target_info.setText("창 상태 확인 중")
+                self.cursor_label.setText("— , —")
 
     @editing_dialog(hooks=True)
     def edit_key(self, rid):

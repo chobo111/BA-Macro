@@ -52,11 +52,6 @@ class ScriptEditor(QDialog):
         help_button.clicked.connect(self.show_help)
         toolbar.addWidget(help_button)
         layout.addLayout(toolbar)
-        coordinates = QHBoxLayout()
-        self.cursor_label = QLabel()
-        coordinates.addWidget(self.cursor_label)
-        coordinates.addStretch()
-        layout.addLayout(coordinates)
         body = QHBoxLayout()
         self.editor = QPlainTextEdit(source)
         self.editor.setObjectName('codeEditor')
@@ -99,9 +94,6 @@ class ScriptEditor(QDialog):
             QPushButton, QComboBox { background: #263c50; border: 1px solid #4a6780; padding: 7px 12px; border-radius: 5px; }
             QPushButton:hover { background: #315779; }
         ''')
-        self.cursor_timer = QTimer(self)
-        self.cursor_timer.setInterval(100)
-        self.cursor_timer.timeout.connect(self.update_cursor)
         self.editor.setFocus()
         self.position_size_grip()
 
@@ -121,8 +113,6 @@ class ScriptEditor(QDialog):
         super().showEvent(event)
         self.parentWidget().installEventFilter(self)
         self.sync_to_parent()
-        self.update_cursor()
-        self.cursor_timer.start()
         if self.parentWidget().hook_enabled and self.coordinate_hook is None:
             hook = CoordinateHook(self.coordinate_clicked.emit)
             try:
@@ -133,7 +123,6 @@ class ScriptEditor(QDialog):
                 self.log(f'좌표 입력 초기화 실패: {error}', error=True)
 
     def hideEvent(self, event):
-        self.cursor_timer.stop()
         self.parentWidget().removeEventFilter(self)
         if self.coordinate_hook is not None:
             self.coordinate_hook.close()
@@ -181,13 +170,6 @@ class ScriptEditor(QDialog):
             self.editor.setPlainText(examples[index])
             self.templates.setCurrentIndex(0)
             self.log('X,Y를 실제 좌표로 바꾼 뒤 저장하세요.')
-
-    def update_cursor(self):
-        try:
-            x, y = self.native.cursor(self.target)
-            self.cursor_label.setText(f'{x}, {y}')
-        except OSError:
-            self.cursor_label.setText('— , —')
 
     def parent_area(self):
         parent = self.parentWidget()

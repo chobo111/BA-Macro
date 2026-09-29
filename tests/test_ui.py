@@ -265,12 +265,15 @@ class UiTests(unittest.TestCase):
         self.assertEqual(dialog.size(), dialog.parent_area().size())
         self.assertEqual(dialog.panel.size(), dialog.size())
         with patch.object(w.native, 'cursor', return_value=(123, 456)):
-            dialog.update_cursor()
             w.tick()
-        self.assertEqual(dialog.cursor_label.text(), '123, 456')
+        self.assertFalse(hasattr(dialog, 'cursor_label'))
+        self.assertIs(w.menuBar().cornerWidget(Qt.Corner.TopRightCorner), w.cursor_label)
         self.assertIn('123', w.cursor_label.text())
+        position = w.cursor_label.mapToGlobal(QPoint())
         dialog.reject()
-        self.assertFalse(dialog.cursor_timer.isActive())
+        self.qt.processEvents()
+        self.assertTrue(w.timer.isActive())
+        self.assertEqual(w.cursor_label.mapToGlobal(QPoint()), position)
         dialog.deleteLater()
 
     def test_remember_target_restore_and_missing_window(self):
