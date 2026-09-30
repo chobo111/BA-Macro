@@ -44,17 +44,21 @@ class ProfileStore:
 
     def load(self):
         warnings = []
+        settings_valid = True
         try:
             settings = Settings.read(read_json(self.settings_path)) if self.settings_path.exists() else Settings()
         except Exception as error:
             settings = Settings()
+            settings_valid = False
             warnings.append(f'환경설정 불러오기 실패: {error}')
         recent = self.directory / Path(settings.last_profile).name if settings.last_profile else None
         path = recent if recent and recent.is_file() else self.directory / 'macro.json'
         try:
             profile = Profile.read(read_json(path)) if path.exists() else Profile.default()
             profile.validate((settings.capture_hk, settings.pause_hk))
-            if not path.exists():
+            if not path.exists() and not settings_valid:
+                path = None
+            elif not path.exists():
                 result = self.save(path, profile.export(), asdict(settings)).result()
                 if not result.profile_saved:
                     raise OSError(result.error)
@@ -62,7 +66,7 @@ class ProfileStore:
                     warnings.append(f'설정 저장 실패: {result.error}')
                 if result.recent_name:
                     settings.last_profile = result.recent_name
-            else:
+            elif settings_valid:
                 try:
                     settings.last_profile = self.settings(path, asdict(settings))
                 except Exception as error:

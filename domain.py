@@ -1,9 +1,8 @@
 """Profiles and settings. No GUI or input hooks are imported here."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 import json
-import ntpath
 import os
 from pathlib import Path
 import tempfile
@@ -17,12 +16,15 @@ MODES = {
 
 
 def target_identity(data):
-    """Accept legacy absolute paths, but persist only the executable filename."""
+    """Validate the current filename-based target identity."""
     if not data:
         return {}
     if not isinstance(data, dict) or any(not isinstance(v, str) for v in data.values()):
         raise ValueError('대상 프로그램 정보가 올바르지 않습니다.')
-    return {'exe': ntpath.basename(data.get('exe', '')),
+    exe = data.get('exe', '')
+    if any(character in exe for character in '/\\:'):
+        raise ValueError('대상 프로그램 exe에는 경로가 아닌 실행파일명만 입력하세요.')
+    return {'exe': exe,
             'class': data.get('class', ''), 'title': data.get('title', '')}
 
 
@@ -68,21 +70,19 @@ class Row:
     def read(cls, data):
         if not isinstance(data, dict):
             raise ValueError("매크로 행 형식이 올바르지 않습니다.")
-        if "coords" in data:
-            coords = str(data["coords"]).split(",")
-            if len(coords) != 2:
-                raise ValueError("좌표는 x, y 형식이어야 합니다.")
-            x, y = [v.strip() for v in coords]
-        else:
-            x, y = data.get("x", 0), data.get("y", 0)
-        mode = data.get("action_mode", "move_only")
-        mode = "move_only" if mode in ("default", "target_only") else mode
+        unknown = set(data) - {"id", "move_hk", "coords", "memo", "action_mode", "script"}
+        if unknown:
+            raise ValueError(f"지원하지 않는 매크로 항목: {', '.join(sorted(unknown))}")
+        if not isinstance(data.get("coords"), str):
+            raise ValueError("coords에 x, y 형식의 좌표 문자열이 필요합니다.")
+        coords = data["coords"].split(",")
+        if len(coords) != 2:
+            raise ValueError("좌표는 x, y 형식이어야 합니다.")
+        x, y = [v.strip() for v in coords]
+        mode = data.get("action_mode")
         script = data.get("script", "")
         if not isinstance(script, str) or len(script) > 100000:
             raise ValueError("스크립트는 100,000자 이하의 문자열이어야 합니다.")
-        if mode == 'target_and_return_click':
-            mode = 'script'
-            script = f'// 이전 스킬 사용 동작\nclick {int(x)},{int(y)}\nsleep 15\nclick mouse'
         if mode not in MODES:
             raise ValueError(f"지원하지 않는 실행 모드: {mode}")
         return cls(str(data.get("id") or uuid.uuid4().hex), hotkey(data.get("move_hk", "")),
@@ -104,15 +104,11 @@ class Profile:
     def read(cls, data):
         if not isinstance(data, dict) or not isinstance(data.get("macros"), list):
             raise ValueError("macros 목록이 있는 JSON 프로필이 필요합니다.")
+        if type(data.get("version")) is not int or data["version"] != 3:
+            raise ValueError("현재 프로필 형식(version: 3)만 지원합니다.")
         if not 1 <= len(data["macros"]) <= 200:
             raise ValueError("프로필은 1~200행이어야 합니다.")
         rows = [Row.read(d) for d in data["macros"]]
-        # Older coordinate-click mode restored the cursor. Preserve it as an explicit script.
-        if data.get('version', 1) < 3:
-            for row, old in zip(rows, data['macros']):
-                if old.get('action_mode') == 'move_and_click':
-                    row.action_mode = 'script'
-                    row.script = f'click {row.x},{row.y}\nsleep 15\nmove mouse'
         if len({r.id for r in rows}) != len(rows):
             raise ValueError("중복된 행 ID가 있습니다.")
         resolution = data.get("target_resolution", "알 수 없음")
@@ -173,11 +169,9 @@ class Settings:
     def read(cls, data):
         if not isinstance(data, dict):
             raise ValueError("설정 형식이 잘못되었습니다.")
-        data = dict(data)
-        for old, new in {"click_delay": "move_to_click_delay_ms", "click_duration": "click_hold_ms",
-                         "curve_duration": "drag_segment_duration_ms"}.items():
-            if new not in data and old in data:
-                data[new] = data[old]
+        unknown = set(data) - {item.name for item in fields(cls)}
+        if unknown:
+            raise ValueError(f"지원하지 않는 설정 항목: {', '.join(sorted(unknown))}")
         obj = cls()
         for name in ("capture_hk", "pause_hk"):
             setattr(obj, name, hotkey(data.get(name, getattr(obj, name))))

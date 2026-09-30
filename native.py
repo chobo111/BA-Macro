@@ -1,4 +1,5 @@
 """Typed Win32 boundary. Coordinates use the target client area."""
+import ntpath
 import ctypes as C
 from ctypes import wintypes as W
 from script_language import KEYS
@@ -134,7 +135,7 @@ class Windows:
             try:
                 path, size = C.create_unicode_buffer(32768), W.DWORD(32768)
                 if K.QueryFullProcessImageNameW(process, 0, path, C.byref(size)):
-                    exe = path.value
+                    exe = ntpath.basename(path.value)
             finally:
                 K.CloseHandle(process)
         return target_identity({'exe': exe, 'class': classname.value, 'title': title.value})

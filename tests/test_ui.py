@@ -15,11 +15,11 @@ from domain import MODES
 
 
 class UiTests(unittest.TestCase):
-    def test_target_matches_updated_path_and_rejects_ambiguous_titles(self):
+    def test_target_matches_filename_case_and_rejects_ambiguous_titles(self):
         native = self.window.native
-        saved = {'exe': r'C:\WindowsApps\App_1.0\ChatGPT.exe',
+        saved = {'exe': 'ChatGPT.exe',
                  'class': 'Chrome_WidgetWin_1', 'title': 'ChatGPT'}
-        updated = {**saved, 'exe': r'D:\WindowsApps\App_2.0\CHATGPT.EXE'}
+        updated = {**saved, 'exe': 'CHATGPT.EXE'}
         with patch.object(native, 'window_identity', return_value=updated):
             self.assertEqual(native.find_target(saved, [(1, 'ChatGPT')]), 1)
             self.assertEqual(native.find_target(saved, [(1, 'ChatGPT'), (2, 'ChatGPT')]), 0)
@@ -197,10 +197,10 @@ class UiTests(unittest.TestCase):
         dialog.reject()
         dialog.deleteLater()
 
-    def test_new_settings_and_legacy_options(self):
+    def test_current_settings_options(self):
         from dataclasses import asdict
         from domain import Settings
-        settings = Settings.read({'auto_fire': True, 'show_realtime': False})
+        settings = Settings.read({})
         self.assertTrue(settings.auto_pause)
         self.assertEqual(settings.pause_hk, 'ctrl+`')
         self.assertEqual(Settings.read({'pause_hk': 'ctrl+tab'}).pause_hk, 'ctrl+tab')
@@ -393,14 +393,19 @@ class UiTests(unittest.TestCase):
         self.assertEqual(dialog.value().click_hold_ms, 1)
         dialog.deleteLater()
 
-    def test_open_legacy_profile(self):
+    def test_open_legacy_profile_rejected_without_replacing_current(self):
         w = self.window
+        original, original_path = w.profile, w.path
         legacy = Path(self.directory.name) / "old.json"
-        legacy.write_text('{"target_resolution":"1280x720","macros":[{"move_hk":"Q","save_hk":"SHIFT+Q","coords":"80, 90","action_mode":"move_only"}]}', encoding="utf-8")
-        with patch.object(QFileDialog, "getOpenFileName", return_value=(str(legacy), "")):
+        content = '{"macros":[{"coords":"80, 90","action_mode":"move_only"}]}'
+        legacy.write_text(content, encoding="utf-8")
+        with patch.object(QFileDialog, "getOpenFileName", return_value=(str(legacy), "")), \
+             patch.object(w, "error") as error:
             w.open_profile()
-        self.assertEqual(w.table.rowCount(), 1)
-        self.assertEqual(w.profile.rows[0].x, 80)
+        self.assertIs(w.profile, original)
+        self.assertEqual(w.path, original_path)
+        self.assertEqual(legacy.read_text(encoding="utf-8"), content)
+        self.assertIn('version: 3', error.call_args.args[0])
 
     def test_cancel_close_retains_unsaved_changes(self):
         w = self.window

@@ -185,3 +185,16 @@ class PersistenceTests(unittest.TestCase):
             self.assertIn('disk unavailable', future.result().error)
         self.assertTrue(self.store.save(self.path, profile, self.settings, coalesce=True).result().profile_saved)
         self.assertEqual(read_json(self.path)['macros'][0]['memo'], 'latest')
+
+    def test_invalid_settings_are_not_overwritten_on_startup(self):
+        invalid = {'click_delay': 7}
+        atomic_json(self.store.settings_path, invalid)
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                if existing:
+                    atomic_json(self.path, Profile.default().export())
+                before = self.store.settings_path.read_bytes()
+                loaded = self.store.load()
+                self.assertIn('지원하지 않는 설정 항목', loaded.warning)
+                self.assertEqual(self.store.settings_path.read_bytes(), before)
+                self.assertEqual(loaded.path, self.path if existing else None)
