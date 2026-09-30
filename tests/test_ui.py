@@ -66,7 +66,7 @@ class UiTests(unittest.TestCase):
             grip = editor.size_grip.geometry()
             self.assertEqual(grip.right(), editor.width() - 1)
             self.assertEqual(grip.bottom(), editor.height() - 1)
-        self.assertIn('도움말', [button.text() for button in editor.findChildren(QPushButton)])
+        self.assertIn('?', [button.text() for button in editor.findChildren(QPushButton)])
         help_dialog = ScriptHelpDialog(editor)
         text = help_dialog.findChild(QTextBrowser).toPlainText()
         for command in ('move', 'click', 'press', 'release', 'switch', 'mouse_press',

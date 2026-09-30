@@ -166,7 +166,7 @@ class MainWindow(QMainWindow):
         self.pin_button.setToolTip("다른 창보다 항상 위에 표시")
         self.pin_button.toggled.connect(self.pin)
         toolbar.addWidget(self.pin_button)
-        self.pause_button = self.button("▶ 작동 시작", self.toggle, True)
+        self.pause_button = self.button("시작", self.toggle, True)
         self.pause_button.setFixedSize(106, 30)
         toolbar.addWidget(self.pause_button)
         toolbar.addStretch()
@@ -256,6 +256,7 @@ class MainWindow(QMainWindow):
             QPushButton:pressed {{background: {border};}}
             QPushButton:checked {{background: #285275; color: #ffffff; border-color: #47b8ed;}}
             QPushButton#primary {{background: #47b8ed; color: #102435; border: none; font-weight: 700;}}
+            QPushButton#primary[running="true"] {{background: #39b86a; color: #102b1a;}}
             QTableWidget {{background: {panel}; alternate-background-color: {alt}; border: 1px solid {border}; border-radius: 8px; selection-background-color: #285275;}}
             QTableWidget::item {{padding: 4px;}}
             QHeaderView {{background: {bg};}}
@@ -270,7 +271,12 @@ class MainWindow(QMainWindow):
 
     def update_labels(self):
         name = self.path.stem if self.path else "새 프로필"
-        self.pause_button.setText("■ 일시정지" if self.armed else "▶ 작동 시작")
+        self.pause_button.setText("정지" if self.armed else "시작")
+        if self.pause_button.property("running") != self.armed:
+            self.pause_button.setProperty("running", self.armed)
+            self.pause_button.style().unpolish(self.pause_button)
+            self.pause_button.style().polish(self.pause_button)
+            self.pause_button.update()
         self.setWindowTitle(f"{'● ' if self.dirty else ''}{name} — Blue Archive Studio")
         if hasattr(self, "tray"):
             self.tray.setToolTip("Blue Archive Studio · " + ("작동 중" if self.armed else "일시정지"))
@@ -409,7 +415,6 @@ class MainWindow(QMainWindow):
             return
         if self.armed:
             self.stop()
-            self.statusBar().showMessage("일시정지했습니다. 같은 단축키로 다시 시작할 수 있습니다.")
             return
         if self.target and not self.native.exists(self.target):
             self.statusBar().showMessage("먼저 대상 창을 선택하세요.")
@@ -426,8 +431,6 @@ class MainWindow(QMainWindow):
             return
         self.armed = True
         self.update_labels()
-        self.statusBar().showMessage("전체화면에서 작동합니다." if not self.target else
-                                     "작동 준비 완료. 대상 창으로 전환하면 실행 키를 사용할 수 있습니다.")
 
     def dispatch(self, action, rid):
         if not self.eligible(action):

@@ -48,7 +48,11 @@ class ScriptEditor(QDialog):
         self.templates.activated.connect(self.insert_template)
         toolbar.addWidget(self.templates)
         toolbar.addStretch()
-        help_button = QPushButton('도움말')
+        help_button = QPushButton('?')
+        help_button.setObjectName('scriptHelpButton')
+        help_button.setFixedSize(32, 32)
+        help_button.setAccessibleName('도움말')
+        help_button.setToolTip('도움말')
         help_button.clicked.connect(self.show_help)
         toolbar.addWidget(help_button)
         layout.addLayout(toolbar)
@@ -93,6 +97,7 @@ class ScriptEditor(QDialog):
             #codeEditor { font-family: Consolas, 'Malgun Gothic'; font-size: 15px; }
             QPushButton, QComboBox { background: #263c50; border: 1px solid #4a6780; padding: 7px 12px; border-radius: 5px; }
             QPushButton:hover { background: #315779; }
+            QPushButton#scriptHelpButton { padding: 0; border-radius: 16px; font-weight: 700; }
         ''')
         self.editor.setFocus()
         self.position_size_grip()
