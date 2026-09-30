@@ -187,3 +187,58 @@ class ScriptTests(unittest.TestCase):
         finally:
             unblock.set()
             engine.shutdown()
+
+    def test_compilation_cache_reuses_only_unchanged_valid_source(self):
+        from dataclasses import FrozenInstanceError
+        from script_language import _compile_cached
+        _compile_cached.cache_clear()
+        source = 'loop 2\nclick mouse\nloop_end'
+        first = compile_script(source)
+        with patch('script_language.strip_comment', side_effect=AssertionError('parsed again')):
+            self.assertIs(compile_script(source), first)
+        with self.assertRaises(FrozenInstanceError):
+            first.pressed[0].name = 'sleep'
+        changed = compile_script('loop 3\nclick mouse\nloop_end')
+        self.assertNotEqual(first, changed)
+        for source in ([], {}, None, 'x' * 100001, 'sleep invalid'):
+            with self.subTest(source_type=type(source).__name__), self.assertRaises(ScriptError):
+                compile_script(source)
+        for index in range(40):
+            compile_script(f'sleep {index}')
+        self.assertEqual(_compile_cached.cache_info().currsize, 16)
+
+    def test_cached_program_refreshes_mouse_position_each_run(self):
+        program = compile_script('move mouse')
+        for point in ((100, 200), (300, 400)):
+            self.native.position = point
+            self.runtime.run(program, self.command)
+            self.assertEqual(self.native.events[-1], ('move', *point))
+
+    def test_idle_worker_sleeps_but_held_input_still_checks_focus(self):
+        idle, watching, released = threading.Event(), threading.Event(), threading.Event()
+        errors = []
+        engine = Engine(self.native, lambda key: False, errors.append)
+        original_wait = engine.condition.wait_for
+        original_key = self.native.key
+        def wait(predicate, timeout=None):
+            (idle if timeout is None else watching).set()
+            return original_wait(predicate, timeout)
+        def key(name, down):
+            original_key(name, down)
+            if not down:
+                released.set()
+        try:
+            with patch.object(engine.condition, 'wait_for', side_effect=wait), \
+                 patch.object(self.native, 'key', side_effect=key):
+                engine.stop()
+                self.assertTrue(idle.wait(1))
+                idle.clear()
+                engine.submit(replace(self.command, script='key_switch a'))
+                self.assertTrue(watching.wait(1))
+                self.native.active_value = False
+                self.assertTrue(released.wait(1))
+                self.assertTrue(idle.wait(1))
+            self.assertFalse(errors)
+        finally:
+            engine.shutdown()
+        self.assertFalse(engine.worker.is_alive())

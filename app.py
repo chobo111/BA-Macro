@@ -699,7 +699,7 @@ class MainWindow(QMainWindow):
             self.profile.validate((self.settings.capture_hk, self.settings.pause_hk))
             self.save_revision += 1
             revision = self.save_revision
-            future = self.store.save(self.path, self.profile.export(), asdict(self.settings))
+            future = self.store.save(self.path, self.profile.export(), asdict(self.settings), coalesce=automatic)
             self.pending_saves[revision] = (self.path, future)
             self.dirty = True
             self.update_labels()

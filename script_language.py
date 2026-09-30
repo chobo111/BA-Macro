@@ -1,5 +1,6 @@
 """A small, validated macro language. Never evaluates Python or shell code."""
 from dataclasses import dataclass, field
+from functools import lru_cache
 import json
 import re
 
@@ -82,6 +83,12 @@ def points(text, line):
 def compile_script(source):
     if not isinstance(source, str) or len(source) > 100000:
         raise ScriptError(1, '스크립트는 100,000자 이하의 문자열이어야 합니다.')
+    return _compile_cached(source)
+
+
+@lru_cache(maxsize=16)
+def _compile_cached(source):
+    # Programs and all nested instructions are immutable; runtime state is separate.
     sections = [[], []]
     section = 0
     current = sections[0]
@@ -90,7 +97,6 @@ def compile_script(source):
         text = strip_comment(raw)
         if not text:
             continue
-        command, _, arg = text.partition(' ')
         # Tabs between the command and arguments are also accepted.
         parts = text.split(None, 1)
         command, arg = parts[0].lower(), parts[1].strip() if len(parts) > 1 else ''

@@ -117,7 +117,11 @@ class Engine:
     def _run(self):
         while True:
             with self.condition:
-                self.condition.wait_for(lambda: self.closed or self.reset_requested or self.pending is not None, timeout=.05)
+                # Only held inputs need periodic focus-loss checks. New work,
+                # stop and shutdown all notify this condition immediately.
+                watch_focus = self.runtime.context and (self.runtime.keys or self.runtime.buttons)
+                self.condition.wait_for(lambda: self.closed or self.reset_requested or self.pending is not None,
+                                        timeout=.05 if watch_focus else None)
                 reset = self.reset_requested or self.closed
                 self.reset_requested = False
                 closing = self.closed

@@ -1,5 +1,6 @@
 """Ordered background writes of immutable profile/settings snapshots."""
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
+from threading import Lock
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,14 @@ class LoadedProfile:
     warning: str = ''
 
 
+@dataclass
+class _QueuedSave:
+    path: Path
+    profile: dict
+    settings: dict
+    future: Future | None = None
+
+
 class ProfileStore:
     def __init__(self, directory):
         self.directory = Path(directory).resolve()
@@ -30,6 +39,8 @@ class ProfileStore:
         self.settings_snapshot = None
         self.recent_copies = {}
         self.closed = False
+        self.queue_lock = Lock()
+        self.queued_save = None
 
     def load(self):
         warnings = []
@@ -105,17 +116,49 @@ class ProfileStore:
         except Exception as error:
             return SaveResult(True, error=str(error))
 
-    def save(self, path, profile, settings):
-        return self.executor.submit(self._save, Path(path), deepcopy(profile), deepcopy(settings))
+    def _run_save(self, batch):
+        with self.queue_lock:
+            if self.queued_save is batch:
+                self.queued_save = None
+        # Once claimed by the worker, this snapshot cannot be replaced.
+        return self._save(batch.path, batch.profile, batch.settings)
+
+    def save(self, path, profile, settings, *, coalesce=False):
+        """Merge only consecutive, unstarted autosaves for the same path.
+
+        Merged callers share completion of the newest snapshot. Explicit saves,
+        settings writes and flushes form barriers and retain submission order.
+        """
+        batch = _QueuedSave(Path(path), deepcopy(profile), deepcopy(settings))
+        with self.queue_lock:
+            if self.closed:
+                raise RuntimeError('Profile store is closed')
+            pending = self.queued_save
+            if coalesce and pending is not None and pending.path == batch.path:
+                pending.profile, pending.settings = batch.profile, batch.settings
+                return pending.future
+            self.queued_save = batch if coalesce else None
+            batch.future = self.executor.submit(self._run_save, batch)
+            return batch.future
 
     def settings(self, path, settings):
-        return self.executor.submit(self._settings, path, deepcopy(settings)).result()
+        with self.queue_lock:
+            self.queued_save = None
+            future = self.executor.submit(self._settings, path, deepcopy(settings))
+        return future.result()
 
     def flush(self):
-        if not self.closed:
-            self.executor.submit(lambda: None).result()
+        with self.queue_lock:
+            if self.closed:
+                return
+            self.queued_save = None
+            future = self.executor.submit(lambda: None)
+        future.result()
 
     def close(self):
-        if not self.closed:
+        with self.queue_lock:
+            if self.closed:
+                return
             self.closed = True
-            self.executor.shutdown(wait=True)
+            self.queued_save = None
+        self.executor.shutdown(wait=True)

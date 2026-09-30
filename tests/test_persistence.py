@@ -78,3 +78,110 @@ class PersistenceTests(unittest.TestCase):
         self.store.close()
         self.assertTrue(future.done())
         self.assertEqual(read_json(self.path), profile)
+
+    def test_autosave_burst_keeps_running_and_latest_snapshot(self):
+        entered, release = threading.Event(), threading.Event()
+        writes = []
+        def write(path, data):
+            if Path(path) == self.path:
+                writes.append(data['macros'][0]['memo'])
+                if len(writes) == 1:
+                    entered.set()
+                    if not release.wait(3):
+                        raise RuntimeError('test timeout')
+            atomic_json(path, data)
+        profile = Profile.default().export()
+        with patch('persistence.atomic_json', side_effect=write):
+            first = self.store.save(self.path, profile, self.settings, coalesce=True)
+            try:
+                self.assertTrue(entered.wait(2))
+                pending = []
+                for index in range(100):
+                    profile['macros'][0]['memo'] = str(index)
+                    pending.append(self.store.save(self.path, profile, self.settings, coalesce=True))
+                profile['macros'][0]['memo'] = 'changed after submission'
+                self.assertFalse(pending[-1].done())
+            finally:
+                release.set()
+            self.store.close()
+        self.assertTrue(first.result().profile_saved)
+        self.assertTrue(all(f.done() and f.result().profile_saved for f in pending))
+        self.assertEqual(writes, ['', '99'])
+        self.assertEqual(read_json(self.path)['macros'][0]['memo'], '99')
+
+    def test_explicit_save_and_different_paths_are_coalescing_barriers(self):
+        release = threading.Event()
+        self.store.executor.submit(lambda: release.wait(3))
+        writes = []
+        def write(path, data):
+            if Path(path) != self.store.settings_path:
+                writes.append((Path(path).name, data['macros'][0]['memo']))
+            atomic_json(path, data)
+        profile = Profile.default().export()
+        other = self.path.with_name('other.json')
+        with patch('persistence.atomic_json', side_effect=write):
+            try:
+                futures = []
+                for path, memo, automatic in [(self.path, 'a', True), (self.path, 'explicit', False),
+                                               (self.path, 'b', True), (other, 'other', True),
+                                               (self.path, 'c', True), (self.path, 'latest', True)]:
+                    profile['macros'][0]['memo'] = memo
+                    futures.append(self.store.save(path, profile, self.settings, coalesce=automatic))
+            finally:
+                release.set()
+            self.store.flush()
+        self.assertTrue(all(f.result().profile_saved for f in futures))
+        self.assertEqual(writes, [('macro.json', 'a'), ('macro.json', 'explicit'),
+                                  ('macro.json', 'b'), ('other.json', 'other'), ('macro.json', 'latest')])
+
+    def test_settings_write_separates_autosave_batches(self):
+        release, submitted = threading.Event(), threading.Event()
+        self.store.executor.submit(lambda: release.wait(3))
+        profile = Profile.default().export()
+        first = self.store.save(self.path, profile, self.settings, coalesce=True)
+        submit = self.store.executor.submit
+        def observe(fn, *args, **kwargs):
+            future = submit(fn, *args, **kwargs)
+            if fn == self.store._settings:
+                submitted.set()
+            return future
+        errors = []
+        def save_settings():
+            try:
+                self.store.settings(self.path, self.settings)
+            except Exception as error:
+                errors.append(error)
+        with patch.object(self.store.executor, 'submit', side_effect=observe):
+            thread = threading.Thread(target=save_settings)
+            thread.start()
+            try:
+                self.assertTrue(submitted.wait(2))
+                profile['macros'][0]['memo'] = 'after settings'
+                last = self.store.save(self.path, profile, self.settings, coalesce=True)
+                self.assertIsNot(first, last)
+            finally:
+                release.set()
+                thread.join(3)
+            self.store.flush()
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(errors)
+        self.assertTrue(last.result().profile_saved)
+        self.assertEqual(read_json(self.path)['macros'][0]['memo'], 'after settings')
+
+    def test_coalesced_failure_reaches_all_callers_and_can_retry(self):
+        release = threading.Event()
+        self.store.executor.submit(lambda: release.wait(3))
+        profile = Profile.default().export()
+        with patch('persistence.atomic_json', side_effect=OSError('disk unavailable')):
+            try:
+                first = self.store.save(self.path, profile, self.settings, coalesce=True)
+                profile['macros'][0]['memo'] = 'latest'
+                last = self.store.save(self.path, profile, self.settings, coalesce=True)
+            finally:
+                release.set()
+            self.store.flush()
+        for future in (first, last):
+            self.assertFalse(future.result().profile_saved)
+            self.assertIn('disk unavailable', future.result().error)
+        self.assertTrue(self.store.save(self.path, profile, self.settings, coalesce=True).result().profile_saved)
+        self.assertEqual(read_json(self.path)['macros'][0]['memo'], 'latest')

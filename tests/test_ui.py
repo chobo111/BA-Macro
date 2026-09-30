@@ -113,6 +113,7 @@ class UiTests(unittest.TestCase):
             try:
                 self.assertTrue(entered.wait(1))
                 old_revision = w.save_revision
+                w.set_value(w.profile.rows[0].id, 'memo', 'intermediate')
                 w.set_value(w.profile.rows[0].id, 'memo', 'second')
                 self.assertTrue(w.dirty)
                 self.qt.processEvents()
