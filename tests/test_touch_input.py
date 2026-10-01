@@ -51,6 +51,59 @@ class TouchTests(unittest.TestCase):
             ((200, 300), DOWN | INRANGE | INCONTACT), ((200, 300), UP)])
         self.assertEqual(self.native.position, (200, 300))
 
+    def test_held_loop_refreshes_mouse_for_both_curve_directions(self):
+        for reverse in (False, True):
+            with self.subTest(reverse=reverse):
+                self.setUp()
+                aims = [(220, 320), (440, 540), (660, 760)]
+                remaining = iter(aims)
+                def held(key):
+                    point = next(remaining, None)
+                    if point is None:
+                        return False
+                    self.native.position = point
+                    return True
+                self.runtime.held = held
+                path = 'mouse 10,20' if reverse else '10,20 mouse'
+                self.run_script('loop\ncurve ' + path + '\nsleep 5\nloop_end')
+                starts = [point for point, flags in self.device.events if flags & DOWN]
+                ends = [point for point, flags in self.device.events if flags & UP]
+                self.assertEqual(starts, aims if reverse else [(10, 20)] * 3)
+                self.assertEqual(ends, [(10, 20)] * 3 if reverse else aims)
+                self.assertEqual(self.native.events, [])
+
+    def test_mouse_refreshes_between_instructions_and_release_actions(self):
+        def wait(ms, command):
+            if ms == 7:
+                self.native.position = (450, 550)
+            elif ms == 9:
+                self.native.position = (650, 750)
+        self.runtime.wait = wait
+        self.run_script('click mouse\nsleep 7\nmove mouse\nmouse_press left\n'
+                        'mouse_release left\nsleep 9\nrelease_actions\nclick mouse')
+        starts = [point for point, flags in self.device.events if flags & DOWN]
+        self.assertEqual(starts, [(200, 300), (450, 550), (650, 750)])
+        self.assertEqual(self.native.events, [])
+
+    def test_curve_keeps_one_aim_during_drag_then_refreshes_next_curve(self):
+        def wait(ms, command):
+            if ms == 5:
+                self.native.position = (600, 700)
+        self.runtime.wait = wait
+        self.run_script('curve_first_time 5\ncurve 10,20 mouse\ncurve 10,20 mouse')
+        ends = [point for point, flags in self.device.events if flags & UP]
+        self.assertEqual(ends, [(200, 300), (600, 700)])
+
+    def test_live_mouse_outside_target_stops_without_extra_contact(self):
+        def wait(ms, command):
+            if ms == 7:
+                self.native.position = (-10, 300)
+        self.runtime.wait = wait
+        with self.assertRaises(ScriptError):
+            self.run_script('click mouse\nsleep 7\nclick mouse')
+        self.assertEqual(sum(bool(flags & DOWN) for _, flags in self.device.events), 1)
+        self.assertFalse(self.adapter.pressed)
+
     def test_virtual_move_only_changes_next_touch_location(self):
         self.run_script('move 40,50\nmouse_press left\nmouse_release left')
         self.assertEqual(self.device.events[0][0], (40, 50))

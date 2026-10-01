@@ -1,6 +1,11 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'Blue Archive Studio'
 RELEASES = (
+    ('0.2.1-experimental', '2026-10-01', (
+        '독립 터치에서 mouse 좌표를 명령 실행마다 갱신하여 반복 중 커서 이동 반영',
+        'curve는 실행 시작 시 현재 커서 좌표를 읽고 해당 드래그 동안 경로 유지',
+        '좌표 갱신 자동 테스트 추가, 게임 내 동작은 사용자 검증',
+    )),
     ('0.2.0-experimental', '2026-10-01', (
         '정보 메뉴에 버전별 변경 기록 추가',
         '스크립트용 독립 터치 입력 실험 옵션 추가 (대상 창 선택 필요)',

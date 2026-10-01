@@ -149,6 +149,9 @@ class TouchDevice:
 
 
 class TouchScriptInput:
+    # Touch movement leaves the physical cursor available as a live aim point.
+    live_mouse = True
+
     def __init__(self, native, device_factory=TouchDevice):
         self.native = native
         self.device_factory = device_factory
