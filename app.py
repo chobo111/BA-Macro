@@ -21,7 +21,7 @@ from script_language import compile_script
 from script_editor import ScriptEditor
 from persistence import ProfileStore
 from conversion_dialog import ConversionDialog
-from version import APP_NAME, VERSION
+from version import APP_NAME, VERSION, RELEASES
 from session import ExecutionSession, editing_dialog
 from widgets import (make_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
                      BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog, NoWheelCombo, NoWheelSpinBox)
@@ -213,6 +213,9 @@ class MainWindow(QMainWindow):
         tools.addAction("프로필 해상도 변환…", self.convert_dialog)
         about = self.menuBar().addMenu("정보")
         about.addAction(f"{APP_NAME} · {VERSION}", self.about_dialog)
+        history = about.addMenu("변경 기록")
+        for release in RELEASES:
+            history.addAction(release[0], lambda checked=False, entry=release: self.release_notes_dialog(entry))
         self.cursor_label = QLabel("— , —")
         self.cursor_label.setObjectName("cursor")
         self.cursor_label.setFixedWidth(152)
@@ -457,7 +460,8 @@ class MainWindow(QMainWindow):
                     return
             command = Command(self.target, row.x, row.y, row.action_mode, row.move_hk,
                               s.move_to_click_delay_ms, s.click_hold_ms, row.script, drag_segment_duration_ms=s.drag_segment_duration_ms, program=program,
-                              cursor_return_delay_ms=s.cursor_return_delay_ms, return_cursor=s.return_cursor)
+                              cursor_return_delay_ms=s.cursor_return_delay_ms, return_cursor=s.return_cursor,
+                              script_input_mode=s.script_input_mode)
             if not self.engine.submit(command):
                 self.statusBar().showMessage("실행기가 종료되어 실행할 수 없습니다.")
 
@@ -771,7 +775,8 @@ class MainWindow(QMainWindow):
                 self.profile.validate((settings.capture_hk, settings.pause_hk))
                 Hotkeys.compile(settings.capture_hk)
                 Hotkeys.compile(settings.pause_hk)
-                if settings.display_id != self.settings.display_id:
+                if (settings.display_id != self.settings.display_id or
+                        settings.script_input_mode != self.settings.script_input_mode):
                     self.stop()
                 self.settings = settings
                 self.native.display_id = settings.display_id
@@ -899,6 +904,12 @@ class MainWindow(QMainWindow):
     @editing_dialog(hooks=False)
     def about_dialog(self):
         QMessageBox.information(self, '정보', f'{APP_NAME}\n버전: {VERSION}')
+
+    @editing_dialog(hooks=False)
+    def release_notes_dialog(self, entry):
+        version, date, changes = entry
+        QMessageBox.information(self, f"변경 기록 · {version}",
+                                f"{version} · {date}\n\n" + "\n".join(f"• {change}" for change in changes))
 
     def shutdown(self):
         if self.closing:

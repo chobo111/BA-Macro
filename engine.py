@@ -18,6 +18,7 @@ class Command:
     program: Program | None = None
     cursor_return_delay_ms: int = 50
     return_cursor: bool = True
+    script_input_mode: str = "mouse"
 
 
 class Cancelled(Exception):
@@ -34,6 +35,7 @@ class Engine:
         self.closed = False
         self.reset_requested = False
         self.runtime = ScriptRuntime(native, self.guard, self.wait, held)
+        self.script_input_mode = "mouse"
         self.worker = threading.Thread(target=self._run, name="macro-input", daemon=True)
         self.worker.start()
 
@@ -70,6 +72,8 @@ class Engine:
             self.native.validate_context(command.hwnd)
         if self.cancel.is_set() or (command.hwnd and not self.native.active(command.hwnd)):
             raise Cancelled()
+        if hasattr(self.runtime.native, "keep_alive"):
+            self.runtime.native.keep_alive()
 
     def wait(self, milliseconds, command):
         remaining = milliseconds / 1000
@@ -114,6 +118,27 @@ class Engine:
             if origin is not None:
                 self.native.move(*origin)
 
+    def prepare_script(self, command, program):
+        mode = command.script_input_mode
+        if mode not in ('mouse', 'touch'):
+            raise ValueError('지원하지 않는 스크립트 입력 방식입니다.')
+        if mode != self.script_input_mode:
+            self.runtime.release_all()
+            self.close_script_input()
+            native = self.native.create_touch_input() if mode == 'touch' else self.native
+            self.runtime = ScriptRuntime(native, self.guard, self.wait, self.held)
+            self.script_input_mode = mode
+        if mode == 'touch':
+            self.runtime.native.begin(command.hwnd, program)
+
+    def close_script_input(self):
+        if self.runtime.native is not self.native:
+            self.runtime.native.close()
+            self.runtime.keys.clear()
+            self.runtime.buttons.clear()
+            self.runtime.latched_keys.clear()
+            self.runtime.latched_buttons.clear()
+
     def _run(self):
         while True:
             with self.condition:
@@ -132,12 +157,17 @@ class Engine:
             try:
                 if reset or (self.runtime.context and not self.native.active(self.runtime.context)):
                     self.runtime.release_all()
+                    self.close_script_input()
                 if closing:
                     return
                 if c is None:
+                    if hasattr(self.runtime.native, "keep_alive"):
+                        self.runtime.native.keep_alive()
                     continue
                 if c.mode == 'script':
-                    self.runtime.run(c.program if c.program is not None else compile_script(c.script), c)
+                    program = c.program if c.program is not None else compile_script(c.script)
+                    self.prepare_script(c, program)
+                    self.runtime.run(program, c)
                     continue
                 # A coordinate action must not inherit a script's latched inputs.
                 self.runtime.release_all()
@@ -145,12 +175,14 @@ class Engine:
             except Cancelled:
                 pass
             except Exception as error:
+                self.close_script_input()
                 self.report(str(error))
             finally:
                 # Covers a switch arriving just after a script's last guard.
                 if self.cancel.is_set():
                     try:
                         self.runtime.release_all()
+                        self.close_script_input()
                     except Exception as error:
                         self.report(str(error))
                 with self.condition:

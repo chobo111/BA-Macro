@@ -70,6 +70,8 @@ adjust = bind("AdjustWindowRectEx", [C.POINTER(W.RECT), W.DWORD, W.BOOL, W.DWORD
 adjust_dpi = (bind("AdjustWindowRectExForDpi", [C.POINTER(W.RECT), W.DWORD, W.BOOL, W.DWORD, W.UINT], W.BOOL)
               if hasattr(U, "AdjustWindowRectExForDpi") else None)
 window_dpi = bind("GetDpiForWindow", [W.HWND], W.UINT) if hasattr(U, "GetDpiForWindow") else None
+window_from_point = bind("WindowFromPoint", [W.POINT], W.HWND)
+get_ancestor = bind("GetAncestor", [W.HWND, W.UINT], W.HWND)
 ENUM = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
 enum_windows = bind("EnumWindows", [ENUM, W.LPARAM], W.BOOL)
 
@@ -220,6 +222,14 @@ class Windows:
         point = W.POINT(x, y)
         check(to_screen(hwnd, C.byref(point)))
         return point.x, point.y
+
+    def point_belongs_to(self, hwnd, x, y):
+        hit = window_from_point(W.POINT(x, y))
+        return bool(hit and get_ancestor(hit, 2) == hwnd)
+
+    def create_touch_input(self):
+        from touch_input import TouchScriptInput
+        return TouchScriptInput(self)
 
     def move(self, x, y):
         check(set_cursor(x, y))

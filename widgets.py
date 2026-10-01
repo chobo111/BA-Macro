@@ -268,6 +268,14 @@ class SettingsDialog(QDialog):
                 separator.setFrameShadow(QFrame.Shadow.Sunken)
                 action_form.addRow(separator)
             action_form.addRow(label, field)
+        self.script_input = NoWheelCombo()
+        self.script_input.addItem("일반 마우스", "mouse")
+        self.script_input.addItem("독립 터치 (실험)", "touch")
+        self.script_input.setCurrentIndex(self.script_input.findData(settings.script_input_mode))
+        forms["동작 / 스크립트"].addRow("스크립트 입력 방식", self.script_input)
+        notice = QLabel("독립 터치: 대상 창 선택 필요 · 좌클릭/드래그 전용")
+        notice.setWordWrap(True)
+        forms["동작 / 스크립트"].addRow(notice)
         for name, label in (("exclusive_hook", "처리한 단축키를 다른 앱에 전달하지 않기"),
                             ("auto_pause", "설정·편집 창을 열거나 변경할 때 자동 정지")):
             checkbox = QCheckBox(label)
@@ -293,6 +301,7 @@ class SettingsDialog(QDialog):
         data.update({name: checkbox.isChecked() for name, checkbox in self.checks.items()})
         data["theme"] = self.theme.currentText()
         data["display_id"] = self.displays.currentData()
+        data["script_input_mode"] = self.script_input.currentData()
         return Settings.read(data)
 
 

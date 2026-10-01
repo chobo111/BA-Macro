@@ -164,6 +164,7 @@ class Settings:
     theme: str = "Dark"
     last_profile: str = ""
     display_id: str = ""
+    script_input_mode: str = "mouse"
 
     @classmethod
     def read(cls, data):
@@ -184,6 +185,9 @@ class Settings:
             if not isinstance(value, bool):
                 raise ValueError(f"{name}: 참/거짓 값이 필요합니다.")
             setattr(obj, name, value)
+        obj.script_input_mode = data.get("script_input_mode", "mouse")
+        if obj.script_input_mode not in ("mouse", "touch"):
+            raise ValueError("스크립트 입력 방식이 올바르지 않습니다.")
         obj.theme = data.get("theme", "Dark")
         if obj.theme not in ("Dark", "Light", "System"):
             raise ValueError("테마 값이 올바르지 않습니다.")
