@@ -44,7 +44,7 @@ class ScriptEditor(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         toolbar = QHBoxLayout()
         self.templates = QComboBox()
-        self.templates.addItems(['예제 선택', '스킬 카드 > 마우스 슬라이드', '마우스 > 스킬 카드 슬라이드'])
+        self.templates.addItems(['예제 선택', '스킬 카드 → 마우스 슬라이드', '마우스 → 스킬 카드 슬라이드', '좌표 → 좌표 슬라이드'])
         self.templates.activated.connect(self.insert_template)
         toolbar.addWidget(self.templates)
         toolbar.addStretch()
@@ -170,7 +170,8 @@ class ScriptEditor(QDialog):
     def insert_template(self, index):
         examples = ['',
             'loop\ncurve_first_time 5\ncurve_last_time 5\ncurve X,Y mouse // 스킬 카드 좌표 XY의 스킬 카드를 마우스 위치에 연사\nsleep 5\nloop_end',
-            'loop\ncurve_first_time 5\ncurve_last_time 5\ncurve mouse X,Y // 스킬 카드에 마우스를 올리고 사용하면, XY좌표에 스킬을 연사\nsleep 5\nloop_end']
+            'loop\ncurve_first_time 5\ncurve_last_time 5\ncurve mouse X,Y // 스킬 카드에 마우스를 올리고 사용하면, XY좌표에 스킬을 연사\nsleep 5\nloop_end',
+            'loop\ncurve_first_time 5\ncurve_last_time 5\ncurve X,Y X,Y // 앞쪽은 시작 좌표, 뒤쪽은 도착 좌표로 바꾸세요\nsleep 5\nloop_end']
         if 0 < index < len(examples):
             self.editor.setPlainText(examples[index])
             self.templates.setCurrentIndex(0)

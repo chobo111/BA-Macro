@@ -236,8 +236,8 @@ class UiTests(unittest.TestCase):
 
     def test_editor_templates_replace_and_validate_after_coordinates(self):
         dialog = ScriptEditor('old content', self.window.native, 0, self.window)
-        self.assertEqual(dialog.templates.count(), 3)
-        for index, curve in ((1, 'curve X,Y mouse'), (2, 'curve mouse X,Y')):
+        self.assertEqual(dialog.templates.count(), 4)
+        for index, curve in ((1, 'curve X,Y mouse'), (2, 'curve mouse X,Y'), (3, 'curve X,Y X,Y')):
             dialog.insert_template(index)
             source = dialog.editor.toPlainText()
             self.assertNotIn('old content', source)
