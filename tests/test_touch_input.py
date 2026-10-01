@@ -217,5 +217,71 @@ class TouchTests(unittest.TestCase):
         event.point.x = 999
         self.assertFalse(gate.matches(event))
         event.point.x = 120
-        with patch('touch_input.time.monotonic', return_value=time.monotonic() + 1):
+        with patch('touch_input.time.monotonic', return_value=time.monotonic() + 3):
             self.assertFalse(gate.matches(event))
+
+    def test_promotion_filter_retains_delayed_points_through_rapid_bursts(self):
+        from touch_input import TouchPromotionFilter
+        from mouse_hook import MouseEvent
+        gate = TouchPromotionFilter()
+        event = MouseEvent()
+        event.point.x, event.point.y = 100, 200
+        event.extra = 0xFF515780
+        with patch('touch_input.time.monotonic', return_value=10):
+            gate.expect((100, 200))
+            for i in range(300):
+                gate.expect((500 + i, 400))
+        with patch('touch_input.time.monotonic', return_value=10.75):
+            self.assertTrue(gate.matches(event))
+            event.extra = 0  # Real mouse at the same point must still pass.
+            self.assertFalse(gate.matches(event))
+            event.extra = 0xFF515780
+            event.point.x = 101  # Do not suppress unrelated touch coordinates.
+            self.assertFalse(gate.matches(event))
+        with patch('touch_input.time.monotonic', return_value=13):
+            gate.expect((900, 900))
+            self.assertEqual(gate.points, {(900, 900): 13})
+            event.point.x = 100
+            self.assertFalse(gate.matches(event))
+
+    def test_repeated_point_refreshes_expiry(self):
+        from touch_input import TouchPromotionFilter
+        from mouse_hook import MouseEvent
+        gate = TouchPromotionFilter()
+        event = MouseEvent()
+        event.point.x, event.point.y = 100, 200
+        event.extra = 0xFF515780
+        with patch('touch_input.time.monotonic', return_value=10):
+            gate.expect((100, 200))
+        with patch('touch_input.time.monotonic', return_value=11.5):
+            gate.expect((100, 200))
+        with patch('touch_input.time.monotonic', return_value=12.5):
+            self.assertTrue(gate.matches(event))
+        self.assertEqual(len(gate.points), 1)
+
+    def test_device_close_keeps_filter_for_late_events_without_blocking(self):
+        from touch_input import TouchPromotionFilter, PROMOTION_GRACE_SECONDS
+        from mouse_hook import MouseEvent
+        gate = TouchPromotionFilter()
+        gate.close = Mock()
+        gate.expect((100, 200))
+        device = TouchDevice.__new__(TouchDevice)
+        device.handle = 123
+        device.promotion_filter = gate
+        device.destroy = Mock()
+        with patch('touch_input.threading.Timer') as timer:
+            device.close()
+            device.close()
+            gate.retire()
+            device.destroy.assert_called_once_with(123)
+            timer.assert_called_once_with(PROMOTION_GRACE_SECONDS, gate.close)
+            timer.return_value.start.assert_called_once_with()
+            self.assertTrue(timer.return_value.daemon)
+            gate.close.assert_not_called()
+            event = MouseEvent()
+            event.point.x, event.point.y = 100, 200
+            event.extra = 0xFF515780
+            self.assertTrue(gate.matches(event))
+            timer.call_args.args[1]()  # Simulate the asynchronous cleanup deadline.
+            gate.close.assert_called_once_with()
+        self.assertIsNone(device.promotion_filter)

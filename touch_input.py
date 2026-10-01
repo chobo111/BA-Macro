@@ -2,12 +2,13 @@
 import ctypes as C
 from ctypes import wintypes as W
 import time
-from collections import deque
+import threading
 from keyboard_hook import PhysicalHook, PROC, U, K
 from mouse_hook import MouseEvent
 from script_language import ScriptError
 
 PT_TOUCH = 2
+PROMOTION_GRACE_SECONDS = 2.0
 INRANGE, INCONTACT, DOWN, UPDATE, UP, CANCELED = 2, 4, 0x10000, 0x20000, 0x40000, 0x8000
 
 
@@ -56,17 +57,34 @@ class TouchPromotionFilter(PhysicalHook):
     """
     def __init__(self):
         super().__init__(None)
-        self.points = deque(maxlen=128)
+        self.points = {}
+        self.next_prune = 0
+        self.retire_timer = None
         self.thread.name = 'touch-mouse-promotion'
 
     def expect(self, position):
-        self.points.append((position, time.monotonic()))
+        now = time.monotonic()
+        # Only the injection worker writes this map; the hook performs one lookup.
+        # Keep recent points by age rather than evicting them during rapid bursts.
+        if now >= self.next_prune:
+            self.points = {point: stamp for point, stamp in self.points.items()
+                           if now - stamp < PROMOTION_GRACE_SECONDS}
+            self.next_prune = now + .25
+        self.points[position] = now
 
     def matches(self, event):
         if event.extra & 0xFFFFFF80 != 0xFF515780:
             return False
-        point, now = (event.point.x, event.point.y), time.monotonic()
-        return any(saved == point and now - stamp < .25 for saved, stamp in tuple(self.points))
+        stamp = self.points.get((event.point.x, event.point.y))
+        return stamp is not None and time.monotonic() - stamp < PROMOTION_GRACE_SECONDS
+
+    def retire(self):
+        # Destroying a pointer device can still leave promoted mouse events queued.
+        # Keep filtering those without delaying stop or the next script.
+        if self.retire_timer is None:
+            self.retire_timer = threading.Timer(PROMOTION_GRACE_SECONDS, self.close)
+            self.retire_timer.daemon = True
+            self.retire_timer.start()
 
     def run(self):
         handle = None
@@ -116,6 +134,8 @@ class TouchDevice:
         try:
             self.promotion_filter.start()
         except Exception:
+            self.promotion_filter.close()
+            self.promotion_filter = None
             self.close()
             raise
 
@@ -144,7 +164,7 @@ class TouchDevice:
             self.destroy(self.handle)
             self.handle = None
         if self.promotion_filter:
-            self.promotion_filter.close()
+            self.promotion_filter.retire()
             self.promotion_filter = None
 
 
