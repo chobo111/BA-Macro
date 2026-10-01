@@ -2,7 +2,6 @@
 import ntpath
 import ctypes as C
 from ctypes import wintypes as W
-from script_language import KEYS
 from domain import target_identity
 from displays import enumerate_displays, monitor_info
 
@@ -235,31 +234,8 @@ class Windows:
         check(set_cursor(x, y))
 
     def button(self, down):
-        self.mouse_button('left', down)
-
-    def mouse_button(self, button, down):
-        flags = {'left': (0x2, 0x4), 'right': (0x8, 0x10), 'middle': (0x20, 0x40),
-                 'back': (0x80, 0x100), 'forward': (0x80, 0x100)}
-        data = 1 if button == 'back' else 2 if button == 'forward' else 0
-        packet = Input(type=0, payload=Payload(mi=MouseInput(0, 0, data, flags[button][0 if down else 1], 0, 0)))
+        packet = Input(type=0, payload=Payload(mi=MouseInput(0, 0, 0, 0x2 if down else 0x4, 0, 0)))
         check(send_input(1, C.byref(packet), C.sizeof(Input)))
-
-    def key(self, name, down):
-        vk = KEYS[name]
-        extended = name in {'left', 'right', 'up', 'down', 'home', 'end', 'pageup', 'pagedown', 'insert', 'delete'}
-        packet = Input(type=1, payload=Payload(ki=KeyboardInput(vk, 0, (0 if down else 2) | int(extended), 0, 0)))
-        check(send_input(1, C.byref(packet), C.sizeof(Input)))
-
-    def text_char(self, char):
-        units = char.encode('utf-16-le')
-        for i in range(0, len(units), 2):
-            code = int.from_bytes(units[i:i+2], 'little')
-            packet = Input(type=1, payload=Payload(ki=KeyboardInput(0, code, 4, 0, 0)))
-            try:
-                check(send_input(1, C.byref(packet), C.sizeof(Input)))
-            finally:
-                packet.payload.ki.dwFlags = 6
-                check(send_input(1, C.byref(packet), C.sizeof(Input)))
 
     def size(self, hwnd):
         if not hwnd:

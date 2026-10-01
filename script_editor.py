@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel,
 from mouse_hook import CoordinateHook
 from script_language import compile_script, ScriptError
 from script_help import ScriptHelpDialog
+from touch_input import validate_touch_program
 
 class Highlighter(QSyntaxHighlighter):
     def highlightBlock(self, text):
@@ -144,7 +145,7 @@ class ScriptEditor(QDialog):
 
     def validate(self):
         try:
-            compile_script(self.editor.toPlainText())
+            validate_touch_program(compile_script(self.editor.toPlainText()))
             self.log('문법 검사 통과')
             return True
         except ScriptError as error:

@@ -74,27 +74,24 @@ class DisplayTests(TestCase):
         with self.assertRaises(ValueError):
             Settings.read({'display_id':123})
 
-    def test_coordinate_action_and_script_use_same_monitor_origin(self):
-        from engine import Engine,Command
-        from script_language import ScriptRuntime,compile_script
-        command=Command(0,120,300,'move_and_click','q',0,1)
-        info=SimpleNamespace(device=LEFT.device,monitor=W.RECT(-1920,-200,0,880))
-        with patch('native.monitor_info',return_value=info), \
-             patch.object(self.native,'cursor',return_value=(120,300)), \
-             patch.object(self.native,'cursor_screen',return_value=(-2300,50)), \
-             patch.object(self.native,'move') as move, \
-             patch.object(self.native,'button') as button, \
-             patch.object(self.native,'mouse_button') as mouse_button:
-            engine=Engine(self.native,lambda key:False)
+    def test_coordinate_action_uses_monitor_origin_but_script_requires_target(self):
+        from engine import Engine, Command
+        from script_language import compile_script
+        command = Command(0, 120, 300, 'move_and_click', 'q', 0, 1)
+        info = SimpleNamespace(device=LEFT.device, monitor=W.RECT(-1920,-200,0,880))
+        with patch('native.monitor_info', return_value=info), \
+             patch.object(self.native, 'cursor', return_value=(120,300)), \
+             patch.object(self.native, 'cursor_screen', return_value=(-2300,50)), \
+             patch.object(self.native, 'move') as move, \
+             patch.object(self.native, 'button') as button:
+            engine = Engine(self.native, lambda key: False)
             try:
                 engine.execute(command)
-                self.assertEqual(move.call_args_list[0].args,(-1800,100))
+                self.assertEqual(move.call_args_list[0].args, (-1800,100))
                 move.assert_called_with(-2300,50)
-                self.assertEqual(button.call_args_list[0].args,(True,))
-                runtime=ScriptRuntime(self.native,lambda c:None,lambda ms,c:None,lambda key:False)
-                runtime.run(compile_script('click 120,300\nmove mouse'),command)
-                move.assert_called_with(-1800,100)
-                self.assertEqual(mouse_button.call_args_list[0].args,('left',True))
+                self.assertEqual(button.call_args_list[0].args, (True,))
+                with self.assertRaises(ValueError):
+                    engine.runtime.native.begin(0, compile_script('click 120,300'))
             finally:
                 engine.shutdown()
 

@@ -84,7 +84,7 @@ class Probe(QWidget):
             script = f'click {round(267 * width / 1280)},{round(24 * height / 720)}'
         command = Command(target, 0, 0, 'script', 'q', 0, 20,
                           script=script,
-                          drag_segment_duration_ms=100, script_input_mode='touch')
+                          drag_segment_duration_ms=100)
         self.started = time.monotonic()
         self.engine.submit(command)
         self.timer.start(100)

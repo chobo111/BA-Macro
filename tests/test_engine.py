@@ -5,6 +5,16 @@ import unittest
 from engine import Engine, Command, Cancelled
 
 
+class FakeScriptInput:
+    """In-memory interpreter backend used to isolate scheduling tests."""
+    def __init__(self, native): self.native = native
+    def __getattr__(self, name): return getattr(self.native, name)
+    def begin(self, target, program): pass
+    def keep_alive(self): pass
+    def close(self): pass
+    def move(self, x, y): self.native.events.append(('move', x, y))
+
+
 class FakeWindows:
     def __init__(self):
         self.events = []
@@ -12,6 +22,8 @@ class FakeWindows:
         self.down = threading.Event()
         self.position = (200, 300)
         self.fail_down = False
+
+    def create_touch_input(self): return FakeScriptInput(self)
 
     def active(self, hwnd): return self.active_value
     def size(self, hwnd): return (1920, 1080)

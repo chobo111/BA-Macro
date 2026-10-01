@@ -33,7 +33,7 @@ class TouchTests(unittest.TestCase):
         self.native.point_belongs_to = Mock(return_value=True)
         self.device = Device()
         self.adapter = TouchScriptInput(self.native, lambda: self.device)
-        self.command = Command(1, 30, 40, 'script', 'q', 0, 1, script_input_mode='touch')
+        self.command = Command(1, 30, 40, 'script', 'q', 0, 1)
         self.runtime = ScriptRuntime(self.adapter, lambda c: None, lambda ms, c: None, lambda k: False)
 
     def run_script(self, source):
@@ -194,12 +194,11 @@ class TouchTests(unittest.TestCase):
             engine.shutdown()
         self.assertFalse(engine.worker.is_alive())
 
-    def test_touch_settings_roundtrip_and_default(self):
-        self.assertEqual(Settings().script_input_mode, 'mouse')
-        settings = Settings(script_input_mode='touch')
-        self.assertEqual(Settings.read(asdict(settings)), settings)
+    def test_input_mode_setting_is_removed(self):
+        self.assertNotIn('script_input_mode', asdict(Settings()))
+        self.assertEqual(Settings.read(asdict(Settings())), Settings())
         with self.assertRaises(ValueError):
-            Settings.read({'script_input_mode': 'unknown'})
+            Settings.read({'script_input_mode': 'mouse'})
 
     def test_promotion_filter_does_not_block_physical_mouse_or_unrelated_touch(self):
         from touch_input import TouchPromotionFilter
@@ -285,3 +284,21 @@ class TouchTests(unittest.TestCase):
             timer.call_args.args[1]()  # Simulate the asynchronous cleanup deadline.
             gate.close.assert_called_once_with()
         self.assertIsNone(device.promotion_filter)
+
+    def test_default_engine_rejects_unsupported_script_without_physical_fallback(self):
+        self.native.create_touch_input = lambda: self.adapter
+        reported = threading.Event()
+        errors = []
+        def report(message):
+            errors.append(message)
+            reported.set()
+        engine = Engine(self.native, lambda key: False, report)
+        try:
+            with patch.object(self.native, 'move', side_effect=AssertionError('physical movement')), \
+                 patch.object(self.native, 'button', side_effect=AssertionError('physical click')):
+                engine.submit(replace(self.command, script='click 10,20\nkey_press a'))
+                self.assertTrue(reported.wait(1))
+            self.assertEqual(len(errors), 1)
+            self.assertEqual(self.device.events, [])
+        finally:
+            engine.shutdown()

@@ -44,7 +44,7 @@ def validate_touch_program(program):
         for instruction in instructions:
             name = instruction.name
             if name.startswith('key_') or name == 'text' or (name.startswith('mouse_') and instruction.args[0] != 'left'):
-                raise ScriptError(instruction.line, '독립 터치는 좌클릭·이동·드래그만 지원합니다. 이 명령은 일반 마우스 방식에서 사용하세요.')
+                raise ScriptError(instruction.line, '스크립트는 독립 터치의 좌클릭·이동·드래그만 지원합니다. 키보드·문자·다른 마우스 버튼 명령은 사용할 수 없습니다.')
             visit(instruction.body)
     visit(program.pressed)
     visit(program.released)
@@ -169,9 +169,6 @@ class TouchDevice:
 
 
 class TouchScriptInput:
-    # Touch movement leaves the physical cursor available as a live aim point.
-    live_mouse = True
-
     def __init__(self, native, device_factory=TouchDevice):
         self.native = native
         self.device_factory = device_factory

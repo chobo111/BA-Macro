@@ -248,7 +248,7 @@ class ScriptRuntime:
             name, args = instruction.name, instruction.args
             try:
                 if (name in ('move', 'click', 'press', 'release', 'switch', 'curve')
-                        and 'mouse' in args and getattr(self.native, 'live_mouse', False)):
+                        and 'mouse' in args):
                     # Sample once per instruction, including each loop iteration.
                     # Keep all points of a single curve stable during its drag.
                     self.mouse = self.native.cursor(c.hwnd)

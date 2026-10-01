@@ -1,6 +1,11 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'Blue Archive Studio'
 RELEASES = (
+    ('0.2.4-experimental', '2026-10-01', (
+        '스크립트 실행을 독립 터치로 고정하고 입력 방식 설정·기존 마우스 실행 경로 제거',
+        '스크립트 저장 검사와 도움말을 터치 지원 범위에 맞게 정리',
+        '일반 좌표 클릭·커서 이동 동작 유지, 현재 설정 파일의 폐기 항목 삭제',
+    )),
     ('0.2.3-experimental', '2026-10-01', (
         '좌표 → 좌표 슬라이드 스크립트 예제 추가',
         '예제 제목의 > 기호를 오른쪽 화살표 →로 통일',

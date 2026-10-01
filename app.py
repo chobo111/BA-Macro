@@ -460,8 +460,7 @@ class MainWindow(QMainWindow):
                     return
             command = Command(self.target, row.x, row.y, row.action_mode, row.move_hk,
                               s.move_to_click_delay_ms, s.click_hold_ms, row.script, drag_segment_duration_ms=s.drag_segment_duration_ms, program=program,
-                              cursor_return_delay_ms=s.cursor_return_delay_ms, return_cursor=s.return_cursor,
-                              script_input_mode=s.script_input_mode)
+                              cursor_return_delay_ms=s.cursor_return_delay_ms, return_cursor=s.return_cursor)
             if not self.engine.submit(command):
                 self.statusBar().showMessage("실행기가 종료되어 실행할 수 없습니다.")
 
@@ -775,8 +774,7 @@ class MainWindow(QMainWindow):
                 self.profile.validate((settings.capture_hk, settings.pause_hk))
                 Hotkeys.compile(settings.capture_hk)
                 Hotkeys.compile(settings.pause_hk)
-                if (settings.display_id != self.settings.display_id or
-                        settings.script_input_mode != self.settings.script_input_mode):
+                if settings.display_id != self.settings.display_id:
                     self.stop()
                 self.settings = settings
                 self.native.display_id = settings.display_id

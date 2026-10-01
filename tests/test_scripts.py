@@ -9,6 +9,9 @@ from test_engine import FakeWindows
 
 
 class ScriptWindows(FakeWindows):
+    def move(self, x, y):
+        self.events.append(('move', x, y))
+
     def key(self, key, down):
         self.events.append(('key', key, down))
         if down:

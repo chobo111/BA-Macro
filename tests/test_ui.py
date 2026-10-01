@@ -74,7 +74,7 @@ class UiTests(unittest.TestCase):
                         'text', 'sleep', 'curve', 'curve_first_time', 'curve_last_time',
                         'curve_release', 'release_all', 'loop', 'loop_end', 'release_actions'):
             self.assertIn(command, text)
-        self.assertIn('실행을 시작할 때', text)
+        self.assertIn('각 좌표 명령 실행 시', text)
         help_dialog.deleteLater()
         editor.reject()
         editor.deleteLater()
@@ -233,6 +233,14 @@ class UiTests(unittest.TestCase):
         w.armed = True
         w.set_value(w.profile.rows[0].id, 'memo', '계속 준비 상태')
         self.assertTrue(w.armed)
+
+    def test_editor_rejects_unsupported_touch_commands_on_save(self):
+        for source in ('click 10,20\nkey_press a', 'text "hello"', 'mouse_press right'):
+            with self.subTest(source=source):
+                dialog = ScriptEditor(source, self.window.native, 0, self.window)
+                self.assertFalse(dialog.validate())
+                self.assertTrue(dialog.validation.property('error'))
+                dialog.deleteLater()
 
     def test_editor_templates_replace_and_validate_after_coordinates(self):
         dialog = ScriptEditor('old content', self.window.native, 0, self.window)
