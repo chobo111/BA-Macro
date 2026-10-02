@@ -7,12 +7,13 @@ from dataclasses import asdict
 from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolygon, QPen
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QTableWidget, QHeaderView, QAbstractItemView,
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QHeaderView, QAbstractItemView,
     QSpinBox, QLineEdit, QDialog, QFormLayout, QDialogButtonBox, QCheckBox, QKeySequenceEdit,
     QStyledItemDelegate, QStatusBar, QTabWidget, QWidget, QFrame,
 )
 
 from domain import Settings, hotkey
+from row_drag import AnimatedRowsTable
 
 
 def make_icon():
@@ -92,8 +93,7 @@ class MemoDelegate(QStyledItemDelegate):
         return editor
 
 
-class RowsTable(QTableWidget):
-    moved = Signal(int, int)
+class RowsTable(AnimatedRowsTable):
     memo_edited = Signal(int, str)
     content_width_changed = Signal()
 
@@ -102,10 +102,6 @@ class RowsTable(QTableWidget):
         self.setHorizontalHeaderLabels(["단축키", "X", "Y", "동작", "메모"])
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.setDragEnabled(True)
-        self.setAcceptDrops(True)
-        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setAlternatingRowColors(True)
         self.verticalHeader().setDefaultSectionSize(36)
         self.setShowGrid(False)
@@ -124,17 +120,6 @@ class RowsTable(QTableWidget):
         self.setColumnWidth(4, max(70, min(width, 1200)))
         self.content_width_changed.emit()
 
-    def dropEvent(self, event):
-        if event.source() is self:
-            origin = self.currentRow()
-            target = self.indexAt(event.position().toPoint()).row()
-            if target < 0:
-                target = self.rowCount() - 1
-            if origin >= 0:
-                self.moved.emit(origin, target)
-            event.accept()
-        else:
-            event.ignore()
 
 
 class BriefStatusBar(QStatusBar):

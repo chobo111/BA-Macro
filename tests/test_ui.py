@@ -691,6 +691,25 @@ class UiTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 Settings.read({'drag_segment_duration_ms': value})
 
+    def test_row_drag_hover_preserves_profile_and_drop_saves_once(self):
+        from test_row_drag import Drop
+        w, table = self.window, self.window.table
+        before = [row.id for row in w.profile.rows]
+        table.begin_preview(0)
+        table.drag_anchor = QPoint(100, table.rowHeight(0)//2)
+        position = QPoint(100, table.rowViewportPosition(2)+table.rowHeight(2)//2)
+        with patch.object(w, 'save', wraps=w.save) as save:
+            table.hover_at(position)
+            table.preview.animation.setCurrentTime(160)
+            self.assertEqual([row.id for row in w.profile.rows], before)
+            save.assert_not_called()
+            table.dropEvent(Drop(table, position))
+            self.assertEqual(save.call_count, 1)
+        expected = [before[1], before[2], before[0]]
+        self.assertEqual([row.id for row in w.profile.rows], expected)
+        self.assertEqual(table.currentRow(), 2)
+        self.assertEqual([row.id for row in Profile.read(self.saved(w.path)).rows], expected)
+
     def test_autosave_all_edits_and_new_profile_preserves_old(self):
         w=self.window
         self.assertNotIn('저장',[b.text() for b in w.centralWidget().findChildren(QPushButton)])

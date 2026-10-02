@@ -1,6 +1,11 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'Blue Archive Studio'
 RELEASES = (
+    ('0.2.5-experimental', '2026-10-03', (
+        '행 드래그 시 반투명 미리보기와 주변 행 이동 애니메이션 추가',
+        '드롭 위치를 빈 자리로 표시하고 가장자리 드래그 시 자동 스크롤',
+        '놓을 때만 순서 저장, 취소·표 밖 드롭 시 원래 순서 유지',
+    )),
     ('0.2.4-experimental', '2026-10-01', (
         '스크립트 실행을 독립 터치로 고정하고 입력 방식 설정·기존 마우스 실행 경로 제거',
         '스크립트 저장 검사와 도움말을 터치 지원 범위에 맞게 정리',
