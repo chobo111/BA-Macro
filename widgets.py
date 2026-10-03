@@ -1,8 +1,8 @@
 """Reusable Qt widgets, dialogs, and icons; no persistence or input runtime."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict
-
 
 from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolygon, QPen
@@ -14,6 +14,15 @@ from PySide6.QtWidgets import (
 
 from domain import Settings, hotkey
 from row_drag import AnimatedRowsTable
+
+
+@contextmanager
+def managed_dialog(dialog):
+    """Keep retrying dialogs alive until their caller finishes, then release Qt ownership."""
+    try:
+        yield dialog
+    finally:
+        dialog.deleteLater()
 
 
 def make_icon():

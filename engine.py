@@ -117,9 +117,7 @@ class Engine:
 
     def close_script_input(self):
         self.runtime.native.close()
-        self.runtime.keys.clear()
         self.runtime.buttons.clear()
-        self.runtime.latched_keys.clear()
         self.runtime.latched_buttons.clear()
 
     def _run(self):
@@ -127,7 +125,7 @@ class Engine:
             with self.condition:
                 # Only held inputs need periodic focus-loss checks. New work,
                 # stop and shutdown all notify this condition immediately.
-                watch_focus = self.runtime.context and (self.runtime.keys or self.runtime.buttons)
+                watch_focus = self.runtime.context and self.runtime.buttons
                 self.condition.wait_for(lambda: self.closed or self.reset_requested or self.pending is not None,
                                         timeout=.05 if watch_focus else None)
                 reset = self.reset_requested or self.closed
@@ -148,7 +146,7 @@ class Engine:
                     continue
                 if c.mode == 'script':
                     program = c.program if c.program is not None else compile_script(c.script)
-                    self.runtime.native.begin(c.hwnd, program)
+                    self.runtime.native.begin(c.hwnd)
                     self.runtime.run(program, c)
                     continue
                 # A coordinate action must not inherit a script's latched inputs.

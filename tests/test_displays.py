@@ -76,7 +76,6 @@ class DisplayTests(TestCase):
 
     def test_coordinate_action_uses_monitor_origin_but_script_requires_target(self):
         from engine import Engine, Command
-        from script_language import compile_script
         command = Command(0, 120, 300, 'move_and_click', 'q', 0, 1)
         info = SimpleNamespace(device=LEFT.device, monitor=W.RECT(-1920,-200,0,880))
         with patch('native.monitor_info', return_value=info), \
@@ -91,7 +90,7 @@ class DisplayTests(TestCase):
                 move.assert_called_with(-2300,50)
                 self.assertEqual(button.call_args_list[0].args, (True,))
                 with self.assertRaises(ValueError):
-                    engine.runtime.native.begin(0, compile_script('click 120,300'))
+                    engine.runtime.native.begin(0)
             finally:
                 engine.shutdown()
 

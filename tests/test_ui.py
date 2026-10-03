@@ -1196,3 +1196,144 @@ class UiTests(unittest.TestCase):
                 window.shutdown()
                 window.close()
                 window.deleteLater()
+
+    def test_external_profile_reopen_preserves_edited_local_recent_copy(self):
+        from domain import atomic_json
+        w = self.window
+        with tempfile.TemporaryDirectory() as external:
+            source = Path(external) / 'shared.json'
+            atomic_json(source, Profile.default().export())
+            with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(source), '')):
+                w.open_profile()
+            local = w.data_dir / w.settings.last_profile
+            with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(local), '')):
+                w.open_profile()
+            w.table.item(0, 4).setText('saved local changes')
+            w.flush_pending_saves()
+            self.assertFalse(w.dirty)
+            original = local.read_bytes()
+            with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(source), '')):
+                w.open_profile()
+            self.assertEqual(local.read_bytes(), original)
+            self.assertEqual(read_json(local)['macros'][0]['memo'], 'saved local changes')
+            self.assertNotEqual(w.settings.last_profile, local.name)
+
+    def test_failed_settings_save_then_cancel_keeps_runtime_and_disk(self):
+        from dataclasses import asdict, replace
+        w = self.window
+        before = asdict(w.settings)
+        bindings = list(w.hooks.bindings)
+        disk = w.settings_path.read_bytes()
+        candidate = replace(w.settings, click_hold_ms=9876, capture_hk='ctrl+g',
+                            theme='Light', display_id='new-monitor')
+        with patch('app.SettingsDialog') as factory, \
+             patch.object(w.store, 'settings', side_effect=OSError('settings unavailable')), \
+             patch.object(w, 'error') as error, patch.object(w, 'apply_theme') as theme:
+            dialog = factory.return_value
+            dialog.exec.side_effect = [QDialog.DialogCode.Accepted, QDialog.DialogCode.Rejected]
+            dialog.value.return_value = candidate
+            w.settings_dialog()
+            error.assert_called_once_with('settings unavailable')
+            theme.assert_not_called()
+            dialog.deleteLater.assert_called_once()
+        self.assertEqual(asdict(w.settings), before)
+        self.assertEqual(w.native.display_id, before['display_id'])
+        self.assertEqual(w.hooks.bindings, bindings)
+        self.assertEqual(w.settings_path.read_bytes(), disk)
+        self.assertTrue(w.save())
+        w.persist_settings()
+        self.assertEqual(read_json(w.settings_path), before)
+
+    def test_settings_retry_applies_candidate_only_after_success(self):
+        from dataclasses import replace
+        w = self.window
+        old = w.settings
+        candidate = replace(old, click_hold_ms=9876, capture_hk='ctrl+g')
+        save = w.store.settings
+        attempts = []
+        def write(*args, **kwargs):
+            self.assertIs(w.settings, old)
+            attempts.append(True)
+            if len(attempts) == 1:
+                raise OSError('temporary error')
+            return save(*args, **kwargs)
+        with patch('app.SettingsDialog') as factory, \
+             patch.object(w.store, 'settings', side_effect=write), patch.object(w, 'error') as error:
+            dialog = factory.return_value
+            dialog.exec.return_value = QDialog.DialogCode.Accepted
+            dialog.value.return_value = candidate
+            w.settings_dialog()
+            self.assertEqual(dialog.exec.call_count, 2)
+            error.assert_called_once_with('temporary error')
+            dialog.deleteLater.assert_called_once()
+        self.assertEqual(w.settings.click_hold_ms, 9876)
+        self.assertEqual(w.settings.capture_hk, 'ctrl+g')
+        self.assertEqual(read_json(w.settings_path)['click_hold_ms'], 9876)
+        self.assertIn('ctrl+g', [binding.key for binding in w.hooks.bindings])
+
+    def test_resize_preference_does_not_apply_when_save_fails(self):
+        w = self.window
+        before = w.settings.resize_convert_profile
+        with patch('app.ResizeDialog') as factory, \
+             patch.object(w.native, 'exists', return_value=True), \
+             patch.object(w.native, 'size', return_value=(1920, 1080)), \
+             patch.object(w.store, 'settings', side_effect=OSError('write failed')), \
+             patch.object(w, 'error') as error:
+            dialog = factory.return_value
+            dialog.exec.return_value = QDialog.DialogCode.Rejected
+            dialog.convert_profile.isChecked.return_value = not before
+            w.resize_dialog()
+            error.assert_called_once_with('write failed')
+            dialog.deleteLater.assert_called_once()
+        self.assertEqual(w.settings.resize_convert_profile, before)
+
+    def test_repeated_modal_dialogs_release_qt_children(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+        w = self.window
+        with patch.object(QDialog, 'exec', return_value=QDialog.DialogCode.Rejected), \
+             patch.object(w.native, 'exists', return_value=True), \
+             patch.object(w.native, 'size', return_value=(1920, 1080)):
+            for _ in range(8):
+                w.settings_dialog()
+                w.edit_key(w.profile.rows[0].id)
+                w.resize_dialog()
+                w.convert_dialog()
+                QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+                self.assertEqual(w.findChildren(QDialog), [])
+        with patch.object(QMessageBox, 'exec', return_value=QMessageBox.StandardButton.Cancel):
+            for _ in range(8):
+                w.dirty = True
+                self.assertFalse(w.confirm_changes())
+                QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+                self.assertEqual(w.findChildren(QMessageBox), [])
+        w.dirty = False
+
+    def test_modal_dialog_is_disposed_on_exception(self):
+        w = self.window
+        with patch('app.KeyDialog') as factory:
+            dialog = factory.return_value
+            dialog.exec.side_effect = ValueError('dialog failed')
+            w.edit_key(w.profile.rows[0].id)
+            dialog.deleteLater.assert_called_once()
+        self.assertIn('dialog failed', w.statusBar().currentMessage())
+
+    def test_special_shortcuts_round_trip_between_qt_settings_and_hooks(self):
+        from dataclasses import replace
+        from PySide6.QtGui import QKeySequence
+        from hotkeys import Hotkeys
+        from widgets import managed_dialog
+        keys = ((Qt.Key.Key_Print, 'print screen', 55, 0x2C, True),
+                (Qt.Key.Key_Pause, 'pause', 69, 0x13, False),
+                (Qt.Key.Key_NumLock, 'num lock', 69, 0x90, True))
+        from hotkeys import PressedKey
+        for qt_key, canonical, scan, vk, extended in keys:
+            with self.subTest(key=canonical), managed_dialog(KeyDialog('', self.window)) as dialog:
+                dialog.editor.setKeySequence(QKeySequence(qt_key))
+                value = dialog.value()
+                self.assertEqual(value, canonical)
+                binding = Hotkeys.compile(value)
+                self.assertTrue(binding.groups[-1].matches(PressedKey(scan, vk, extended)))
+                with managed_dialog(KeyDialog(value, self.window)) as reopened:
+                    self.assertEqual(reopened.value(), canonical)
+                with managed_dialog(SettingsDialog(replace(self.window.settings, pause_hk=value), self.window)) as settings:
+                    self.assertEqual(settings.value().pause_hk, canonical)

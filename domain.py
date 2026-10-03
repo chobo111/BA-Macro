@@ -29,7 +29,9 @@ def target_identity(data):
 
 
 def hotkey(value: str) -> str:
-    aliases = {"control": "ctrl", "windows": "win", "meta": "win", "escape": "esc", "return": "enter"}
+    aliases = {"control": "ctrl", "windows": "win", "meta": "win", "escape": "esc", "return": "enter",
+               "print": "print screen", "printscreen": "print screen",
+               "numlock": "num lock", "scrolllock": "scroll lock", "capslock": "caps lock"}
     parts = [aliases.get(p.strip().lower(), p.strip().lower()) for p in str(value).split("+") if p.strip()]
     if not parts:
         return ""

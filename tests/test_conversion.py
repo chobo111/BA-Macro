@@ -9,14 +9,14 @@ class ConversionTests(unittest.TestCase):
                   '  CuRvE 100 , 200 mouse 300,400 // keep 100,200\r\n'
                   'click 100,200 300,400\r\nmove 100,200\r\npress 100,200\r\n'
                   'release 100,200\r\nswitch 100,200\r\nsleep 5\r\nloop_end\r\n'
-                  'text "100,200 // text"\r\nrelease_actions\r\nclick 100,200\r\n')
+                  '// keep "100,200" // comment\r\nrelease_actions\r\nclick 100,200\r\n')
         profile = Profile([Row(x=100,y=200,action_mode='script',script=source)], (1000,1000))
         original = profile.export()
         plan = plan_conversion(profile, (1000,1000), (500,500))
         self.assertFalse(plan.errors)
         script = plan.profile.rows[0].script
         self.assertIn('  CuRvE 50 , 100 mouse 150,200 // keep 100,200\r\n', script)
-        self.assertIn('text "100,200 // text"\r\n', script)
+        self.assertIn('// keep "100,200" // comment\r\n', script)
         self.assertIn('sleep 5\r\nloop_end', script)
         self.assertIn('release_actions\r\nclick 50,100', script)
         self.assertEqual(plan.script_points, 9)

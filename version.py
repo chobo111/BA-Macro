@@ -1,6 +1,13 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'Blue Archive Studio'
 RELEASES = (
+    ('0.2.7-experimental', '2026-10-03', (
+        '외부 프로필의 최근 복사본을 직접 열거나 수정하면 독립 파일로 보존',
+        '환경설정 저장 성공 후에만 적용하여 저장 실패·취소 시 기존 설정 유지',
+        'Pause·NumLock·PrintScreen·숫자패드 곱하기 단축키 충돌 및 이름 정규화 보완',
+        '팝업 창 정리 방식 통일 및 터치에서 지원하지 않는 스크립트 실행 코드 제거',
+        '자동 테스트 195개 통과, 실제 게임 입력 동작은 사용자 검증',
+    )),
     ('0.2.6-experimental', '2026-10-03', (
         '불러오지 못한 프로필·환경설정의 원본 보존 및 설정 복구 시 백업',
         '프로필과 환경설정 파일의 저장 경로 충돌 차단',

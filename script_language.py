@@ -1,22 +1,9 @@
 """A small, validated macro language. Never evaluates Python or shell code."""
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
-import json
 import re
 
 COORD_LIMIT = 99999
-KEYS = {**{chr(c): c - 32 for c in range(ord('a'), ord('z') + 1)},
-        **{str(i): 0x30 + i for i in range(10)}, **{f'f{i}': 0x6f + i for i in range(1, 25)},
-        'space': 0x20, 'enter': 0x0d, 'tab': 0x09, 'esc': 0x1b, 'backspace': 0x08,
-        'ctrl': 0x11, 'shift': 0x10, 'alt': 0x12, 'left': 0x25, 'up': 0x26,
-        'right': 0x27, 'down': 0x28, 'home': 0x24, 'end': 0x23, 'pageup': 0x21,
-        'pagedown': 0x22, 'insert': 0x2d, 'delete': 0x2e, 'capslock': 0x14,
-        'minus': 0xbd, 'equal': 0xbb, 'comma': 0xbc, 'period': 0xbe, 'slash': 0xbf,
-        'semicolon': 0xba, 'quote': 0xde, 'backslash': 0xdc, 'leftbracket': 0xdb,
-        'rightbracket': 0xdd, 'grave': 0xc0}
-ALIASES = {'escape': 'esc', 'return': 'enter', 'control': 'ctrl', 'spacebar': 'space',
-           'page_up': 'pageup', 'page_down': 'pagedown'}
-BUTTONS = {'left', 'right', 'middle', 'back', 'forward'}
 
 
 class ScriptError(ValueError):
@@ -40,18 +27,7 @@ class Program:
 
 
 def strip_comment(line):
-    quoted = False
-    escape = False
-    for i, c in enumerate(line):
-        if escape:
-            escape = False
-        elif quoted and c == '\\':
-            escape = True
-        elif c == '"':
-            quoted = not quoted
-        elif not quoted and line[i:i+2] == '//':
-            return line[:i].strip()
-    return line.strip()
+    return line.split('//', 1)[0].strip()
 
 
 def number(text, line, minimum=0, maximum=600000):
@@ -133,7 +109,7 @@ def _compile_cached(source):
         if command in ('click', 'press', 'release', 'switch', 'curve', 'move'):
             args = points(arg.lower(), line_no)
             if command in ('press', 'release', 'switch', 'move') and len(args) != 1:
-                raise ScriptError(line_no, 'Windows 마우스는 동시에 한 위치만 누를 수 있습니다.')
+                raise ScriptError(line_no, '이 명령에는 좌표 하나만 입력하세요.')
             if command == 'curve' and len(args) < 2:
                 raise ScriptError(line_no, 'curve에는 최소 두 좌표가 필요합니다.')
         elif command in ('sleep', 'curve_first_time', 'curve_last_time'):
@@ -142,24 +118,12 @@ def _compile_cached(source):
             if arg:
                 raise ScriptError(line_no, '이 명령에는 인수가 없습니다.')
             args = ()
-        elif command in ('key_press', 'key_release', 'key_switch'):
-            key = ALIASES.get(arg.lower(), arg.lower())
-            if key not in KEYS:
-                raise ScriptError(line_no, '지원하는 키 이름 하나를 입력하세요. 예: a, space, ctrl, f1')
-            args = (key,)
+        elif command in ('key_press', 'key_release', 'key_switch', 'text'):
+            raise ScriptError(line_no, '독립 터치는 키보드·문자 입력을 지원하지 않습니다.')
         elif command in ('mouse_press', 'mouse_release', 'mouse_switch'):
-            button = {'backward': 'back', 'x1': 'back', 'x2': 'forward'}.get(arg, arg)
-            if button not in BUTTONS:
-                raise ScriptError(line_no, 'left / right / middle / back / forward 중 하나를 입력하세요.')
-            args = (button,)
-        elif command == 'text':
-            try:
-                value = json.loads(arg)
-                if not isinstance(value, str) or len(value) > 10000:
-                    raise ValueError()
-            except (ValueError, TypeError):
-                raise ScriptError(line_no, 'text 뒤에 큰따옴표로 감싼 문자열을 입력하세요(최대 10,000자).') from None
-            args = (value,)
+            if arg.lower() != 'left':
+                raise ScriptError(line_no, '독립 터치는 left 버튼만 지원합니다.')
+            args = ('left',)
         else:
             raise ScriptError(line_no, f'알 수 없는 명령: {command}')
         current.append(Instruction(command, args, line_no))
@@ -174,19 +138,9 @@ class ScriptRuntime:
     """Owned only by the input worker. Toggle state survives subsequent triggers."""
     def __init__(self, native, guard, wait, held):
         self.native, self.guard, self.wait, self.held = native, guard, wait, held
-        self.keys = set()
         self.buttons = set()
-        self.latched_keys = set()
         self.latched_buttons = set()
         self.context = None
-
-    def key(self, key, down):
-        if down:
-            self.keys.add(key)
-        self.native.key(key, down)
-        if not down:
-            self.keys.discard(key)
-            self.latched_keys.discard(key)
 
     def button(self, button, down):
         if down:
@@ -200,18 +154,12 @@ class ScriptRuntime:
 
     def release_all(self, transient=False):
         errors = []
-        for key in list(self.keys - self.latched_keys if transient else self.keys):
-            try:
-                self.key(key, False)
-            except Exception as error:
-                errors.append(error)
         for button in list(self.buttons - self.latched_buttons if transient else self.buttons):
             try:
                 self.button(button, False)
             except Exception as error:
                 errors.append(error)
         if not transient:
-            self.latched_keys.clear()
             self.latched_buttons.clear()
         if errors:
             raise errors[0]
@@ -282,12 +230,6 @@ class ScriptRuntime:
                                 self.latched_buttons.add('left')
                         else:
                             self.button('left', name == 'press')
-                elif name.startswith('key_'):
-                    key = args[0]
-                    down = key not in self.keys if name == 'key_switch' else name == 'key_press'
-                    self.key(key, down)
-                    if name == 'key_switch' and down:
-                        self.latched_keys.add(key)
                 elif name.startswith('mouse_'):
                     button = args[0]
                     down = button not in self.buttons if name == 'mouse_switch' else name == 'mouse_press'
@@ -296,10 +238,6 @@ class ScriptRuntime:
                         self.latched_buttons.add(button)
                 elif name == 'release_all':
                     self.release_all()
-                elif name == 'text':
-                    for char in args[0]:
-                        self.guard(c)
-                        self.native.text_char(char)
                 elif name == 'curve_first_time':
                     self.first_time = args[0]
                 elif name == 'curve_last_time':

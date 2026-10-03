@@ -162,3 +162,46 @@ class HotkeyTests(unittest.TestCase):
         self.physical_event(29, 0xA2, kind='up')
         self.assertFalse(self.physical_event(15, 0x09))
         self.assertEqual(self.actions, [('pause', '')])
+
+    def test_pause_numlock_and_printscreen_multiply_do_not_cross_trigger(self):
+        pairs = (
+            ('pause', (69, 0x13, False), (69, 0x90, True)),
+            ('numlock', (69, 0x90, True), (69, 0x13, False)),
+            ('print', (55, 0x2C, True), (55, 0x6A, False)),
+            ('*', (55, 0x6A, False), (55, 0x2C, True)),
+        )
+        for key, own, other in pairs:
+            with self.subTest(key=key):
+                self.hooks.close()
+                self.actions.clear()
+                self.hooks.configure([(key, 'move', 'special')], True)
+                self.assertTrue(self.physical_event(*other))
+                self.assertTrue(self.physical_event(*other, kind='up'))
+                self.assertEqual(self.actions, [])
+                self.assertFalse(self.physical_event(*own))
+                self.assertFalse(self.physical_event(*own))
+                self.assertEqual(self.actions, [('move', 'special')])
+                self.assertFalse(self.physical_event(*own, kind='up'))
+
+    def test_pause_and_numlock_remain_independently_held(self):
+        self.hooks.configure([('pause', 'move', 'pause'), ('num lock', 'move', 'lock')], True)
+        self.assertFalse(self.physical_event(69, 0x13))
+        self.assertFalse(self.physical_event(69, 0x90, True))
+        self.assertEqual(self.actions, [('move', 'pause'), ('move', 'lock')])
+        self.assertFalse(self.physical_event(69, 0x90, True, 'up'))
+        self.assertTrue(self.hooks.held('pause'))
+        self.assertFalse(self.hooks.held('num lock'))
+        self.assertFalse(self.physical_event(69, 0x13, kind='up'))
+        self.assertFalse(self.hooks.pressed)
+        self.assertFalse(self.hooks.suppressed)
+
+    def test_special_key_aliases_have_one_canonical_binding(self):
+        from domain import hotkey, Profile, Row
+        for qt_name, canonical in (('Print', 'print screen'), ('PrintScreen', 'print screen'),
+                                    ('NumLock', 'num lock'), ('ScrollLock', 'scroll lock'),
+                                    ('CapsLock', 'caps lock')):
+            with self.subTest(key=qt_name):
+                self.assertEqual(hotkey(qt_name), canonical)
+                self.assertEqual(Hotkeys.compile(qt_name).groups, Hotkeys.compile(canonical).groups)
+                with self.assertRaises(ValueError):
+                    Profile([Row(move_hk=qt_name), Row(move_hk=canonical)]).validate(())

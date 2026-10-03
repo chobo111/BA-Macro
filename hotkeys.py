@@ -5,13 +5,15 @@ import keyboard
 from domain import hotkey
 
 
-# Navigation and keypad numbers share scan codes. The virtual key describes
+# Navigation, keypad and special keys share scan codes. The virtual key describes
 # the logical key (including NumLock), while the extended flag identifies the
 # physical key for matching releases and retaining independently held keys.
-NAVIGATION_KEYS = {
+LOGICAL_KEYS = {
     'page up': 0x21, 'page down': 0x22, 'end': 0x23, 'home': 0x24,
     'left': 0x25, 'up': 0x26, 'right': 0x27, 'down': 0x28,
     'insert': 0x2D, 'delete': 0x2E, 'clear': 0x0C,
+    'pause': 0x13, 'num lock': 0x90, 'print screen': 0x2C,
+    'scroll lock': 0x91, 'caps lock': 0x14,
 }
 
 
@@ -40,8 +42,11 @@ class KeyGroup:
         name = keyboard.normalize_name(name)
         if len(name) == 1 and name in '0123456789':
             virtual_keys = frozenset((ord(name), 0x60 + int(name)))
-        elif name in NAVIGATION_KEYS:
-            virtual_keys = frozenset((NAVIGATION_KEYS[name],))
+        elif name == '*':
+            # Top-row Shift+8 and keypad multiply; exclude PrintScreen's scan 55.
+            virtual_keys = frozenset((0x38, 0x6A))
+        elif name in LOGICAL_KEYS:
+            virtual_keys = frozenset((LOGICAL_KEYS[name],))
         else:
             virtual_keys = frozenset()
         return cls(frozenset(scan_codes), virtual_keys)

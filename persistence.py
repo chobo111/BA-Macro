@@ -2,9 +2,9 @@
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Lock
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from dataclasses import asdict
+from hashlib import sha256
 from domain import Profile, Settings, atomic_json, read_json
 
 
@@ -21,6 +21,12 @@ class LoadedProfile:
     profile: Profile
     path: Path | None
     warning: str = ''
+
+
+@dataclass(frozen=True)
+class _RecentCopy:
+    path: Path
+    fingerprint: bytes
 
 
 @dataclass
@@ -112,19 +118,40 @@ class ProfileStore:
             except FileExistsError:
                 index += 1
 
-    def _recent_path(self, path):
+    def _release_recent_copy(self, path):
+        # Opening or explicitly saving a local copy makes it an independent profile.
+        path = Path(path).resolve()
+        self.recent_copies = {source: copy for source, copy in self.recent_copies.items()
+                              if copy.path != path}
+
+    def _sync_recent_copy(self, path, profile):
         path = Path(path).resolve()
         if path.parent == self.directory:
+            self._release_recent_copy(path)
             return path
-        if path not in self.recent_copies:
+        copy = self.recent_copies.get(path)
+        if copy is not None:
+            try:
+                unchanged = sha256(copy.path.read_bytes()).digest() == copy.fingerprint
+            except OSError:
+                unchanged = False
+            if not unchanged:
+                del self.recent_copies[path]
+                copy = None
+        if copy is None:
             local = self.directory / path.name
             number = 1
-            while (local.exists() or local in self.recent_copies.values()
-                   or self._is_settings_path(local)):
+            reserved = {item.path for item in self.recent_copies.values()}
+            while local.exists() or local in reserved or self._is_settings_path(local):
                 local = self.directory / f'{path.stem}_{number}{path.suffix}'
                 number += 1
-            self.recent_copies[path] = local
-        return self.recent_copies[path]
+        else:
+            local = copy.path
+        snapshot = profile if profile is not None else read_json(path)
+        if copy is None or read_json(local) != snapshot:
+            atomic_json(local, snapshot)
+        self.recent_copies[path] = _RecentCopy(local, sha256(local.read_bytes()).digest())
+        return local
 
     def _settings(self, path, settings, profile=None, recover=False):
         if path:
@@ -134,12 +161,7 @@ class ProfileStore:
         if self.settings_recovery_required:
             self._backup_invalid_settings()
         if path:
-            local = self._recent_path(path)
-            if local != Path(path).resolve():
-                snapshot = profile if profile is not None else read_json(path)
-                if not local.exists() or read_json(local) != snapshot:
-                    atomic_json(local, snapshot)
-            settings['last_profile'] = local.name
+            settings['last_profile'] = self._sync_recent_copy(path, profile).name
         if self.settings_recovery_required or settings != self.settings_snapshot:
             atomic_json(self.settings_path, settings)
             self.settings_snapshot = deepcopy(settings)
@@ -149,6 +171,7 @@ class ProfileStore:
     def _save(self, path, profile, settings):
         try:
             self.validate_profile_path(path)
+            self._release_recent_copy(path)
             atomic_json(path, profile)
         except Exception as error:
             return SaveResult(False, error=str(error))

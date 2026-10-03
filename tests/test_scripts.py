@@ -12,18 +12,15 @@ class ScriptWindows(FakeWindows):
     def move(self, x, y):
         self.events.append(('move', x, y))
 
-    def key(self, key, down):
-        self.events.append(('key', key, down))
-        if down:
-            self.down.set()
+    def create_touch_input(self):
+        adapter = super().create_touch_input()
+        adapter.move = self.move
+        return adapter
 
     def mouse_button(self, button, down):
         self.events.append(('mouse', button, down))
         if down:
             self.down.set()
-
-    def text_char(self, char):
-        self.events.append(('text', char))
 
 
 class ScriptTests(unittest.TestCase):
@@ -43,10 +40,10 @@ class ScriptTests(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(ScriptError):
                 compile_script(source)
 
-    def test_click_mouse_snapshot_and_text(self):
-        self.run_script('click 20,30\nsleep 12\nclick mouse\ntext "한글 // text"')
+    def test_click_mouse_snapshot_and_comments(self):
+        self.run_script('click 20,30\nsleep 12\nclick mouse // 한글 주석')
         self.assertIn(('move', 200, 300), self.native.events)
-        self.assertEqual(''.join(e[1] for e in self.native.events if e[0] == 'text'), '한글 // text')
+        self.assertEqual(self.native.events.count(('mouse', 'left', True)), 2)
         self.assertIn(12, self.waits)
 
     def test_nested_loops(self):
@@ -56,38 +53,37 @@ class ScriptTests(unittest.TestCase):
     def test_release_actions_and_cleanup(self):
         held = iter([True, True, False])
         self.runtime.held = lambda key: next(held)
-        self.run_script('key_press a\nrelease_actions\nkey_release a')
-        self.assertEqual(self.native.events, [('key', 'a', True), ('key', 'a', False)])
+        self.run_script('mouse_press left\nrelease_actions\nmouse_release left')
+        self.assertEqual(self.native.events, [('mouse', 'left', True), ('mouse', 'left', False)])
         self.assertEqual(self.waits, [10, 10])
-        self.run_script('mouse_press right')
-        self.assertEqual(self.native.events[-1], ('mouse', 'right', False))
+        self.run_script('mouse_press left')
+        self.assertEqual(self.native.events[-1], ('mouse', 'left', False))
 
     def test_toggle_persists_and_releases(self):
-        self.run_script('key_switch a\nmouse_switch right')
-        self.assertEqual(self.runtime.keys, {'a'})
-        self.assertEqual(self.runtime.buttons, {'right'})
-        self.run_script('key_switch a\nmouse_switch right')
-        self.assertFalse(self.runtime.keys or self.runtime.buttons)
+        self.run_script('mouse_switch left')
+        self.assertEqual(self.runtime.buttons, {'left'})
+        self.run_script('mouse_switch left')
+        self.assertFalse(self.runtime.buttons)
         self.run_script('switch 20,30\nrelease_all')
-        self.assertFalse(self.runtime.keys or self.runtime.buttons)
+        self.assertFalse(self.runtime.buttons)
 
     def test_curve_holds_until_release_section(self):
         self.run_script('curve_first_time 20\ncurve_last_time untilcmd\ncurve 10,20 30,40\nrelease_actions\ncurve_release')
         self.assertIn(('move', 30, 40), self.native.events)
         self.assertEqual(self.native.events[-1], ('mouse', 'left', False))
 
-    def test_cancel_long_sleep_releases_keyboard(self):
+    def test_cancel_long_sleep_releases_contact(self):
         errors = []
         engine = Engine(self.native, lambda key: True, errors.append)
         try:
-            engine.submit(replace(self.command, script='key_press a\nsleep 600000'))
+            engine.submit(replace(self.command, script='mouse_press left\nsleep 600000'))
             self.assertTrue(self.native.down.wait(1))
             engine.stop()
             deadline = time.monotonic() + 1
             while engine.busy and time.monotonic() < deadline:
                 time.sleep(.005)
             self.assertFalse(engine.busy)
-            self.assertIn(('key', 'a', False), self.native.events)
+            self.assertIn(('mouse', 'left', False), self.native.events)
             self.assertFalse(errors)
         finally:
             engine.shutdown()
@@ -98,10 +94,10 @@ class ScriptTests(unittest.TestCase):
         self.run_script('loop\nclick mouse\nloop_end')
         self.assertEqual(self.native.events.count(('mouse', 'left', True)), 2)
 
-    def test_runtime_failure_releases_pressed_keys(self):
+    def test_runtime_failure_releases_contact(self):
         with self.assertRaises(ScriptError):
-            self.run_script('key_press a\nclick -90000,0')
-        self.assertEqual(self.native.events[-1], ('key', 'a', False))
+            self.run_script('mouse_press left\nclick -90000,0')
+        self.assertEqual(self.native.events[-1], ('mouse', 'left', False))
 
     def test_curve_configurable_duration_per_segment(self):
         for duration in (0, 1, 10, 20, 100, 10000):
@@ -119,25 +115,23 @@ class ScriptTests(unittest.TestCase):
         errors = []
         completed = threading.Event()
         native = self.native
-        original_text = native.text_char
-        def text(char):
-            original_text(char)
+        original_move = native.move
+        def move(x, y):
+            original_move(x, y)
             completed.set()
-        native.text_char = text
+        native.move = move
         engine = Engine(native, lambda key: True, errors.append)
         try:
-            first = replace(self.command, script='key_press a\nmouse_press left\nloop\nsleep 600000\nloop_end\nrelease_actions\ntext "old"')
+            first = replace(self.command, script='mouse_press left\nloop\nsleep 600000\nloop_end\nrelease_actions\nmove 999,999')
             self.assertTrue(engine.submit(first))
             self.assertTrue(native.down.wait(1))
             start = time.monotonic()
-            self.assertTrue(engine.submit(replace(self.command, key='w', script='text "new"')))
+            self.assertTrue(engine.submit(replace(self.command, key='w', script='move 30,40')))
             self.assertTrue(completed.wait(.5))
             self.assertLess(time.monotonic() - start, .5)
             events = native.events
-            self.assertLess(events.index(('key', 'a', False)), events.index(('text', 'n')))
-            if ('mouse', 'left', True) in events:
-                self.assertLess(events.index(('mouse', 'left', False)), events.index(('text', 'n')))
-            self.assertNotIn(('text', 'o'), events)
+            self.assertLess(events.index(('mouse', 'left', False)), events.index(('move', 30, 40)))
+            self.assertNotIn(('move', 999, 999), events)
             self.assertFalse(errors)
         finally:
             engine.shutdown()
@@ -145,25 +139,25 @@ class ScriptTests(unittest.TestCase):
     def test_latest_pending_script_replaces_earlier_request(self):
         entered, unblock, completed = threading.Event(), threading.Event(), threading.Event()
         native = self.native
-        original_text = native.text_char
-        def text(char):
-            original_text(char)
-            if char == 'a':
+        original_move = native.move
+        def move(x, y):
+            original_move(x, y)
+            if x == 10:
                 entered.set()
                 unblock.wait(2)
-            if char == 'c':
+            if x == 50:
                 completed.set()
-        native.text_char = text
+        native.move = move
         errors = []
         engine = Engine(native, lambda key: True, errors.append)
         try:
-            engine.submit(replace(self.command, script='text "a"\nsleep 600000'))
+            engine.submit(replace(self.command, script='move 10,20\nsleep 600000'))
             self.assertTrue(entered.wait(1))
-            engine.submit(replace(self.command, key='w', script='text "b"'))
-            engine.submit(replace(self.command, key='e', script='text "c"'))
+            engine.submit(replace(self.command, key='w', script='move 30,40'))
+            engine.submit(replace(self.command, key='e', script='move 50,60'))
             unblock.set()
             self.assertTrue(completed.wait(1))
-            self.assertEqual([e[1] for e in native.events if e[0] == 'text'], ['a', 'c'])
+            self.assertEqual([e[1] for e in native.events if e[0] == 'move'], [10, 50])
             self.assertFalse(errors)
         finally:
             unblock.set()
@@ -172,20 +166,20 @@ class ScriptTests(unittest.TestCase):
     def test_stop_clears_pending_switch(self):
         entered, unblock = threading.Event(), threading.Event()
         native = self.native
-        def text(char):
-            native.events.append(('text', char))
+        def move(x, y):
+            native.events.append(('move', x, y))
             entered.set()
             unblock.wait(2)
-        native.text_char = text
+        native.move = move
         engine = Engine(native, lambda key: True)
         try:
-            engine.submit(replace(self.command, script='text "a"\nsleep 600000'))
+            engine.submit(replace(self.command, script='move 10,20\nsleep 600000'))
             self.assertTrue(entered.wait(1))
-            engine.submit(replace(self.command, key='w', script='text "b"'))
+            engine.submit(replace(self.command, key='w', script='move 30,40'))
             engine.stop()
             unblock.set()
             engine.shutdown()
-            self.assertNotIn(('text', 'b'), native.events)
+            self.assertNotIn(('move', 30, 40), native.events)
             self.assertFalse(engine.worker.is_alive())
         finally:
             unblock.set()
@@ -222,21 +216,21 @@ class ScriptTests(unittest.TestCase):
         errors = []
         engine = Engine(self.native, lambda key: False, errors.append)
         original_wait = engine.condition.wait_for
-        original_key = self.native.key
+        original_button = self.native.mouse_button
         def wait(predicate, timeout=None):
             (idle if timeout is None else watching).set()
             return original_wait(predicate, timeout)
-        def key(name, down):
-            original_key(name, down)
+        def button(name, down):
+            original_button(name, down)
             if not down:
                 released.set()
         try:
             with patch.object(engine.condition, 'wait_for', side_effect=wait), \
-                 patch.object(self.native, 'key', side_effect=key):
+                 patch.object(self.native, 'mouse_button', side_effect=button):
                 engine.stop()
                 self.assertTrue(idle.wait(1))
                 idle.clear()
-                engine.submit(replace(self.command, script='key_switch a'))
+                engine.submit(replace(self.command, script='mouse_switch left'))
                 self.assertTrue(watching.wait(1))
                 self.native.active_value = False
                 self.assertTrue(released.wait(1))
@@ -245,3 +239,14 @@ class ScriptTests(unittest.TestCase):
         finally:
             engine.shutdown()
         self.assertFalse(engine.worker.is_alive())
+
+    def test_unsupported_commands_fail_in_both_sections_and_nested_loops(self):
+        commands = ('key_press a', 'key_release a', 'key_switch a', 'text "hello"',
+                    'mouse_press right', 'mouse_release middle', 'mouse_switch back')
+        for command in commands:
+            for prefix, suffix, line in (('click mouse\n', '', 2),
+                                         ('loop 2\n', '\nloop_end', 2),
+                                         ('release_actions\n', '', 2)):
+                with self.subTest(command=command, prefix=prefix), self.assertRaises(ScriptError) as raised:
+                    compile_script(prefix + command + suffix)
+                self.assertEqual(raised.exception.line, line)

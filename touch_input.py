@@ -5,7 +5,6 @@ import time
 import threading
 from keyboard_hook import PhysicalHook, PROC, U, K
 from mouse_hook import MouseEvent
-from script_language import ScriptError
 
 PT_TOUCH = 2
 PROMOTION_GRACE_SECONDS = 2.0
@@ -37,17 +36,6 @@ class PointerUnion(C.Union):
 
 class PointerTypeInfo(C.Structure):
     _fields_ = [('type', C.c_int), ('info', PointerUnion)]
-
-
-def validate_touch_program(program):
-    def visit(instructions):
-        for instruction in instructions:
-            name = instruction.name
-            if name.startswith('key_') or name == 'text' or (name.startswith('mouse_') and instruction.args[0] != 'left'):
-                raise ScriptError(instruction.line, '스크립트는 독립 터치의 좌클릭·이동·드래그만 지원합니다. 키보드·문자·다른 마우스 버튼 명령은 사용할 수 없습니다.')
-            visit(instruction.body)
-    visit(program.pressed)
-    visit(program.released)
 
 
 class TouchPromotionFilter(PhysicalHook):
@@ -178,8 +166,7 @@ class TouchScriptInput:
         self.pressed = False
         self.last_frame = 0
 
-    def begin(self, target, program):
-        validate_touch_program(program)  # Reject before delivering any partial script.
+    def begin(self, target):
         if not target or not self.native.active(target):
             raise ValueError('독립 터치는 활성화된 대상 창을 선택해야 사용할 수 있습니다.')
         if self.target != target:
@@ -238,12 +225,6 @@ class TouchScriptInput:
         if self.pressed and time.monotonic() - self.last_frame >= .05:
             self.validate_pointer(self.target)
             self._send(UPDATE | INRANGE | INCONTACT)
-
-    def key(self, name, down):
-        raise ValueError('독립 터치는 키보드 입력을 지원하지 않습니다.')
-
-    def text_char(self, char):
-        raise ValueError('독립 터치는 문자 입력을 지원하지 않습니다.')
 
     def close(self):
         if self.device is not None:

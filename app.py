@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import os
 from pathlib import Path
 import sys
@@ -23,7 +23,7 @@ from persistence import ProfileStore
 from conversion_dialog import ConversionDialog
 from version import APP_NAME, VERSION, RELEASES
 from session import ExecutionSession, editing_dialog
-from widgets import (make_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
+from widgets import (managed_dialog, make_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
                      BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog, NoWheelCombo, NoWheelSpinBox)
 
 BASE = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
@@ -573,19 +573,19 @@ class MainWindow(QMainWindow):
         if row is None:
             return
         try:
-            dialog = KeyDialog(row.move_hk, self)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                value = dialog.value()
-                Hotkeys.compile(value)
-                old = row.move_hk
-                row.move_hk = value
-                try:
-                    self.rebind()
-                except Exception:
-                    row.move_hk = old
-                    raise
-                self.changed()
-                self.rebuild(rid)
+            with managed_dialog(KeyDialog(row.move_hk, self)) as dialog:
+                if dialog.exec() == QDialog.DialogCode.Accepted:
+                    value = dialog.value()
+                    Hotkeys.compile(value)
+                    old = row.move_hk
+                    row.move_hk = value
+                    try:
+                        self.rebind()
+                    except Exception:
+                        row.move_hk = old
+                        raise
+                    self.changed()
+                    self.rebuild(rid)
         except Exception as error:
             self.statusBar().showMessage(str(error))
 
@@ -635,17 +635,18 @@ class MainWindow(QMainWindow):
         previous_modal = self.modal
         self.modal = True
         try:
-            dialog = QMessageBox(QMessageBox.Icon.Question, "저장하지 않은 변경",
-                                 "프로필 변경 사항을 저장할까요?", parent=self)
-            dialog.setStandardButtons(QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard |
-                                      QMessageBox.StandardButton.Cancel)
-            for button, label in ((QMessageBox.StandardButton.Save, "저장"),
-                                  (QMessageBox.StandardButton.Discard, "저장 안 함"),
-                                  (QMessageBox.StandardButton.Cancel, "취소")):
-                dialog.button(button).setText(label)
-            dialog.setDefaultButton(QMessageBox.StandardButton.Save)
-            dialog.setEscapeButton(QMessageBox.StandardButton.Cancel)
-            answer = dialog.exec()
+            with managed_dialog(QMessageBox(
+                    QMessageBox.Icon.Question, "저장하지 않은 변경",
+                    "프로필 변경 사항을 저장할까요?", parent=self)) as dialog:
+                dialog.setStandardButtons(QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard |
+                                          QMessageBox.StandardButton.Cancel)
+                for button, label in ((QMessageBox.StandardButton.Save, "저장"),
+                                      (QMessageBox.StandardButton.Discard, "저장 안 함"),
+                                      (QMessageBox.StandardButton.Cancel, "취소")):
+                    dialog.button(button).setText(label)
+                dialog.setDefaultButton(QMessageBox.StandardButton.Save)
+                dialog.setEscapeButton(QMessageBox.StandardButton.Cancel)
+                answer = dialog.exec()
         finally:
             self.modal = previous_modal
         if answer == QMessageBox.StandardButton.Cancel:
@@ -761,8 +762,17 @@ class MainWindow(QMainWindow):
         return False
 
     def persist_settings(self, *, recover=False):
+        self.commit_settings(self.settings, recover=recover)
+
+    def commit_settings(self, settings, *, recover=False):
+        """Persist a candidate before exposing it to input hooks or the runtime."""
         self.flush_pending_saves()
-        self.settings.last_profile = self.store.settings(self.path, asdict(self.settings), recover=recover)
+        candidate = replace(settings)
+        candidate.last_profile = self.store.settings(self.path, asdict(candidate), recover=recover)
+        if candidate.display_id != self.settings.display_id:
+            self.stop()
+        self.settings = candidate
+        self.native.display_id = candidate.display_id
         self.settings_error = ''
 
     @editing_dialog(hooks=True)
@@ -772,23 +782,19 @@ class MainWindow(QMainWindow):
         except OSError as error:
             self.statusBar().showMessage(str(error))
             displays = self.native.displays
-        dialog = SettingsDialog(self.settings, self, displays)
-        while dialog.exec() == QDialog.DialogCode.Accepted:
-            try:
-                settings = dialog.value()
-                self.profile.validate((settings.capture_hk, settings.pause_hk))
-                Hotkeys.compile(settings.capture_hk)
-                Hotkeys.compile(settings.pause_hk)
-                if settings.display_id != self.settings.display_id:
-                    self.stop()
-                self.settings = settings
-                self.native.display_id = settings.display_id
-                self.persist_settings(recover=True)
-                self.apply_theme()
-                self.update_labels()
-                break
-            except Exception as error:
-                self.error(str(error))
+        with managed_dialog(SettingsDialog(self.settings, self, displays)) as dialog:
+            while dialog.exec() == QDialog.DialogCode.Accepted:
+                try:
+                    settings = dialog.value()
+                    self.profile.validate((settings.capture_hk, settings.pause_hk))
+                    Hotkeys.compile(settings.capture_hk)
+                    Hotkeys.compile(settings.pause_hk)
+                    self.commit_settings(settings, recover=True)
+                    self.apply_theme()
+                    self.update_labels()
+                    break
+                except Exception as error:
+                    self.error(str(error))
 
     @editing_dialog(hooks=False)
     def resize_dialog(self):
@@ -805,17 +811,17 @@ class MainWindow(QMainWindow):
                 read_size()
                 self.stop()
                 self.native.resize(target, *size)
-            dialog = ResizeDialog(read_size(), self, convert_profile=self.settings.resize_convert_profile,
-                                  request_resize=request_resize, read_size=read_size)
-            accepted = dialog.exec() == QDialog.DialogCode.Accepted
-            convert = dialog.convert_profile.isChecked()
-            if convert != self.settings.resize_convert_profile:
-                self.settings.resize_convert_profile = convert
-                self.persist_settings()
-            if accepted:
-                self.statusBar().showMessage('창 내부 크기 변경 완료: %d × %d' % dialog.current_size)
-                if convert:
-                    self.convert_dialog(reason="창 크기가 바뀌었습니다. 저장 좌표도 새 해상도에 맞출 수 있습니다.")
+            with managed_dialog(ResizeDialog(
+                    read_size(), self, convert_profile=self.settings.resize_convert_profile,
+                    request_resize=request_resize, read_size=read_size)) as dialog:
+                accepted = dialog.exec() == QDialog.DialogCode.Accepted
+                convert = dialog.convert_profile.isChecked()
+                if convert != self.settings.resize_convert_profile:
+                    self.commit_settings(replace(self.settings, resize_convert_profile=convert))
+                if accepted:
+                    self.statusBar().showMessage('창 내부 크기 변경 완료: %d × %d' % dialog.current_size)
+                    if convert:
+                        self.convert_dialog(reason="창 크기가 바뀌었습니다. 저장 좌표도 새 해상도에 맞출 수 있습니다.")
         except Exception as error:
             self.error(str(error))
 
@@ -827,10 +833,11 @@ class MainWindow(QMainWindow):
         self.flush_pending_saves()
         try:
             current = self.native.size(self.target) if (self.target and self.native.exists(self.target)) or (not self.target and self.native.display_id) else None
-            dialog = ConversionDialog(self.profile, self.path or self.data_dir / "macro.json",
-                                      current, self.save_conversion, self, reason,
-                                      target_label="선택한 디스플레이" if not self.target and self.native.display_id else "대상 창 내부")
-            dialog.exec()
+            with managed_dialog(ConversionDialog(
+                    self.profile, self.path or self.data_dir / "macro.json",
+                    current, self.save_conversion, self, reason,
+                    target_label="선택한 디스플레이" if not self.target and self.native.display_id else "대상 창 내부")) as dialog:
+                dialog.exec()
         except Exception as error:
             self.error(str(error))
 

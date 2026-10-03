@@ -269,3 +269,60 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(self.store.settings_path.read_bytes(), original)
         with self.assertRaises(ValueError):
             self.store.settings(None, asdict(loaded.settings))
+
+    def test_recent_copy_reused_only_while_store_owned_and_unchanged(self):
+        with tempfile.TemporaryDirectory() as external:
+            source = Path(external) / 'shared.json'
+            profile = Profile.default().export()
+            first = self.store.save(source, profile, self.settings).result()
+            local = self.store.directory / first.recent_name
+            profile['macros'][0]['memo'] = 'external update'
+            second = self.store.save(source, profile, self.settings).result()
+            self.assertEqual(second.recent_name, first.recent_name)
+            self.assertEqual(read_json(local), profile)
+            # Even opening the unchanged copy hands it over to the user.
+            self.store.settings(local, self.settings)
+            third = self.store.settings(source, self.settings)
+            self.assertNotEqual(third, local.name)
+            self.assertEqual(read_json(local), profile)
+
+    def test_saving_local_recent_copy_preserves_edits_on_external_reopen(self):
+        with tempfile.TemporaryDirectory() as external:
+            source = Path(external) / 'shared.json'
+            profile = Profile.default().export()
+            first = self.store.save(source, profile, self.settings).result()
+            local = self.store.directory / first.recent_name
+            profile['macros'][0]['memo'] = 'local edits'
+            self.assertTrue(self.store.save(local, profile, self.settings).result().profile_saved)
+            original = local.read_bytes()
+            recent = self.store.settings(source, self.settings)
+            self.assertEqual(local.read_bytes(), original)
+            self.assertNotEqual(recent, local.name)
+            self.assertEqual(read_json(self.store.directory / recent), read_json(source))
+
+    def test_recent_copy_manual_edits_or_damage_are_preserved(self):
+        with tempfile.TemporaryDirectory() as external:
+            for index, content in enumerate((b'{"manual":"edit"}', b'{broken json')):
+                with self.subTest(content=content):
+                    source = Path(external) / f'shared{index}.json'
+                    first = self.store.save(source, Profile.default().export(), self.settings).result()
+                    local = self.store.directory / first.recent_name
+                    local.write_bytes(content)
+                    recent = self.store.settings(source, self.settings)
+                    self.assertEqual(local.read_bytes(), content)
+                    self.assertNotEqual(recent, local.name)
+                    self.assertEqual(read_json(self.store.directory / recent), read_json(source))
+
+    def test_failed_recent_copy_write_can_retry_without_overwriting_existing_file(self):
+        with tempfile.TemporaryDirectory() as external:
+            source = Path(external) / 'shared.json'
+            profile = Profile.default().export()
+            atomic_json(source, profile)
+            with patch('persistence.atomic_json', side_effect=OSError('copy unavailable')):
+                with self.assertRaises(OSError):
+                    self.store.settings(source, self.settings)
+            local = self.store.directory / source.name
+            local.write_bytes(b'user file created during failure')
+            recent = self.store.settings(source, self.settings)
+            self.assertNotEqual(recent, local.name)
+            self.assertEqual(local.read_bytes(), b'user file created during failure')

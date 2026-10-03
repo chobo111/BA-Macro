@@ -38,7 +38,7 @@ class TouchTests(unittest.TestCase):
 
     def run_script(self, source):
         program = compile_script(source)
-        self.adapter.begin(1, program)
+        self.adapter.begin(1)
         self.runtime.run(program, self.command)
 
     def test_curve_and_click_send_touch_without_moving_real_cursor(self):
@@ -117,7 +117,7 @@ class TouchTests(unittest.TestCase):
 
     def test_target_required_and_occluded_points_rejected(self):
         with self.assertRaises(ValueError):
-            self.adapter.begin(0, compile_script('click 10,20'))
+            self.adapter.begin(0)
         self.native.active_value = False
         with self.assertRaises(ValueError):
             self.run_script('click 10,20')
@@ -128,7 +128,7 @@ class TouchTests(unittest.TestCase):
         self.assertEqual(self.device.events, [])
 
     def test_focus_loss_cancels_contact_at_last_injected_position(self):
-        self.adapter.begin(1, compile_script('press 10,20'))
+        self.adapter.begin(1)
         self.adapter.move(10, 20)
         self.adapter.mouse_button('left', True)
         self.native.active_value = False
@@ -137,7 +137,7 @@ class TouchTests(unittest.TestCase):
         self.assertFalse(self.adapter.pressed)
 
     def test_long_hold_heartbeat_and_failed_drag_cleanup(self):
-        self.adapter.begin(1, compile_script('press 10,20'))
+        self.adapter.begin(1)
         self.adapter.move(10, 20)
         self.adapter.mouse_button('left', True)
         self.adapter.last_frame -= 1
