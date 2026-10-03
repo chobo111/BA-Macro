@@ -1121,3 +1121,78 @@ class UiTests(unittest.TestCase):
             confirmation.assert_not_called()
         self.assertEqual(row.script,'sleep 1')
         self.assertIsNone(w.script_editor)
+
+    def test_save_as_settings_path_keeps_profile_path_and_both_files(self):
+        w = self.window
+        path, dirty = w.path, w.dirty
+        profile_bytes, settings_bytes = path.read_bytes(), w.settings_path.read_bytes()
+        with patch.object(QFileDialog, 'getSaveFileName', return_value=(str(w.settings_path),'') ):
+            self.assertFalse(w.save_as())
+        self.assertEqual(w.path, path)
+        self.assertEqual(w.dirty, dirty)
+        self.assertEqual(path.read_bytes(), profile_bytes)
+        self.assertEqual(w.settings_path.read_bytes(), settings_bytes)
+        self.assertIn('환경설정 파일', w.statusBar().currentMessage())
+
+    def test_conversion_copy_cannot_target_settings_file(self):
+        from copy import deepcopy
+        w = self.window
+        profile, path = w.profile, w.path
+        settings_bytes = w.settings_path.read_bytes()
+        converted = deepcopy(profile)
+        converted.resolution = (1280,720)
+        with patch.object(QFileDialog, 'getSaveFileName', return_value=(str(w.settings_path),'')):
+            with self.assertRaises(ValueError):
+                w.save_conversion(converted, 'copy', w)
+        self.assertIs(w.profile, profile)
+        self.assertEqual(w.path, path)
+        self.assertEqual(w.settings_path.read_bytes(), settings_bytes)
+
+    def test_conversion_after_failed_profile_load_preserves_unreadable_source(self):
+        for original in (b'{bad json', b'{"version":1,"macros":[]}'):
+            with self.subTest(original=original), tempfile.TemporaryDirectory() as folder:
+                source = Path(folder) / 'macro.json'
+                source.write_bytes(original)
+                window = MainWindow(data_dir=folder, hook_enabled=False)
+                try:
+                    self.assertIsNone(window.path)
+                    converted = Profile.default()
+                    converted.resolution = (1280,720)
+                    self.assertTrue(window.save_conversion(converted, 'apply', window))
+                    self.assertEqual(window.path.name, 'macro_1.json')
+                    self.assertEqual(source.read_bytes(), original)
+                    self.assertEqual(Profile.read(read_json(window.path)).resolution, (1280,720))
+                finally:
+                    window.shutdown()
+                    window.close()
+                    window.deleteLater()
+
+    def test_invalid_settings_survive_unedited_window_close(self):
+        with tempfile.TemporaryDirectory() as folder:
+            settings_path = Path(folder) / 'setting.json'
+            original = b'{"click_hold_ms":9876,"auto_pause":false,"unknown":1}'
+            settings_path.write_bytes(original)
+            window = MainWindow(data_dir=folder, hook_enabled=False)
+            window.close()
+            self.assertTrue(window.closing)
+            self.assertEqual(settings_path.read_bytes(), original)
+            window.deleteLater()
+
+    def test_settings_dialog_explicit_save_backs_up_invalid_original(self):
+        from domain import Settings
+        with tempfile.TemporaryDirectory() as folder:
+            settings_path = Path(folder) / 'setting.json'
+            original = b'{bad json'
+            settings_path.write_bytes(original)
+            window = MainWindow(data_dir=folder, hook_enabled=False)
+            try:
+                with patch('app.SettingsDialog') as dialog:
+                    dialog.return_value.exec.return_value = QDialog.DialogCode.Accepted
+                    dialog.return_value.value.return_value = Settings(click_hold_ms=89)
+                    window.settings_dialog()
+                self.assertEqual(read_json(settings_path)['click_hold_ms'], 89)
+                self.assertEqual((Path(folder)/'setting.invalid.bak').read_bytes(), original)
+            finally:
+                window.shutdown()
+                window.close()
+                window.deleteLater()

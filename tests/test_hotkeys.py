@@ -78,3 +78,87 @@ class HotkeyTests(unittest.TestCase):
         self.event('ctrl', 'up')
         self.event('q')
         self.assertEqual(self.actions, [('move', '1'), ('pause', '')])
+
+
+    def physical_event(self, scan, vk, extended=False, kind="down"):
+        return self.hooks.handle(SimpleNamespace(scan_code=scan, virtual_key=vk,
+                                                is_extended=extended, event_type=kind))
+
+    def test_numbers_do_not_match_navigation_keys_or_numlock_off(self):
+        pairs = ((0, 82, 0x2D), (1, 79, 0x23), (2, 80, 0x28),
+                 (3, 81, 0x22), (4, 75, 0x25), (5, 76, 0x0C),
+                 (6, 77, 0x27), (7, 71, 0x24), (8, 72, 0x26), (9, 73, 0x21))
+        for digit, scan, navigation_vk in pairs:
+            with self.subTest(digit=digit):
+                self.hooks.close()
+                self.actions.clear()
+                self.hooks.configure([(str(digit), 'move', 'number')], True)
+                # Dedicated navigation key and NumLock-off keypad navigation.
+                for extended in (True, False):
+                    self.assertTrue(self.physical_event(scan, navigation_vk, extended))
+                    self.assertTrue(self.physical_event(scan, navigation_vk, extended, 'up'))
+                    self.assertEqual(self.actions, [])
+                # Both top-row numbers and NumLock-on keypad numbers still work.
+                top_scan = keyboard.key_to_scan_codes(str(digit))[0]
+                for key_scan, vk in ((top_scan, 0x30 + digit), (scan, 0x60 + digit)):
+                    self.assertFalse(self.physical_event(key_scan, vk))
+                    self.assertTrue(self.hooks.held(str(digit)))
+                    self.assertFalse(self.physical_event(key_scan, vk, kind='up'))
+                self.assertEqual(self.actions, [('move', 'number'), ('move', 'number')])
+
+    def test_arrow_binding_does_not_match_numlock_on_keypad_number(self):
+        for name, scan, vk, digit in (('left', 75, 0x25, 4), ('right', 77, 0x27, 6),
+                                      ('up', 72, 0x26, 8), ('down', 80, 0x28, 2)):
+            with self.subTest(name=name):
+                self.hooks.close()
+                self.actions.clear()
+                self.hooks.configure([(name, 'move', name)], True)
+                self.assertTrue(self.physical_event(scan, 0x60 + digit))
+                self.assertTrue(self.physical_event(scan, 0x60 + digit, kind='up'))
+                self.assertEqual(self.actions, [])
+                # NumLock-off keypad and dedicated arrow both represent arrows.
+                for extended in (False, True):
+                    self.assertFalse(self.physical_event(scan, vk, extended))
+                    self.assertFalse(self.physical_event(scan, vk, extended, 'up'))
+                self.assertEqual(self.actions, [('move', name), ('move', name)])
+
+    def test_keypad_and_arrow_keep_independent_hold_and_suppression(self):
+        self.hooks.configure([('4', 'move', 'number'), ('left', 'move', 'arrow')], True)
+        self.assertFalse(self.physical_event(75, 0x64))
+        self.assertFalse(self.physical_event(75, 0x25, True))
+        self.assertEqual(self.actions, [('move', 'number'), ('move', 'arrow')])
+        self.assertFalse(self.physical_event(75, 0x25, True))  # auto-repeat
+        self.assertEqual(len(self.actions), 2)
+        self.assertFalse(self.physical_event(75, 0x64, kind='up'))
+        self.assertFalse(self.hooks.held('4'))
+        self.assertTrue(self.hooks.held('left'))
+        self.assertFalse(self.physical_event(75, 0x25, True, 'up'))
+        self.assertEqual(self.hooks.pressed, {})
+        self.assertEqual(self.hooks.suppressed, set())
+
+    def test_arrow_release_cannot_rearm_a_held_number(self):
+        self.hooks.configure([('4', 'move', 'number')], True)
+        self.assertFalse(self.physical_event(75, 0x64))
+        self.assertTrue(self.physical_event(75, 0x25, True))
+        self.assertTrue(self.physical_event(75, 0x25, True, 'up'))
+        self.assertTrue(self.hooks.held('4'))
+        self.assertFalse(self.physical_event(75, 0x64))
+        self.assertEqual(self.actions, [('move', 'number')])
+        self.assertFalse(self.physical_event(75, 0x64, kind='up'))
+
+    def test_changed_numlock_virtual_key_on_release_does_not_leave_key_held(self):
+        self.hooks.configure([('4', 'move', 'number')], True)
+        self.assertFalse(self.physical_event(75, 0x64))
+        self.assertFalse(self.physical_event(75, 0x25, kind='up'))
+        self.assertFalse(self.hooks.held('4'))
+        self.assertEqual(self.hooks.pressed, {})
+        self.assertEqual(self.hooks.suppressed, set())
+        self.assertFalse(self.physical_event(75, 0x64))
+        self.assertEqual(len(self.actions), 2)
+
+    def test_both_control_keys_survive_releasing_one_side(self):
+        self.physical_event(29, 0xA2)
+        self.physical_event(29, 0xA3, True)
+        self.physical_event(29, 0xA2, kind='up')
+        self.assertFalse(self.physical_event(15, 0x09))
+        self.assertEqual(self.actions, [('pause', '')])

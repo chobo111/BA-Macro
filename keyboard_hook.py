@@ -12,6 +12,16 @@ class KeyEvent(C.Structure):
     _fields_ = [('vk', W.DWORD), ('scan', W.DWORD), ('flags', W.DWORD), ('time', W.DWORD), ('extra', C.c_size_t)]
 
 
+def physical_key_event(event, message):
+    """Keep identity information that scan codes alone cannot distinguish."""
+    # LLKHF_INJECTED / LLKHF_LOWER_IL_INJECTED: never dispatch generated input.
+    if event.flags & 0x12:
+        return None
+    return SimpleNamespace(scan_code=event.scan or -event.vk,
+                           virtual_key=event.vk, is_extended=bool(event.flags & 0x01),
+                           event_type='down' if message in (0x100, 0x104) else 'up')
+
+
 U.SetWindowsHookExW.argtypes, U.SetWindowsHookExW.restype = [C.c_int, PROC, W.HINSTANCE, W.DWORD], W.HANDLE
 U.CallNextHookEx.argtypes, U.CallNextHookEx.restype = [W.HANDLE, C.c_int, W.WPARAM, W.LPARAM], C.c_ssize_t
 U.UnhookWindowsHookEx.argtypes, U.UnhookWindowsHookEx.restype = [W.HANDLE], W.BOOL
@@ -44,11 +54,10 @@ class PhysicalHook:
         def callback(code, message, data):
             if code >= 0 and message in (0x100, 0x101, 0x104, 0x105):
                 event = C.cast(data, C.POINTER(KeyEvent)).contents
-                # LLKHF_INJECTED / LLKHF_LOWER_IL_INJECTED. Always pass these through.
-                if not event.flags & 0x12:
+                physical = physical_key_event(event, message)
+                if physical is not None:
                     try:
-                        accepted = self.handler(SimpleNamespace(scan_code=event.scan or -event.vk,
-                            event_type='down' if message in (0x100, 0x104) else 'up'))
+                        accepted = self.handler(physical)
                         if not accepted:
                             return 1
                     except Exception:

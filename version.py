@@ -1,6 +1,12 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'Blue Archive Studio'
 RELEASES = (
+    ('0.2.6-experimental', '2026-10-03', (
+        '불러오지 못한 프로필·환경설정의 원본 보존 및 설정 복구 시 백업',
+        '프로필과 환경설정 파일의 저장 경로 충돌 차단',
+        '숫자·숫자패드·방향키 단축키 구분 개선',
+        '부분적으로 보이는 행의 드래그 애니메이션 잘림 수정',
+    )),
     ('0.2.5-experimental', '2026-10-03', (
         '행 드래그 시 반투명 미리보기와 주변 행 이동 애니메이션 추가',
         '드롭 위치를 빈 자리로 표시하고 가장자리 드래그 시 자동 스크롤',

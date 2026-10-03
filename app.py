@@ -748,6 +748,11 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "프로필 저장", str(self.path or self.data_dir / "macro.json"), "매크로 프로필 (*.json)")
         if not path:
             return False
+        try:
+            self.store.validate_profile_path(path)
+        except (ValueError, OSError) as error:
+            self.statusBar().showMessage(str(error))
+            return False
         previous = self.path
         self.path = Path(path)
         if self.save():
@@ -755,9 +760,9 @@ class MainWindow(QMainWindow):
         self.path = previous
         return False
 
-    def persist_settings(self):
+    def persist_settings(self, *, recover=False):
         self.flush_pending_saves()
-        self.settings.last_profile = self.store.settings(self.path, asdict(self.settings))
+        self.settings.last_profile = self.store.settings(self.path, asdict(self.settings), recover=recover)
         self.settings_error = ''
 
     @editing_dialog(hooks=True)
@@ -778,7 +783,7 @@ class MainWindow(QMainWindow):
                     self.stop()
                 self.settings = settings
                 self.native.display_id = settings.display_id
-                self.persist_settings()
+                self.persist_settings(recover=True)
                 self.apply_theme()
                 self.update_labels()
                 break
@@ -831,7 +836,7 @@ class MainWindow(QMainWindow):
 
     def save_conversion(self, profile, mode, dialog):
         self.flush_pending_saves()
-        path = self.path or self.data_dir / "macro.json"
+        path = self.path or self.next_profile_path()
         if mode == 'copy':
             stem = f"{path.stem}_{profile.resolution[0]}x{profile.resolution[1]}"
             suggested = path.with_name(stem + '.json')

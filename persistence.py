@@ -37,6 +37,7 @@ class ProfileStore:
         self.settings_path = self.directory / 'setting.json'
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='profile-save')
         self.settings_snapshot = None
+        self.settings_recovery_required = False
         self.recent_copies = {}
         self.closed = False
         self.queue_lock = Lock()
@@ -45,11 +46,13 @@ class ProfileStore:
     def load(self):
         warnings = []
         settings_valid = True
+        self.settings_recovery_required = False
         try:
             settings = Settings.read(read_json(self.settings_path)) if self.settings_path.exists() else Settings()
         except Exception as error:
             settings = Settings()
             settings_valid = False
+            self.settings_recovery_required = True
             warnings.append(f'환경설정 불러오기 실패: {error}')
         recent = self.directory / Path(settings.last_profile).name if settings.last_profile else None
         path = recent if recent and recent.is_file() else self.directory / 'macro.json'
@@ -84,6 +87,31 @@ class ProfileStore:
             number += 1
         return path
 
+    def _is_settings_path(self, path):
+        candidate, settings = Path(path).resolve(), self.settings_path.resolve()
+        # WindowsPath equality is case-insensitive; resolve also follows aliases.
+        return candidate == settings or (candidate.exists() and settings.exists()
+                                         and candidate.samefile(settings))
+
+    def validate_profile_path(self, path):
+        if self._is_settings_path(path):
+            raise ValueError('환경설정 파일에는 프로필을 저장할 수 없습니다. 다른 파일명을 선택하세요.')
+
+    def _backup_invalid_settings(self):
+        if not self.settings_path.exists():
+            return
+        content = self.settings_path.read_bytes()
+        index = 0
+        while True:
+            suffix = '' if index == 0 else f'.{index}'
+            backup = self.settings_path.with_name(f'setting.invalid{suffix}.bak')
+            try:
+                with backup.open('xb') as stream:
+                    stream.write(content)
+                return
+            except FileExistsError:
+                index += 1
+
     def _recent_path(self, path):
         path = Path(path).resolve()
         if path.parent == self.directory:
@@ -91,13 +119,20 @@ class ProfileStore:
         if path not in self.recent_copies:
             local = self.directory / path.name
             number = 1
-            while local.exists() or local in self.recent_copies.values():
+            while (local.exists() or local in self.recent_copies.values()
+                   or self._is_settings_path(local)):
                 local = self.directory / f'{path.stem}_{number}{path.suffix}'
                 number += 1
             self.recent_copies[path] = local
         return self.recent_copies[path]
 
-    def _settings(self, path, settings, profile=None):
+    def _settings(self, path, settings, profile=None, recover=False):
+        if path:
+            self.validate_profile_path(path)
+        if self.settings_recovery_required and not recover:
+            raise ValueError('불러오지 못한 환경설정 원본을 보존했습니다. 환경설정에서 저장하면 원본을 백업하고 새 설정을 적용합니다.')
+        if self.settings_recovery_required:
+            self._backup_invalid_settings()
         if path:
             local = self._recent_path(path)
             if local != Path(path).resolve():
@@ -105,13 +140,15 @@ class ProfileStore:
                 if not local.exists() or read_json(local) != snapshot:
                     atomic_json(local, snapshot)
             settings['last_profile'] = local.name
-        if settings != self.settings_snapshot:
+        if self.settings_recovery_required or settings != self.settings_snapshot:
             atomic_json(self.settings_path, settings)
             self.settings_snapshot = deepcopy(settings)
+        self.settings_recovery_required = False
         return settings.get('last_profile', '')
 
     def _save(self, path, profile, settings):
         try:
+            self.validate_profile_path(path)
             atomic_json(path, profile)
         except Exception as error:
             return SaveResult(False, error=str(error))
@@ -145,10 +182,10 @@ class ProfileStore:
             batch.future = self.executor.submit(self._run_save, batch)
             return batch.future
 
-    def settings(self, path, settings):
+    def settings(self, path, settings, *, recover=False):
         with self.queue_lock:
             self.queued_save = None
-            future = self.executor.submit(self._settings, path, deepcopy(settings))
+            future = self.executor.submit(self._settings, path, deepcopy(settings), recover=recover)
         return future.result()
 
     def flush(self):

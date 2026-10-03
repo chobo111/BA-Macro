@@ -3,8 +3,17 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import unittest
 from unittest.mock import patch
 from PySide6.QtCore import Qt, QPoint, QPointF, QMimeData
-from PySide6.QtWidgets import QApplication, QTableWidgetItem, QPushButton
+from PySide6.QtWidgets import QApplication, QTableWidgetItem, QPushButton, QWidget, QAbstractItemView
+from PySide6.QtGui import QColor, QPainter
 from widgets import RowsTable
+
+
+class EdgeCell(QWidget):
+    """Distinct edge pixels expose clipping even where the cell has no text."""
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor('#1854c7'))
+        painter.fillRect(0, self.height()-8, self.width(), 8, QColor('#da3251'))
 
 
 class Drop:
@@ -126,3 +135,77 @@ class RowDragTests(unittest.TestCase):
         self.assertEqual(self.table.drag_origin, -1)
         self.assertTrue(self.table.preview.isHidden())
         self.assertEqual(self.moves, [])
+
+    def prepare_clipped_rows(self):
+        table = self.table
+        table.setRowCount(12)
+        for row in range(12):
+            table.setRowHeight(row, 36)
+            table.setCellWidget(row, 0, EdgeCell())
+            item = QTableWidgetItem(f'row {row}')
+            item.setBackground(QColor('#e9bc38'))
+            table.setItem(row, 4, item)
+        table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        table.clearSelection()
+        self.qt.processEvents()
+
+    def pixel(self, pixmap, x, y):
+        ratio = pixmap.devicePixelRatio()
+        return pixmap.toImage().pixelColor(round(x*ratio), round(y*ratio)).name()
+
+    def test_partial_bottom_row_keeps_widget_and_item_pixels_when_moved_up(self):
+        self.prepare_clipped_rows()
+        table = self.table
+        row = table.rowAt(table.viewport().height()-1)
+        self.assertLess(table.viewport().height()-table.rowViewportPosition(row), table.rowHeight(row))
+        self.begin(0)
+        table.hover_at(self.point(row))
+        table.preview.animation.setCurrentTime(160)
+        frame = table.preview.grab()
+        y = table.preview.positions[row] + table.rowHeight(row)-2
+        self.assertEqual(self.pixel(frame, 10, y), '#da3251')
+        self.assertEqual(self.pixel(frame, table.columnViewportPosition(4)+5, y), '#e9bc38')
+        self.assertEqual(self.moves, [])
+
+    def test_partial_top_row_keeps_widget_and_item_pixels_when_moved_down(self):
+        self.prepare_clipped_rows()
+        table = self.table
+        table.verticalScrollBar().setValue(9)
+        self.qt.processEvents()
+        self.assertEqual(table.rowViewportPosition(0), -9)
+        self.begin(3)
+        table.hover_at(self.point(0))
+        table.preview.animation.setCurrentTime(160)
+        frame = table.preview.grab()
+        y = table.preview.positions[0]+2
+        self.assertEqual(self.pixel(frame, 10, y), '#1854c7')
+        self.assertEqual(self.pixel(frame, table.columnViewportPosition(4)+5, y), '#e9bc38')
+        self.assertEqual(self.moves, [])
+
+    def test_offscreen_row_is_ready_to_animate_into_view(self):
+        self.prepare_clipped_rows()
+        table = self.table
+        row = table.rowAt(table.viewport().height()-1)+1
+        self.assertGreaterEqual(table.rowViewportPosition(row), table.viewport().height())
+        self.begin(0)
+        table.hover_at(self.point(row))
+        table.preview.animation.setCurrentTime(160)
+        frame = table.preview.grab()
+        self.assertEqual(self.pixel(frame, 10, table.preview.positions[row]+2), '#1854c7')
+
+    def test_spanned_widget_snapshot_is_complete_after_scroll(self):
+        self.prepare_clipped_rows()
+        table = self.table
+        table.setSpan(6, 1, 1, 2)
+        table.setCellWidget(6, 1, EdgeCell())
+        table.horizontalScrollBar().setValue(table.horizontalScrollBar().maximum())
+        self.qt.processEvents()
+        self.begin(0)
+        table.verticalScrollBar().setValue(40)
+        self.qt.processEvents()
+        table.hover_at(self.point(6))
+        table.preview.animation.setCurrentTime(160)
+        frame = table.preview.grab()
+        y = table.preview.positions[6]+table.rowHeight(6)-2
+        self.assertEqual(self.pixel(frame, table.columnViewportPosition(1)+5, y), '#da3251')
+        self.assertEqual(self.pixel(frame, table.columnViewportPosition(2)+table.columnWidth(2)-5, y), '#da3251')

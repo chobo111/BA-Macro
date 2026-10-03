@@ -5,6 +5,48 @@ import keyboard
 from domain import hotkey
 
 
+# Navigation and keypad numbers share scan codes. The virtual key describes
+# the logical key (including NumLock), while the extended flag identifies the
+# physical key for matching releases and retaining independently held keys.
+NAVIGATION_KEYS = {
+    'page up': 0x21, 'page down': 0x22, 'end': 0x23, 'home': 0x24,
+    'left': 0x25, 'up': 0x26, 'right': 0x27, 'down': 0x28,
+    'insert': 0x2D, 'delete': 0x2E, 'clear': 0x0C,
+}
+
+
+@dataclass(frozen=True)
+class PressedKey:
+    scan_code: int
+    virtual_key: int | None
+    is_extended: bool
+
+    @property
+    def identity(self):
+        return self.scan_code, self.is_extended
+
+
+@dataclass(frozen=True)
+class KeyGroup:
+    scan_codes: frozenset
+    virtual_keys: frozenset = frozenset()
+
+    def matches(self, key):
+        return (key.scan_code in self.scan_codes
+                and (not self.virtual_keys or key.virtual_key in self.virtual_keys))
+
+    @classmethod
+    def compile(cls, name, scan_codes):
+        name = keyboard.normalize_name(name)
+        if len(name) == 1 and name in '0123456789':
+            virtual_keys = frozenset((ord(name), 0x60 + int(name)))
+        elif name in NAVIGATION_KEYS:
+            virtual_keys = frozenset((NAVIGATION_KEYS[name],))
+        else:
+            virtual_keys = frozenset()
+        return cls(frozenset(scan_codes), virtual_keys)
+
+
 @dataclass(frozen=True)
 class Binding:
     key: str
@@ -18,7 +60,7 @@ class Hotkeys:
         self.dispatch, self.eligible, self.emergency_stop = dispatch, eligible, emergency_stop
         self.lock = threading.RLock()
         self.bindings = []
-        self.pressed = set()
+        self.pressed = {}
         self.fired = set()
         self.suppressed = set()
         self.exclusive = False
@@ -32,10 +74,12 @@ class Hotkeys:
         normalized = hotkey(key)
         if not normalized:
             return None
-        parsed = keyboard.parse_hotkey(normalized.replace("win", "windows"))
+        names = normalized.replace("win", "windows").split("+")
+        parsed = keyboard.parse_hotkey("+".join(names))
         if len(parsed) != 1:
             raise ValueError("연속 입력 단축키는 지원하지 않습니다.")
-        return Binding(normalized, action, row_id, tuple(frozenset(group) for group in parsed[0]))
+        groups = tuple(KeyGroup.compile(name, codes) for name, codes in zip(names, parsed[0]))
+        return Binding(normalized, action, row_id, groups)
 
     def configure(self, values, exclusive=False):
         bindings = [self.compile(*value) for value in values if value[0]]
@@ -58,10 +102,13 @@ class Hotkeys:
             self.fired.clear()
             self.suppressed.clear()
 
+    def group_held(self, group):
+        return any(group.matches(key) for key in self.pressed.values())
+
     def matches(self, binding):
-        allowed = set().union(*binding.groups)
-        return (all(group & self.pressed for group in binding.groups)
-                and not ((self.pressed & self.modifiers) - allowed))
+        return (all(self.group_held(group) for group in binding.groups)
+                and all(any(group.matches(key) for group in binding.groups)
+                        for key in self.pressed.values() if key.scan_code in self.modifiers))
 
     def held(self, key):
         with self.lock:
@@ -69,18 +116,22 @@ class Hotkeys:
 
     def handle(self, event):
         with self.lock:
-            code = event.scan_code
+            key = PressedKey(event.scan_code, getattr(event, 'virtual_key', None),
+                             bool(getattr(event, 'is_extended', False)))
+            code = key.identity
             if event.event_type == "up":
-                self.pressed.discard(code)
-                self.fired = {b.key for b in self.bindings if b.key in self.fired and (b.groups[-1] & self.pressed)}
+                self.pressed.pop(code, None)
+                self.fired = {b.key for b in self.bindings
+                              if b.key in self.fired and self.group_held(b.groups[-1])}
                 blocked = code in self.suppressed
                 self.suppressed.discard(code)
                 return not blocked
             repeated = code in self.pressed
-            self.pressed.add(code)
+            if not repeated:
+                self.pressed[code] = key
             for binding in self.bindings:
                 # A held earlier shortcut must not consume a different key.
-                if code not in binding.groups[-1] or not self.matches(binding) or not self.eligible(binding.action):
+                if not binding.groups[-1].matches(key) or not self.matches(binding) or not self.eligible(binding.action):
                     continue
                 if not repeated and binding.key not in self.fired:
                     self.fired.add(binding.key)

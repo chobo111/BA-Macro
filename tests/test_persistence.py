@@ -198,3 +198,74 @@ class PersistenceTests(unittest.TestCase):
                 self.assertIn('지원하지 않는 설정 항목', loaded.warning)
                 self.assertEqual(self.store.settings_path.read_bytes(), before)
                 self.assertEqual(loaded.path, self.path if existing else None)
+
+    def test_profile_cannot_overwrite_settings_through_aliases(self):
+        original = b'{"theme":"Light"}'
+        self.store.settings_path.write_bytes(original)
+        alias = self.store.directory / 'linked.json'
+        alias.hardlink_to(self.store.settings_path)
+        candidates = (self.store.settings_path, self.store.directory / 'SETTING.JSON',
+                      self.store.directory / 'sub' / '..' / 'setting.json', alias)
+        for path in candidates:
+            with self.subTest(path=path):
+                for automatic in (False, True):
+                    result = self.store.save(path, Profile.default().export(), self.settings,
+                                             coalesce=automatic).result()
+                    self.assertFalse(result.profile_saved)
+                    self.assertIn('환경설정 파일', result.error)
+                    self.assertEqual(self.store.settings_path.read_bytes(), original)
+                with self.assertRaises(ValueError):
+                    self.store.settings(path, self.settings)
+        self.assertEqual(alias.read_bytes(), original)
+
+    def test_external_setting_named_profile_uses_nonreserved_recent_copy(self):
+        with tempfile.TemporaryDirectory() as external:
+            path = Path(external) / 'setting.json'
+            profile = Profile.default().export()
+            result = self.store.save(path, profile, self.settings).result()
+            self.assertTrue(result.profile_saved)
+            self.assertEqual(result.error, '')
+            self.assertEqual(result.recent_name, 'setting_1.json')
+            self.assertEqual(read_json(self.store.directory / result.recent_name), profile)
+            self.assertNotIn('macros', read_json(self.store.settings_path))
+
+    def test_invalid_settings_survive_profile_autosave_and_settings_flush(self):
+        original = b'{"click_hold_ms":9876,"auto_pause":false,"unknown":1}'
+        self.store.settings_path.write_bytes(original)
+        atomic_json(self.path, Profile.default().export())
+        loaded = self.store.load()
+        settings = asdict(loaded.settings)
+        result = self.store.save(self.path, loaded.profile.export(), settings, coalesce=True).result()
+        self.assertTrue(result.profile_saved)
+        self.assertIn('원본을 보존', result.error)
+        with self.assertRaises(ValueError):
+            self.store.settings(self.path, settings)
+        self.store.flush()
+        self.assertEqual(self.store.settings_path.read_bytes(), original)
+
+    def test_explicit_settings_recovery_preserves_raw_backup_and_resumes_autosave(self):
+        original = b'{bad json'
+        self.store.settings_path.write_bytes(original)
+        existing_backup = self.store.directory / 'setting.invalid.bak'
+        existing_backup.write_bytes(b'older backup')
+        loaded = self.store.load()
+        settings = asdict(loaded.settings)
+        settings['click_hold_ms'] = 87
+        self.store.settings(None, settings, recover=True)
+        self.assertEqual(existing_backup.read_bytes(), b'older backup')
+        self.assertEqual((self.store.directory / 'setting.invalid.1.bak').read_bytes(), original)
+        self.assertEqual(read_json(self.store.settings_path)['click_hold_ms'], 87)
+        self.assertFalse(self.store.settings_recovery_required)
+        self.assertEqual(self.store.save(self.path, loaded.profile.export(), settings).result().error, '')
+
+    def test_failed_settings_recovery_write_keeps_recovery_protection(self):
+        original = b'{bad json'
+        self.store.settings_path.write_bytes(original)
+        loaded = self.store.load()
+        with patch('persistence.atomic_json', side_effect=OSError('write failed')):
+            with self.assertRaises(OSError):
+                self.store.settings(None, asdict(loaded.settings), recover=True)
+        self.assertTrue(self.store.settings_recovery_required)
+        self.assertEqual(self.store.settings_path.read_bytes(), original)
+        with self.assertRaises(ValueError):
+            self.store.settings(None, asdict(loaded.settings))

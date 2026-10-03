@@ -1,7 +1,7 @@
 """Animated row previews; the model changes only after an accepted drop."""
 from PySide6.QtCore import Qt, Signal, QPoint, QRect, QMimeData, QTimer, QVariantAnimation, QEasingCurve
-from PySide6.QtGui import QDrag, QPainter, QPixmap, QColor, QPen
-from PySide6.QtWidgets import QTableWidget, QWidget, QAbstractItemView
+from PySide6.QtGui import QDrag, QPainter, QPixmap, QColor, QPen, QRegion
+from PySide6.QtWidgets import QTableWidget, QWidget, QAbstractItemView, QStyle, QStyleOptionViewItem
 
 
 class RowPreview(QWidget):
@@ -42,28 +42,56 @@ class RowPreview(QWidget):
             self.positions = dict(ends)
             self.update()
 
+    def render_row(self, row):
+        """Render complete cells independently of the viewport's clipping region."""
+        table = self.table
+        ratio, height = table.devicePixelRatioF(), table.rowHeight(row)
+        pixmap = QPixmap(round(self.width()*ratio), round(height*ratio))
+        pixmap.setDevicePixelRatio(ratio)
+        pixmap.fill(table.palette().base().color())
+        painter = QPainter(pixmap)
+        row_y, covered = table.rowViewportPosition(row), set()
+        for column in range(table.columnCount()):
+            if column in covered or table.isColumnHidden(column):
+                continue
+            covered.update(range(column+1, column+table.columnSpan(row, column)))
+            index = table.model().index(row, column)
+            rect = table.visualRect(index).translated(0, -row_y)
+            option = QStyleOptionViewItem()
+            table.initViewItemOption(option)
+            option.rect, option.index = rect, index
+            if table.alternatingRowColors() and row % 2:
+                option.features |= QStyleOptionViewItem.ViewItemFeature.Alternate
+            if table.selectionModel().isSelected(index):
+                option.state |= QStyle.StateFlag.State_Selected
+            if table.currentIndex() == index and table.hasFocus():
+                option.state |= QStyle.StateFlag.State_HasFocus
+            if not index.flags() & Qt.ItemFlag.ItemIsEnabled:
+                option.state &= ~QStyle.StateFlag.State_Enabled
+            table.itemDelegateForIndex(index).paint(painter, option, index)
+            widget = table.cellWidget(row, column)
+            if widget is not None:
+                painter.save()
+                painter.setClipRect(rect)
+                widget.render(painter, widget.pos()-QPoint(0, row_y), QRegion(),
+                              QWidget.RenderFlag.DrawWindowBackground | QWidget.RenderFlag.DrawChildren)
+                painter.restore()
+        painter.end()
+        return pixmap
+
     def capture(self):
-        # Grab real cell widgets as well as item text, without capturing ourselves.
         self.hide()
         table = self.table
         self.setGeometry(table.viewport().rect())
-        frame = table.viewport().grab()
-        ratio = frame.devicePixelRatio()
+        # Moving one row shifts its neighbours by at most that row's height.
+        # Include this margin so rows just outside the viewport can animate in.
+        margin = table.rowHeight(table.drag_origin)
+        visible = self.rect().adjusted(0, -margin, 0, margin)
         self.images.clear()
         for row in range(table.rowCount()):
-            y, height = table.rowViewportPosition(row), table.rowHeight(row)
-            area = QRect(0, y, self.width(), height).intersected(self.rect())
-            if area.isEmpty():
-                continue
-            pixmap = QPixmap(round(self.width()*ratio), round(height*ratio))
-            pixmap.setDevicePixelRatio(ratio)
-            pixmap.fill(table.palette().base().color())
-            painter = QPainter(pixmap)
-            source = QRect(round(area.x()*ratio), round(area.y()*ratio),
-                           round(area.width()*ratio), round(area.height()*ratio))
-            painter.drawPixmap(QPoint(0, area.top()-y), frame.copy(source))
-            painter.end()
-            self.images[row] = pixmap
+            area = QRect(0, table.rowViewportPosition(row), self.width(), table.rowHeight(row))
+            if not table.isRowHidden(row) and area.intersects(visible):
+                self.images[row] = self.render_row(row)
         self.show()
         self.raise_()
 
