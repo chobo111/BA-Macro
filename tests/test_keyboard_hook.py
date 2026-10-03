@@ -24,3 +24,13 @@ class KeyboardHookEventTests(unittest.TestCase):
         self.assertEqual(down.event_type, 'down')
         self.assertEqual(up.virtual_key, 0xAF)
         self.assertEqual(up.event_type, 'up')
+
+    def test_character_key_reads_layout_modifier_requirements(self):
+        from unittest.mock import patch
+        from keyboard_hook import character_key
+        for encoded, expected in ((0x01BB, (0xBB, frozenset(('shift',)))),
+                                  (0x00BB, (0xBB, frozenset())),
+                                  (0x06BB, (0xBB, frozenset(('ctrl', 'alt')))),
+                                  (-1, None)):
+            with self.subTest(encoded=encoded), patch('keyboard_hook.U.VkKeyScanW', return_value=encoded):
+                self.assertEqual(character_key('+'), expected)

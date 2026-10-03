@@ -1337,3 +1337,127 @@ class UiTests(unittest.TestCase):
                     self.assertEqual(reopened.value(), canonical)
                 with managed_dialog(SettingsDialog(replace(self.window.settings, pause_hk=value), self.window)) as settings:
                     self.assertEqual(settings.value().pause_hk, canonical)
+
+    def test_memo_escape_restores_table_profile_and_autosaved_file(self):
+        from PySide6.QtWidgets import QLineEdit
+        w = self.window
+        item = w.table.item(0, 4)
+        item.setText('original')
+        w.flush_pending_saves()
+        w.table.editItem(item)
+        self.qt.processEvents()
+        editor = self.qt.focusWidget()
+        self.assertIsInstance(editor, QLineEdit)
+        editor.selectAll()
+        QTest.keyClicks(editor, 'changed')
+        self.assertEqual(w.profile.rows[0].memo, 'changed')
+        QTest.keyClick(editor, Qt.Key.Key_Escape)
+        self.qt.processEvents()
+        w.flush_pending_saves()
+        self.assertEqual(item.text(), 'original')
+        self.assertEqual(w.profile.rows[0].memo, 'original')
+        self.assertEqual(read_json(w.path)['macros'][0]['memo'], 'original')
+        w.table.editItem(item)
+        self.qt.processEvents()
+        self.assertEqual(self.qt.focusWidget().text(), 'original')
+        w.flush_pending_saves()
+        self.assertEqual(read_json(w.path)['macros'][0]['memo'], 'original')
+
+    def test_memo_enter_keeps_live_edit_in_table_profile_and_file(self):
+        w = self.window
+        item = w.table.item(0, 4)
+        w.table.editItem(item)
+        self.qt.processEvents()
+        editor = self.qt.focusWidget()
+        QTest.keyClicks(editor, 'committed')
+        QTest.keyClick(editor, Qt.Key.Key_Return)
+        self.qt.processEvents()
+        w.flush_pending_saves()
+        self.assertEqual((item.text(), w.profile.rows[0].memo,
+                          read_json(w.path)['macros'][0]['memo']),
+                         ('committed',) * 3)
+
+    def test_memo_escape_rollback_is_ordered_after_inflight_autosave(self):
+        import threading
+        from domain import atomic_json
+        w = self.window
+        item = w.table.item(0, 4)
+        item.setText('original')
+        w.flush_pending_saves()
+        entered, release = threading.Event(), threading.Event()
+        def write(path, data):
+            if Path(path) == w.path and not entered.is_set():
+                entered.set()
+                if not release.wait(3):
+                    raise RuntimeError('test timeout')
+            atomic_json(path, data)
+        with patch('persistence.atomic_json', side_effect=write):
+            w.table.editItem(item)
+            self.qt.processEvents()
+            editor = self.qt.focusWidget()
+            editor.selectAll()
+            try:
+                QTest.keyClicks(editor, 'changed')
+                self.assertTrue(entered.wait(1))
+                QTest.keyClick(editor, Qt.Key.Key_Escape)
+            finally:
+                release.set()
+            w.flush_pending_saves()
+        self.assertEqual((item.text(), w.profile.rows[0].memo,
+                          read_json(w.path)['macros'][0]['memo']),
+                         ('original',) * 3)
+        self.assertFalse(w.dirty)
+
+    def test_reopening_windows_shortcut_does_not_clear_saved_binding(self):
+        w = self.window
+        row = w.profile.rows[0]
+        row.move_hk = 'win+q'
+        self.assertTrue(w.save())
+        w.rebuild()
+        with patch.object(KeyDialog, 'exec', return_value=QDialog.DialogCode.Accepted):
+            w.edit_key(row.id)
+        w.flush_pending_saves()
+        self.assertEqual(row.move_hk, 'win+q')
+        self.assertEqual(read_json(w.path)['macros'][0]['move_hk'], 'win+q')
+        self.assertIn('win+q', [binding.key for binding in w.hooks.bindings])
+
+    def test_win_and_plus_capture_round_trip_in_both_dialogs(self):
+        from dataclasses import replace
+        from hotkeys import Hotkeys
+        from widgets import managed_dialog
+        cases = ((Qt.Key.Key_Q, Qt.KeyboardModifier.MetaModifier, 'win+q'),
+                 (Qt.Key.Key_Plus, Qt.KeyboardModifier.KeypadModifier, 'plus'),
+                 (Qt.Key.Key_Plus, Qt.KeyboardModifier.ControlModifier, 'ctrl+plus'),
+                 (Qt.Key.Key_Plus, Qt.KeyboardModifier.ShiftModifier, 'shift+plus'),
+                 (Qt.Key.Key_Comma, Qt.KeyboardModifier.ControlModifier, 'ctrl+,'),
+                 (Qt.Key.Key_PageUp, Qt.KeyboardModifier.ControlModifier, 'ctrl+page up'))
+        for key, modifiers, expected in cases:
+            with self.subTest(expected=expected), managed_dialog(KeyDialog('', self.window)) as dialog:
+                dialog.show()
+                self.qt.processEvents()
+                QTest.keyClick(dialog.editor, key, modifiers)
+                self.assertEqual(dialog.value(), expected)
+                self.assertEqual(Hotkeys.compile(dialog.value()).key, expected)
+                dialog.close()
+                with managed_dialog(KeyDialog(expected, self.window)) as reopened:
+                    self.assertEqual(reopened.value(), expected)
+                with managed_dialog(SettingsDialog(replace(self.window.settings, pause_hk=expected), self.window)) as settings:
+                    self.assertEqual(settings.value().pause_hk, expected)
+                dialog.editor.clear()
+                self.assertEqual(dialog.value(), '')
+
+    def test_alias_duplicate_edit_keeps_previous_shortcut_and_uses_log(self):
+        w = self.window
+        w.profile.rows[0].move_hk = 'ctrl+page up'
+        w.save()
+        w.rebind()
+        row = w.profile.rows[1]
+        with patch('app.KeyDialog') as factory, patch.object(QMessageBox, 'warning') as warning:
+            factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            factory.return_value.value.return_value = 'ctrl+pgup'
+            w.edit_key(row.id)
+            warning.assert_not_called()
+        w.flush_pending_saves()
+        self.assertEqual(row.move_hk, 'w')
+        self.assertEqual(read_json(w.path)['macros'][1]['move_hk'], 'w')
+        self.assertIn('중복', w.statusBar().currentMessage())

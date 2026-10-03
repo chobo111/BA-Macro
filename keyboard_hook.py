@@ -32,6 +32,19 @@ K.GetModuleHandleW.argtypes, K.GetModuleHandleW.restype = [W.LPCWSTR], W.HMODULE
 K.GetCurrentThreadId.argtypes, K.GetCurrentThreadId.restype = [], W.DWORD
 
 
+U.VkKeyScanW.argtypes, U.VkKeyScanW.restype = [W.WCHAR], C.c_short
+
+
+def character_key(character):
+    """Return the layout's virtual key and modifiers needed to type a character."""
+    code = U.VkKeyScanW(character)
+    if code == -1:
+        return None
+    required = frozenset(name for bit, name in ((1, 'shift'), (2, 'ctrl'), (4, 'alt'))
+                         if (code >> 8) & bit)
+    return code & 0xFF, required
+
+
 class PhysicalHook:
     def __init__(self, handler):
         self.handler = handler

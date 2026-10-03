@@ -12,7 +12,8 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate, QStatusBar, QTabWidget, QWidget, QFrame,
 )
 
-from domain import Settings, hotkey
+from domain import Settings
+from shortcuts import hotkey, qt_hotkey
 from row_drag import AnimatedRowsTable
 
 
@@ -97,9 +98,18 @@ class MemoDelegate(QStyledItemDelegate):
     def createEditor(self, parent, option, index):
         editor = super().createEditor(parent, option, index)
         if isinstance(editor, QLineEdit):
+            editor.setProperty('originalMemo', index.data(Qt.ItemDataRole.EditRole))
             editor.textChanged.connect(lambda text: self.parent().resize_memo_column(index.row(), text))
             editor.textChanged.connect(lambda text: self.parent().memo_edited.emit(index.row(), text))
         return editor
+
+    def eventFilter(self, editor, event):
+        if (isinstance(editor, QLineEdit) and event.type() == QEvent.Type.KeyPress
+                and event.matches(QKeySequence.StandardKey.Cancel)):
+            # Live edits are already autosaved. Roll back the same way before
+            # Qt closes the editor with RevertModelCache.
+            editor.setText(editor.property('originalMemo') or '')
+        return super().eventFilter(editor, event)
 
 
 class RowsTable(AnimatedRowsTable):
@@ -179,7 +189,7 @@ class KeyDialog(QDialog):
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setWordWrap(True)
         layout.addWidget(hint)
-        self.editor = ClickToCaptureEdit(QKeySequence(value), self)
+        self.editor = ClickToCaptureEdit(QKeySequence(qt_hotkey(value), QKeySequence.SequenceFormat.PortableText), self)
         self.editor.setMaximumSequenceLength(1)
         line_edit = self.editor.findChild(QLineEdit)
         if line_edit is not None:
@@ -227,7 +237,7 @@ class SettingsDialog(QDialog):
         form.addRow("작동 디스플레이", self.displays)
         self.keys = {}
         for name, label in (("pause_hk", "작동 / 정지"), ("capture_hk", "선택한 행 좌표 캡처")):
-            editor = QKeySequenceEdit(QKeySequence(getattr(settings, name)))
+            editor = QKeySequenceEdit(QKeySequence(qt_hotkey(getattr(settings, name)), QKeySequence.SequenceFormat.PortableText))
             editor.setMaximumSequenceLength(1)
             self.keys[name] = editor
             form.addRow(label, editor)

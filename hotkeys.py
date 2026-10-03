@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 import threading
 import keyboard
-from domain import hotkey
+from shortcuts import hotkey
 
 
 # Navigation, keypad and special keys share scan codes. The virtual key describes
@@ -38,10 +38,19 @@ class KeyGroup:
                 and (not self.virtual_keys or key.virtual_key in self.virtual_keys))
 
     @classmethod
-    def compile(cls, name, scan_codes):
+    def compile(cls, name, scan_codes, modifiers=()):
         name = keyboard.normalize_name(name)
         if len(name) == 1 and name in '0123456789':
             virtual_keys = frozenset((ord(name), 0x60 + int(name)))
+        elif name == '+':
+            from keyboard_hook import character_key
+            # Keypad + is independent of Shift. A main-keyboard + may require
+            # Shift (layout dependent); bare "=" must not trigger this binding.
+            keys = {0x6B}
+            mapped = character_key('+')
+            if mapped and mapped[1].issubset(modifiers):
+                keys.add(mapped[0])
+            virtual_keys = frozenset(keys)
         elif name == '*':
             # Top-row Shift+8 and keypad multiply; exclude PrintScreen's scan 55.
             virtual_keys = frozenset((0x38, 0x6A))
@@ -79,15 +88,22 @@ class Hotkeys:
         normalized = hotkey(key)
         if not normalized:
             return None
-        names = normalized.replace("win", "windows").split("+")
-        parsed = keyboard.parse_hotkey("+".join(names))
-        if len(parsed) != 1:
-            raise ValueError("연속 입력 단축키는 지원하지 않습니다.")
-        groups = tuple(KeyGroup.compile(name, codes) for name, codes in zip(names, parsed[0]))
+        parts = normalized.split("+")
+        names = ["windows" if part == "win" else part for part in parts]
+        groups = tuple(KeyGroup.compile(name, keyboard.key_to_scan_codes(name), parts[:-1])
+                       for name in names)
         return Binding(normalized, action, row_id, groups)
 
     def configure(self, values, exclusive=False):
-        bindings = [self.compile(*value) for value in values if value[0]]
+        bindings, seen = [], set()
+        for value in values:
+            binding = self.compile(*value)
+            if binding is None:
+                continue
+            if binding.key in seen:
+                raise ValueError(f"중복된 단축키: {binding.key.upper()}")
+            seen.add(binding.key)
+            bindings.append(binding)
         with self.lock:
             self.bindings = bindings
             self.exclusive = exclusive
@@ -116,6 +132,7 @@ class Hotkeys:
                         for key in self.pressed.values() if key.scan_code in self.modifiers))
 
     def held(self, key):
+        key = hotkey(key)
         with self.lock:
             return any(b.key == key and self.matches(b) for b in self.bindings)
 

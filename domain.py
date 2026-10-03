@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 import uuid
+from shortcuts import hotkey
 
 MODES = {
     "move_and_click": "좌표 클릭",
@@ -26,22 +27,6 @@ def target_identity(data):
         raise ValueError('대상 프로그램 exe에는 경로가 아닌 실행파일명만 입력하세요.')
     return {'exe': exe,
             'class': data.get('class', ''), 'title': data.get('title', '')}
-
-
-def hotkey(value: str) -> str:
-    aliases = {"control": "ctrl", "windows": "win", "meta": "win", "escape": "esc", "return": "enter",
-               "print": "print screen", "printscreen": "print screen",
-               "numlock": "num lock", "scrolllock": "scroll lock", "capslock": "caps lock"}
-    parts = [aliases.get(p.strip().lower(), p.strip().lower()) for p in str(value).split("+") if p.strip()]
-    if not parts:
-        return ""
-    if len(set(parts)) != len(parts):
-        raise ValueError("단축키에 같은 키가 두 번 들어갔습니다.")
-    mods = [k for k in ("ctrl", "alt", "shift", "win") if k in parts]
-    keys = [k for k in parts if k not in mods]
-    if len(keys) != 1:
-        raise ValueError("단축키는 보조키와 일반 키 하나로 지정하세요.")
-    return "+".join(mods + keys)
 
 
 def bounded_int(value, low, high, label):

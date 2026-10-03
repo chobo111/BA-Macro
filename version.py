@@ -1,6 +1,13 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'Blue Archive Studio'
 RELEASES = (
+    ('0.2.8-experimental', '2026-10-03', (
+        '메모 편집 중 Esc 취소 시 화면·프로필·자동저장 파일을 편집 전 내용으로 복원',
+        'Win 조합 단축키를 다시 편집할 때 지워지는 문제 수정',
+        '+ 및 Ctrl++ 단축키 지원, 숫자패드 +와 일반 = 키 구분',
+        'Page Up/PgUp 등 단축키 별칭을 통일하고 중복 실행 요청 차단',
+        '자동 테스트 212개 통과, 실제 게임 입력 동작은 사용자 검증',
+    )),
     ('0.2.7-experimental', '2026-10-03', (
         '외부 프로필의 최근 복사본을 직접 열거나 수정하면 독립 파일로 보존',
         '환경설정 저장 성공 후에만 적용하여 저장 실패·취소 시 기존 설정 유지',

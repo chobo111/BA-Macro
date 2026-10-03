@@ -205,3 +205,71 @@ class HotkeyTests(unittest.TestCase):
                 self.assertEqual(Hotkeys.compile(qt_name).groups, Hotkeys.compile(canonical).groups)
                 with self.assertRaises(ValueError):
                     Profile([Row(move_hk=qt_name), Row(move_hk=canonical)]).validate(())
+
+    def test_duplicate_configuration_leaves_existing_bindings_intact(self):
+        previous = list(self.hooks.bindings)
+        for exclusive in (False, True):
+            for first, second in (('ctrl+page up', 'ctrl+pgup'), ('win+q', 'meta+q'), ('+', 'plus')):
+                with self.subTest(first=first, exclusive=exclusive), self.assertRaises(ValueError):
+                    self.hooks.configure([(first, 'move', '1'), (second, 'move', '2')], exclusive)
+                self.assertEqual(self.hooks.bindings, previous)
+
+    def test_pageup_alias_uses_same_hold_and_release_identity(self):
+        self.hooks.configure([('ctrl+pgup', 'move', '1')], True)
+        self.physical_event(29, 0xA2)
+        self.assertFalse(self.physical_event(73, 0x21, True))
+        self.assertTrue(self.hooks.held('ctrl+page up'))
+        self.assertTrue(self.hooks.held('ctrl+pgup'))
+        self.assertEqual(self.actions, [('move', '1')])
+        self.assertFalse(self.physical_event(73, 0x21, True, 'up'))
+        self.assertFalse(self.hooks.held('ctrl+pgup'))
+
+    def test_windows_key_chords_work_from_both_sides(self):
+        for scan, vk in ((91, 0x5B), (92, 0x5C)):
+            with self.subTest(scan=scan):
+                self.hooks.close()
+                self.actions.clear()
+                self.hooks.configure([('meta+q', 'move', '1')], True)
+                self.physical_event(scan, vk, True)
+                self.assertFalse(self.physical_event(16, 0x51))
+                self.assertTrue(self.hooks.held('win+q'))
+                self.assertEqual(self.actions, [('move', '1')])
+                self.physical_event(16, 0x51, kind='up')
+                self.assertFalse(self.hooks.held('meta+q'))
+
+    def test_keypad_plus_and_ctrl_plus_do_not_match_unshifted_equals(self):
+        from unittest.mock import patch
+        with patch('keyboard_hook.character_key', return_value=(0xBB, frozenset(('shift',)))):
+            for shortcut in ('+', 'ctrl++'):
+                with self.subTest(shortcut=shortcut):
+                    self.hooks.close()
+                    self.actions.clear()
+                    self.hooks.configure([(shortcut, 'move', '1')], True)
+                    if shortcut.startswith('ctrl'):
+                        self.physical_event(29, 0xA2)
+                    self.assertTrue(self.physical_event(13, 0xBB))
+                    self.assertTrue(self.physical_event(13, 0xBB, kind='up'))
+                    self.assertEqual(self.actions, [])
+                    self.assertFalse(self.physical_event(78, 0x6B))
+                    self.assertFalse(self.physical_event(78, 0x6B))
+                    self.assertTrue(self.hooks.held(shortcut))
+                    self.assertEqual(self.actions, [('move', '1')])
+                    self.assertFalse(self.physical_event(78, 0x6B, kind='up'))
+
+    def test_shifted_main_keyboard_plus_dispatches_once(self):
+        from unittest.mock import patch
+        with patch('keyboard_hook.character_key', return_value=(0xBB, frozenset(('shift',)))):
+            self.hooks.configure([('ctrl+shift++', 'move', '1')], True)
+        self.physical_event(29, 0xA2)
+        self.physical_event(42, 0xA0)
+        self.assertFalse(self.physical_event(13, 0xBB))
+        self.assertFalse(self.physical_event(13, 0xBB))
+        self.assertEqual(self.actions, [('move', '1')])
+        self.assertFalse(self.physical_event(13, 0xBB, kind='up'))
+
+    def test_main_plus_without_shift_is_supported_when_layout_allows_it(self):
+        from unittest.mock import patch
+        with patch('keyboard_hook.character_key', return_value=(0xBB, frozenset())):
+            self.hooks.configure([('+', 'move', '1')], True)
+        self.assertFalse(self.physical_event(13, 0xBB))
+        self.assertEqual(self.actions, [('move', '1')])
