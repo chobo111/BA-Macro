@@ -8,10 +8,10 @@ if (-not (Test-Path -LiteralPath $studioApp)) {
     throw 'app.py was not found beside this script.'
 }
 $studioShell = New-Object -ComObject WScript.Shell
-$studioShortcut = $studioShell.CreateShortcut((Join-Path $PSScriptRoot 'Blue Archive Studio.lnk'))
+$studioShortcut = $studioShell.CreateShortcut((Join-Path $PSScriptRoot 'BA Macro.lnk'))
 $studioShortcut.TargetPath = $studioGuiPython
 $studioShortcut.Arguments = '"' + $studioApp + '"'
 $studioShortcut.WorkingDirectory = $PSScriptRoot
-$studioShortcut.Description = 'Launch Blue Archive Studio without a console window'
+$studioShortcut.Description = 'Launch BA Macro without a console window'
 $studioShortcut.IconLocation = $studioGuiPython + ',0'
 $studioShortcut.Save()

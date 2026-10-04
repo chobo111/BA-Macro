@@ -71,8 +71,36 @@ adjust_dpi = (bind("AdjustWindowRectExForDpi", [C.POINTER(W.RECT), W.DWORD, W.BO
 window_dpi = bind("GetDpiForWindow", [W.HWND], W.UINT) if hasattr(U, "GetDpiForWindow") else None
 window_from_point = bind("WindowFromPoint", [W.POINT], W.HWND)
 get_ancestor = bind("GetAncestor", [W.HWND, W.UINT], W.HWND)
+allow_foreground = bind("AllowSetForegroundWindow", [W.DWORD], W.BOOL)
+show_window = bind("ShowWindow", [W.HWND, C.c_int], W.BOOL)
+set_foreground = bind("SetForegroundWindow", [W.HWND], W.BOOL)
+last_popup = bind("GetLastActivePopup", [W.HWND], W.HWND)
 ENUM = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
 enum_windows = bind("EnumWindows", [ENUM, W.LPARAM], W.BOOL)
+
+
+def restore_process_window(process_id):
+    """Restore an already-running version that predates the activation server."""
+    from version import APP_NAME
+    found = []
+    @ENUM
+    def visit(hwnd, _):
+        pid = W.DWORD()
+        get_pid(hwnd, C.byref(pid))
+        if pid.value == process_id:
+            title = C.create_unicode_buffer(1024)
+            get_title(hwnd, title, len(title))
+            if any(title.value == name or title.value.endswith(' — ' + name)
+                   for name in (APP_NAME, 'Blue Archive Studio')):
+                found.append(hwnd)
+        return True
+    if not enum_windows(visit, 0) or not found:
+        return False
+    hwnd = found[0]
+    show_window(hwnd, 9 if minimized(hwnd) else 5)  # SW_RESTORE / SW_SHOW
+    popup = last_popup(hwnd)
+    set_foreground(popup if popup and visible(popup) else hwnd)
+    return True
 
 
 def check(value):

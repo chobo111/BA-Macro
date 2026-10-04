@@ -5,6 +5,6 @@ a = Analysis(['app.py'], pathex=[], binaries=[], datas=[],
              hiddenimports=collect_submodules('keyboard'), hookspath=[],
              hooksconfig={}, runtime_hooks=[], excludes=[], noarchive=False)
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='BlueArchiveStudio',
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='BA Macro',
           debug=False, strip=False, upx=False, console=False)
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='BlueArchiveStudio')
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='BA Macro')

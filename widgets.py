@@ -40,6 +40,21 @@ def make_icon():
     return QIcon(pixmap)
 
 
+def make_run_icon(running):
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor('#102b1a' if running else '#ffffff'))
+    if running:
+        painter.drawRoundedRect(7, 7, 18, 18, 2, 2)
+    else:
+        painter.drawPolygon(QPolygon([QPoint(8, 5), QPoint(27, 16), QPoint(8, 27)]))
+    painter.end()
+    return QIcon(pixmap)
+
+
 def make_pin_icon():
     icon = QIcon()
     for state, color in ((QIcon.State.Off, "#91a6ba"), (QIcon.State.On, "#47b8ed")):
@@ -185,10 +200,6 @@ class KeyDialog(QDialog):
         self.setWindowTitle("단축키 지정")
         self.setFixedWidth(280)
         layout = QVBoxLayout(self)
-        hint = QLabel("입력 칸을 클릭한 뒤\n사용할 키 조합을 누르세요.")
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
         self.editor = ClickToCaptureEdit(QKeySequence(qt_hotkey(value), QKeySequence.SequenceFormat.PortableText), self)
         self.editor.setMaximumSequenceLength(1)
         line_edit = self.editor.findChild(QLineEdit)

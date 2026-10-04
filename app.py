@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import sys
 
-from PySide6.QtCore import Qt, Signal, QObject, QTimer, QStandardPaths, QLockFile, QSize
+from PySide6.QtCore import Qt, Signal, QObject, QTimer, QStandardPaths, QSize
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -23,7 +23,8 @@ from persistence import ProfileStore
 from conversion_dialog import ConversionDialog
 from version import APP_NAME, VERSION, RELEASES
 from session import ExecutionSession, editing_dialog
-from widgets import (managed_dialog, make_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
+from single_instance import SingleInstance
+from widgets import (managed_dialog, make_icon, make_run_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
                      BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog, NoWheelCombo, NoWheelSpinBox)
 
 BASE = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
@@ -44,7 +45,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, data_dir=None, hook_enabled=True):
         super().__init__()
-        self.setWindowTitle("Blue Archive Studio")
+        self.setWindowTitle(APP_NAME)
         self.setWindowIcon(make_icon())
         self.resize(420, 420)
         self.setMinimumHeight(340)
@@ -168,6 +169,8 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.pin_button)
         self.pause_button = self.button("시작", self.toggle, True)
         self.pause_button.setFixedSize(106, 30)
+        self.run_icons = (make_run_icon(False), make_run_icon(True))
+        self.pause_button.setIconSize(QSize(16, 16))
         toolbar.addWidget(self.pause_button)
         toolbar.addStretch()
         layout.addLayout(toolbar)
@@ -226,7 +229,7 @@ class MainWindow(QMainWindow):
 
     def build_tray(self):
         self.tray = QSystemTrayIcon(self.windowIcon(), self)
-        self.tray.setToolTip("Blue Archive Studio · 일시정지")
+        self.tray.setToolTip(f"{APP_NAME} · 일시정지")
         menu = QMenu(self)
         menu.addAction("창 열기", self.restore)
         menu.addAction("작동 / 정지", self.toggle)
@@ -258,7 +261,7 @@ class MainWindow(QMainWindow):
             QPushButton:hover {{border-color: #47b8ed; background: {alt};}}
             QPushButton:pressed {{background: {border};}}
             QPushButton:checked {{background: #285275; color: #ffffff; border-color: #47b8ed;}}
-            QPushButton#primary {{background: #47b8ed; color: #102435; border: none; font-weight: 700;}}
+            QPushButton#primary {{background: #cf4452; color: #ffffff; border: none; font-weight: 700;}}
             QPushButton#primary[running="true"] {{background: #39b86a; color: #102b1a;}}
             QTableWidget {{background: {panel}; alternate-background-color: {alt}; border: 1px solid {border}; border-radius: 8px; selection-background-color: #285275;}}
             QTableWidget::item {{padding: 4px;}}
@@ -277,12 +280,13 @@ class MainWindow(QMainWindow):
         self.pause_button.setText("정지" if self.armed else "시작")
         if self.pause_button.property("running") != self.armed:
             self.pause_button.setProperty("running", self.armed)
+            self.pause_button.setIcon(self.run_icons[bool(self.armed)])
             self.pause_button.style().unpolish(self.pause_button)
             self.pause_button.style().polish(self.pause_button)
             self.pause_button.update()
-        self.setWindowTitle(f"{'● ' if self.dirty else ''}{name} — Blue Archive Studio")
+        self.setWindowTitle(f"{'● ' if self.dirty else ''}{name} — {APP_NAME}")
         if hasattr(self, "tray"):
-            self.tray.setToolTip("Blue Archive Studio · " + ("작동 중" if self.armed else "일시정지"))
+            self.tray.setToolTip(APP_NAME + " · " + ("작동 중" if self.armed else "일시정지"))
 
     def changed(self):
         self.pause_for_configuration()
@@ -902,14 +906,19 @@ class MainWindow(QMainWindow):
     def hide_to_tray(self):
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.hide()
-            self.tray.showMessage("Blue Archive Studio", "트레이 아이콘을 두 번 클릭하면 창을 다시 엽니다.")
+            self.tray.showMessage(APP_NAME, "트레이 아이콘을 두 번 클릭하면 창을 다시 엽니다.")
         else:
             self.showMinimized()
 
     def restore(self):
-        self.showNormal()
+        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.show()
         self.raise_()
         self.activateWindow()
+        modal = QApplication.activeModalWidget()
+        if modal is not None and modal is not self:
+            modal.raise_()
+            modal.activateWindow()
 
     @editing_dialog(hooks=False)
     def about_dialog(self):
@@ -953,21 +962,30 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    # Keep the lock location stable across the display-name change.
     app.setApplicationName("BlueArchiveStudio")
+    app.setApplicationDisplayName(APP_NAME)
     app.setApplicationVersion(VERSION)
     app.setOrganizationName("Chobo")
     app.setStyle("Fusion")
     app.setQuitOnLastWindowClosed(False)
     data_dir = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation))
     data_dir.mkdir(parents=True, exist_ok=True)
-    instance_lock = QLockFile(str(data_dir / "instance.lock"))
-    if not instance_lock.tryLock(100):
-        QMessageBox.information(None, "Blue Archive Studio", "이미 실행 중입니다. 작업 표시줄 또는 트레이에서 창을 열어 주세요.")
-        return 0
-    window = MainWindow()
-    app.aboutToQuit.connect(window.shutdown)
-    window.show()
-    return app.exec()
+    instance = SingleInstance(data_dir, app)
+    try:
+        if not instance.acquire():
+            return 0
+        window = MainWindow()
+        instance.activate_requested.connect(window.restore)
+        app.aboutToQuit.connect(window.shutdown)
+        window.show()
+        return app.exec()
+    except OSError as error:
+        QMessageBox.critical(None, APP_NAME, str(error))
+        return 1
+    finally:
+        instance.close()
+
 
 
 if __name__ == "__main__":

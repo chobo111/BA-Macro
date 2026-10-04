@@ -1461,3 +1461,29 @@ class UiTests(unittest.TestCase):
         self.assertEqual(row.move_hk, 'w')
         self.assertEqual(read_json(w.path)['macros'][1]['move_hk'], 'w')
         self.assertIn('중복', w.statusBar().currentMessage())
+
+    def test_restore_shows_hidden_window_without_changing_profile_or_run_state(self):
+        w = self.window
+        profile, path = w.profile, w.path
+        w.armed = True
+        w.update_labels()
+        w.hide()
+        self.assertFalse(w.isVisible())
+        w.restore()
+        self.qt.processEvents()
+        self.assertTrue(w.isVisible())
+        self.assertTrue(w.armed)
+        self.assertIs(w.profile, profile)
+        self.assertEqual(w.path, path)
+
+    def test_restore_preserves_maximized_state_after_minimizing(self):
+        w = self.window
+        w.showMaximized()
+        self.qt.processEvents()
+        w.showMinimized()
+        self.qt.processEvents()
+        self.assertTrue(w.isMinimized())
+        w.restore()
+        self.qt.processEvents()
+        self.assertFalse(w.isMinimized())
+        self.assertTrue(w.isMaximized())

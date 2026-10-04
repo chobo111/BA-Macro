@@ -1,6 +1,13 @@
 """Application releases; independent of the profile JSON schema version."""
-APP_NAME = 'Blue Archive Studio'
+APP_NAME = 'BA Macro'
 RELEASES = (
+    ('0.2.9-experimental', '2026-10-04', (
+        '중복 실행 시 경고 대신 실행 중인 창을 표시하고 최소화·트레이 상태 복원',
+        '프로그램 이름과 실행 바로가기를 BA Macro로 변경',
+        '단축키 지정 팝업 안내문 제거',
+        '시작·정지 버튼에 재생·정지 아이콘 추가, 정지 상태 버튼을 빨간색으로 표시',
+        '자동 테스트 220개 통과 및 오프스크린 UI 확인, 실제 게임 입력은 사용자 검증',
+    )),
     ('0.2.8-experimental', '2026-10-03', (
         '메모 편집 중 Esc 취소 시 화면·프로필·자동저장 파일을 편집 전 내용으로 복원',
         'Win 조합 단축키를 다시 편집할 때 지워지는 문제 수정',
