@@ -2,7 +2,7 @@
 import ntpath
 import ctypes as C
 from ctypes import wintypes as W
-from domain import target_identity
+from domain import target_identity, same_program
 from displays import enumerate_displays, monitor_info
 
 U = C.WinDLL("user32", use_last_error=True)
@@ -179,13 +179,7 @@ class Windows:
                 info = target_identity(self.window_identity(hwnd))
             except OSError:
                 continue
-            if saved.get('exe'):
-                matches = (info['exe'].casefold() == saved['exe'].casefold()
-                           and info['class'] == saved.get('class'))
-            else:
-                matches = bool(saved.get('class') and saved.get('title')) and all(
-                    info[k] == saved[k] for k in ('class', 'title'))
-            if matches:
+            if same_program(saved, info):
                 candidates.append((hwnd, info))
         exact = [hwnd for hwnd, info in candidates if info['title'] == saved.get('title')]
         if len(exact) == 1:

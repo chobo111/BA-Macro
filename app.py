@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QSystemTrayIcon, QMenu, QGroupBox, QSizePolicy, QFrame,
 )
 
-from domain import MODES, Profile, Row, Settings, read_json
+from domain import MODES, Profile, Row, Settings, read_json, same_program
 from engine import Engine, Command
 from native import Windows
 from hotkeys import Hotkeys
@@ -24,6 +24,7 @@ from conversion_dialog import ConversionDialog
 from version import APP_NAME, VERSION, RELEASES
 from session import ExecutionSession, editing_dialog
 from single_instance import SingleInstance
+from startup_dialogs import AppMismatchDialog, SizeMismatchDialog
 from widgets import (managed_dialog, make_icon, make_run_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
                      BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog, NoWheelCombo, NoWheelSpinBox)
 
@@ -418,15 +419,17 @@ class MainWindow(QMainWindow):
             self.update_labels()
 
     def toggle(self):
-        if (self.modal or self.session.editor_open) and self.settings.auto_pause:
-            return
         if self.armed:
             self.stop()
+            return
+        if self.modal or (self.session.editor_open and self.settings.auto_pause):
             return
         if self.target and not self.native.exists(self.target):
             self.statusBar().showMessage("먼저 대상 창을 선택하세요.")
             return
         try:
+            if not self.confirm_start():
+                return
             if not self.target:
                 self.native.refresh_displays()
                 self.native.validate_context(0)
@@ -438,6 +441,47 @@ class MainWindow(QMainWindow):
             return
         self.armed = True
         self.update_labels()
+
+    @editing_dialog(hooks=False, pause=False)
+    def confirm_start(self):
+        target = self.target
+        saved = dict(self.profile.target_program)
+        current = self.native.window_identity(target) if target else {}
+        if saved and not same_program(saved, current) and self.settings.warn_app_mismatch:
+            with managed_dialog(AppMismatchDialog(saved, current, self)) as dialog:
+                dialog.exec()
+                if not dialog.confirmed():
+                    return False
+                if dialog.skip_warning.isChecked():
+                    self.commit_settings(replace(self.settings, warn_app_mismatch=False))
+        if target != self.target or (target and not self.native.exists(target)):
+            self.statusBar().showMessage('선택한 앱이 변경되거나 닫혔습니다. 다시 선택하세요.')
+            return False
+        if self.profile.resolution and (target or self.native.display_id):
+            current_size = self.native.size(target)
+            if tuple(current_size) != self.profile.resolution:
+                with managed_dialog(SizeMismatchDialog(
+                        self.profile.resolution, current_size, self, can_resize=bool(target))) as dialog:
+                    dialog.exec()
+                    choice = dialog.choice()
+                if target != self.target or (target and not self.native.exists(target)):
+                    self.statusBar().showMessage('선택한 앱이 변경되거나 닫혔습니다. 다시 선택하세요.')
+                    return False
+                if choice == 'resize':
+                    self.resize_dialog(profile_size=self.profile.resolution)
+                elif choice == 'convert':
+                    self.convert_dialog(reason='프로필 좌표를 현재 화면 크기에 맞춥니다. 저장 후 다시 시작하세요.')
+                return False
+        if target:
+            latest = self.native.window_identity(target)
+            if not same_program(current, latest):
+                self.statusBar().showMessage('선택한 앱이 변경되었습니다. 다시 선택하세요.')
+                return False
+            current = latest
+        if current != self.profile.target_program:
+            self.profile.target_program = current
+            self.changed()
+        return True
 
     def dispatch(self, action, rid):
         if not self.eligible(action):
@@ -530,7 +574,8 @@ class MainWindow(QMainWindow):
         if remember:
             try:
                 identity = self.native.window_identity(target) if target else {}
-                if identity != self.profile.target_program:
+                if identity != self.profile.target_program and (
+                        not self.profile.target_program or same_program(self.profile.target_program, identity)):
                     self.profile.target_program = identity
                     self.changed()
             except OSError as error:
@@ -804,7 +849,7 @@ class MainWindow(QMainWindow):
                     self.error(str(error))
 
     @editing_dialog(hooks=False)
-    def resize_dialog(self):
+    def resize_dialog(self, *, profile_size=None):
         if not self.native.exists(self.target):
             self.statusBar().showMessage("대상 창을 먼저 선택하세요.")
             return
@@ -819,14 +864,23 @@ class MainWindow(QMainWindow):
                 self.stop()
                 self.native.resize(target, *size)
             with managed_dialog(ResizeDialog(
-                    read_size(), self, convert_profile=self.settings.resize_convert_profile,
+                    read_size(), self, convert_profile=False if profile_size else self.settings.resize_convert_profile,
                     request_resize=request_resize, read_size=read_size)) as dialog:
+                if profile_size:
+                    if not all(1 <= value <= 16384 for value in profile_size):
+                        raise ValueError('창 크기는 1~16384px 범위여야 합니다. 프로필 좌표 변환을 사용하세요.')
+                    dialog.change_ratio('직접 입력')
+                    dialog.set_size(profile_size)
+                    dialog.convert_profile.hide()
+                    QTimer.singleShot(0, dialog, dialog.apply)
                 accepted = dialog.exec() == QDialog.DialogCode.Accepted
-                convert = dialog.convert_profile.isChecked()
-                if convert != self.settings.resize_convert_profile:
+                convert = not profile_size and dialog.convert_profile.isChecked()
+                if not profile_size and convert != self.settings.resize_convert_profile:
                     self.commit_settings(replace(self.settings, resize_convert_profile=convert))
                 if accepted:
                     self.statusBar().showMessage('창 내부 크기 변경 완료: %d × %d' % dialog.current_size)
+                    if profile_size:
+                        self.statusBar().showMessage('창 크기를 변경했습니다. 다시 시작을 눌러 주세요.')
                     if convert:
                         self.convert_dialog(reason="창 크기가 바뀌었습니다. 저장 좌표도 새 해상도에 맞출 수 있습니다.")
         except Exception as error:

@@ -208,7 +208,7 @@ class UiTests(unittest.TestCase):
         self.assertNotIn('auto_fire', asdict(settings))
         self.assertNotIn('show_realtime', asdict(settings))
         dialog = SettingsDialog(settings, self.window)
-        self.assertEqual(set(dialog.checks), {'auto_pause', 'exclusive_hook', 'return_cursor'})
+        self.assertEqual(set(dialog.checks), {'auto_pause', 'exclusive_hook', 'return_cursor', 'warn_app_mismatch'})
         dialog.checks['auto_pause'].setChecked(False)
         self.assertFalse(dialog.value().auto_pause)
         dialog.deleteLater()
@@ -304,7 +304,8 @@ class UiTests(unittest.TestCase):
             self.assertEqual(w.target, 456)
             self.assertFalse(w.armed)
             w.targets.setCurrentIndex(0)
-        self.assertEqual(Profile.read(self.saved(w.path)).target_program, {})
+        self.assertEqual(Profile.read(self.saved(w.path)).target_program, identity)
+        # Changing selection alone must not erase the comparison baseline.
 
     def test_startup_restores_profile_target(self):
         from domain import atomic_json
@@ -494,7 +495,7 @@ class UiTests(unittest.TestCase):
     def test_pause_key_works_while_paused(self):
         w = self.window
         w.target = 99
-        with patch.object(w.native, "exists", return_value=True):
+        with patch.object(w.native, "exists", return_value=True), patch.object(w.native, "window_identity", return_value={"exe": "Game.exe", "class": "Game", "title": "Game"}):
             QTest.mouseClick(w.pause_button, Qt.MouseButton.LeftButton)
             self.assertTrue(w.armed)
             w.dispatch("pause", "")
