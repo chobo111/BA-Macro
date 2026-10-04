@@ -30,7 +30,6 @@ class Device:
 class TouchTests(unittest.TestCase):
     def setUp(self):
         self.native = FakeWindows()
-        self.native.validate_context = Mock()
         self.native.point_belongs_to = Mock(return_value=True)
         self.device = Device()
         self.adapter = TouchScriptInput(self.native, lambda: self.device)
@@ -116,7 +115,9 @@ class TouchTests(unittest.TestCase):
                 self.run_script('click 10,20\n' + tail)
         self.assertEqual(self.device.events, [])
 
-    def test_selected_target_inactive_and_occluded_points_rejected(self):
+    def test_target_required_and_occluded_points_rejected(self):
+        with self.assertRaises(ValueError):
+            self.adapter.begin(0)
         self.native.active_value = False
         with self.assertRaises(ValueError):
             self.run_script('click 10,20')
@@ -302,31 +303,7 @@ class TouchTests(unittest.TestCase):
         finally:
             engine.shutdown()
 
-    def test_desktop_loop_tracks_mouse_without_window_or_physical_input(self):
-        self.native.active = Mock(side_effect=AssertionError('desktop focus checked'))
-        self.native.point_belongs_to.side_effect = AssertionError('desktop window checked')
-        self.adapter.begin(0)
-        self.runtime.held = Mock(side_effect=[True, True, False])
-        def wait(ms, command):
-            if ms == 7:
-                self.native.position = (-400, 500)
-        self.runtime.wait = wait
-        self.runtime.run(compile_script('loop\ncurve -100,20 mouse\nsleep 7\nloop_end'),
-                         replace(self.command, hwnd=0))
-        self.assertEqual([p for p, flags in self.device.events if flags & UP],
-                         [(200, 300), (-400, 500)])
-        self.assertEqual(self.native.events, [])
-        self.assertFalse(self.adapter.pressed)
-
-    def test_desktop_bare_press_outside_bounds_rejected(self):
-        self.native.position = (3000, 300)
-        self.adapter.begin(0)
-        with self.assertRaises(ScriptError):
-            self.runtime.run(compile_script('mouse_press left'), replace(self.command, hwnd=0))
-        self.assertEqual(self.device.events, [])
-
-    def test_desktop_latched_touch_heartbeat_and_display_loss_cleanup(self):
-        self.native.active = Mock(side_effect=AssertionError('desktop focus checked'))
+    def test_engine_rejects_fullscreen_script_before_sending_touch(self):
         self.native.create_touch_input = lambda: self.adapter
         reported = threading.Event()
         errors = []
@@ -335,36 +312,10 @@ class TouchTests(unittest.TestCase):
             reported.set()
         engine = Engine(self.native, lambda key: False, report)
         try:
-            engine.submit(replace(self.command, hwnd=0, script='switch -100,20'))
-            self.assertTrue(self.device.down.wait(1))
-            deadline = time.monotonic() + 1
-            while not any(flags & UPDATE for _, flags in self.device.events) and time.monotonic() < deadline:
-                time.sleep(.005)
-            self.assertTrue(any(flags & UPDATE for _, flags in self.device.events))
-            self.native.validate_context.side_effect = OSError('display disconnected')
+            engine.submit(replace(self.command, hwnd=0, script='click 10,20'))
             self.assertTrue(reported.wait(1))
-            self.assertEqual(errors, ['display disconnected'])
-            self.assertTrue(self.device.closed)
-            self.assertFalse(self.adapter.pressed)
-            self.assertEqual(engine.runtime.buttons, set())
-        finally:
-            engine.shutdown()
-
-    def test_desktop_engine_stop_releases_long_running_touch(self):
-        self.native.active = Mock(side_effect=AssertionError('desktop focus checked'))
-        self.native.create_touch_input = lambda: self.adapter
-        errors = []
-        engine = Engine(self.native, lambda key: True, errors.append)
-        try:
-            engine.submit(replace(self.command, hwnd=0, script='press -100,20\nsleep 600000'))
-            self.assertTrue(self.device.down.wait(1))
-            engine.stop()
-            deadline = time.monotonic() + 1
-            while not self.device.closed and time.monotonic() < deadline:
-                time.sleep(.005)
-            self.assertTrue(self.device.closed)
-            self.assertFalse(self.adapter.pressed)
-            self.assertEqual(self.device.events[-1], ((-100, 20), UP))
-            self.assertEqual(errors, [])
+            self.assertEqual(errors, ['스크립트를 실행하려면 앱을 선택하세요.'])
+            self.assertEqual(self.device.events, [])
+            self.assertEqual(self.native.events, [])
         finally:
             engine.shutdown()

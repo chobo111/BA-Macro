@@ -457,6 +457,9 @@ class MainWindow(QMainWindow):
             s = self.settings
             program = None
             if row.action_mode == 'script':
+                if not self.target:
+                    self.statusBar().showMessage('스크립트를 실행하려면 앱을 선택하세요.')
+                    return
                 try:
                     program = compile_script(row.script)
                 except ValueError as error:

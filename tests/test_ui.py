@@ -131,8 +131,9 @@ class UiTests(unittest.TestCase):
         w = self.window
         row = w.profile.rows[0]
         row.action_mode, row.script = 'script', 'sleep 1'
+        w.target = 123
         w.armed = True
-        with patch('app.compile_script', wraps=compile_script) as compile_once, patch.object(w.engine, 'submit', return_value=True) as submit:
+        with patch('app.compile_script', wraps=compile_script) as compile_once, patch.object(w.engine, 'submit', return_value=True) as submit, patch.object(w.native, 'active', return_value=True):
             w.dispatch('move', row.id)
         compile_once.assert_called_once_with(row.script)
         self.assertIsNotNone(submit.call_args.args[0].program)
@@ -675,8 +676,9 @@ class UiTests(unittest.TestCase):
         row = w.profile.rows[0]
         row.action_mode, row.script = 'script', 'curve 10,20 30,40'
         w.settings.drag_segment_duration_ms = 25
+        w.target = 123
         w.armed = True
-        with patch.object(w.engine, 'submit', return_value=True) as submit:
+        with patch.object(w.engine, 'submit', return_value=True) as submit, patch.object(w.native, 'active', return_value=True):
             w.dispatch('move', row.id)
             self.assertEqual(submit.call_args.args[0].drag_segment_duration_ms, 25)
         w.persist_settings()
@@ -1487,3 +1489,38 @@ class UiTests(unittest.TestCase):
         self.qt.processEvents()
         self.assertFalse(w.isMinimized())
         self.assertTrue(w.isMaximized())
+
+    def test_fullscreen_script_warns_without_submitting_or_stopping_other_actions(self):
+        w = self.window
+        w.target = 0
+        w.armed = True
+        row = w.profile.rows[0]
+        row.action_mode, row.script = 'script', 'click 10,20'
+        with patch.object(w.engine, 'submit', return_value=True) as submit, \
+             patch('app.compile_script') as compile_script, \
+             patch.object(QMessageBox, 'warning') as popup:
+            w.dispatch('move', row.id)
+            self.assertEqual(w.statusBar().currentMessage(), '스크립트를 실행하려면 앱을 선택하세요.')
+            self.assertTrue(w.armed)
+            submit.assert_not_called()
+            compile_script.assert_not_called()
+            popup.assert_not_called()
+            row.action_mode = 'move_and_click'
+            w.dispatch('move', row.id)
+            submit.assert_called_once()
+            self.assertEqual(submit.call_args.args[0].hwnd, 0)
+
+    def test_selected_app_script_waits_for_focus_then_submits(self):
+        w = self.window
+        w.target = 123
+        w.armed = True
+        row = w.profile.rows[0]
+        row.action_mode, row.script = 'script', 'click 10,20'
+        with patch.object(w.engine, 'submit', return_value=True) as submit, \
+             patch.object(w.native, 'active', return_value=False) as active:
+            w.dispatch('move', row.id)
+            submit.assert_not_called()
+            active.return_value = True
+            w.dispatch('move', row.id)
+            submit.assert_called_once()
+            self.assertEqual(submit.call_args.args[0].hwnd, 123)
