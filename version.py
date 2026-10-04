@@ -1,6 +1,12 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'BA Macro'
 RELEASES = (
+    ('0.2.10-experimental', '2026-10-04', (
+        '전체화면에서도 앱 선택 없이 독립 터치 스크립트 실행 지원',
+        '선택한 디스플레이 좌표와 실시간 mouse 위치를 반영하고 터치 영역 검사 유지',
+        '전체화면의 유지 중인 터치 갱신 및 디스플레이 변경·정지 시 입력 정리',
+        '자동 테스트 226개 통과, 실제 게임 입력 동작은 사용자 검증',
+    )),
     ('0.2.9-experimental', '2026-10-04', (
         '중복 실행 시 경고 대신 실행 중인 창을 표시하고 최소화·트레이 상태 복원',
         '프로그램 이름과 실행 바로가기를 BA Macro로 변경',

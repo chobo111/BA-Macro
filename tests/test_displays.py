@@ -74,7 +74,7 @@ class DisplayTests(TestCase):
         with self.assertRaises(ValueError):
             Settings.read({'display_id':123})
 
-    def test_coordinate_action_uses_monitor_origin_but_script_requires_target(self):
+    def test_coordinate_action_and_script_use_monitor_origin(self):
         from engine import Engine, Command
         command = Command(0, 120, 300, 'move_and_click', 'q', 0, 1)
         info = SimpleNamespace(device=LEFT.device, monitor=W.RECT(-1920,-200,0,880))
@@ -89,8 +89,8 @@ class DisplayTests(TestCase):
                 self.assertEqual(move.call_args_list[0].args, (-1800,100))
                 move.assert_called_with(-2300,50)
                 self.assertEqual(button.call_args_list[0].args, (True,))
-                with self.assertRaises(ValueError):
-                    engine.runtime.native.begin(0)
+                engine.runtime.native.begin(0)
+                self.assertEqual(engine.runtime.native.position, (-1800, 100))
             finally:
                 engine.shutdown()
 
@@ -106,3 +106,34 @@ class DisplayTests(TestCase):
             self.assertEqual(monitor_name(identity,'Generic PnP Monitor'),'PHL 279M1RV')
         with patch('displays.winreg.OpenKey',side_effect=OSError):
             self.assertEqual(monitor_name(identity,'Generic PnP Monitor'),'Generic PnP Monitor')
+
+    def test_desktop_touch_uses_selected_monitor_and_live_mouse_coordinates(self):
+        from engine import Command
+        from script_language import ScriptRuntime, compile_script
+        from touch_input import TouchScriptInput, DOWN, UP
+        from test_touch_input import Device
+        device = Device()
+        adapter = TouchScriptInput(self.native, lambda: device)
+        runtime = ScriptRuntime(adapter, lambda c: None, lambda ms, c: None, lambda k: False)
+        info = SimpleNamespace(device=LEFT.device, monitor=W.RECT(-1920,-200,0,880))
+        with patch('native.monitor_info', return_value=info), \
+             patch.object(self.native, 'cursor_screen', return_value=(-1500, 200)), \
+             patch.object(self.native, 'move', side_effect=AssertionError('physical movement')), \
+             patch.object(self.native, 'button', side_effect=AssertionError('physical click')):
+            adapter.begin(0)
+            runtime.run(compile_script('curve 120,300 mouse'), Command(0, 0, 0, 'script', 'q', 0, 1))
+        self.assertEqual([p for p, flags in device.events if flags & DOWN], [(-1800, 100)])
+        self.assertEqual([p for p, flags in device.events if flags & UP], [(-1500, 200)])
+
+    def test_desktop_touch_rejects_other_monitor_even_when_cursor_is_there(self):
+        from touch_input import TouchScriptInput
+        from test_touch_input import Device
+        device = Device()
+        adapter = TouchScriptInput(self.native, lambda: device)
+        info = SimpleNamespace(device=LEFT.device, monitor=W.RECT(-1920,-200,0,880))
+        with patch('native.monitor_info', return_value=info), \
+             patch.object(self.native, 'cursor_screen', return_value=(500, 200)):
+            adapter.begin(0)
+            with self.assertRaises(ValueError):
+                adapter.mouse_button('left', True)
+        self.assertEqual(device.events, [])

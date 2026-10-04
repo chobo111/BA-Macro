@@ -123,11 +123,11 @@ class Engine:
     def _run(self):
         while True:
             with self.condition:
-                # Only held inputs need periodic focus-loss checks. New work,
+                # Held inputs need periodic heartbeat/context checks, also on the desktop. New work,
                 # stop and shutdown all notify this condition immediately.
-                watch_focus = self.runtime.context and self.runtime.buttons
+                watch_input = bool(self.runtime.buttons)
                 self.condition.wait_for(lambda: self.closed or self.reset_requested or self.pending is not None,
-                                        timeout=.05 if watch_focus else None)
+                                        timeout=.05 if watch_input else None)
                 reset = self.reset_requested or self.closed
                 self.reset_requested = False
                 closing = self.closed

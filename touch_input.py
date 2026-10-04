@@ -167,7 +167,7 @@ class TouchScriptInput:
         self.last_frame = 0
 
     def begin(self, target):
-        if not target or not self.native.active(target):
+        if target and not self.native.active(target):
             raise ValueError('독립 터치는 활성화된 대상 창을 선택해야 사용할 수 있습니다.')
         if self.target != target:
             self.close()
@@ -185,6 +185,15 @@ class TouchScriptInput:
         return self.native.screen(target, x, y)
 
     def validate_pointer(self, target):
+        if not self.target:
+            self.native.validate_context(0)
+            left, top, right, bottom = self.native.bounds(0)
+            left, top = self.native.screen(0, left, top)
+            right, bottom = self.native.screen(0, right, bottom)
+            x, y = self.position
+            if not left <= x < right or not top <= y < bottom:
+                raise ValueError('터치 위치가 선택한 디스플레이 영역 밖에 있습니다.')
+            return
         if not self.native.active(self.target) or not self.native.point_belongs_to(self.target, *self.position):
             raise ValueError('터치 위치가 대상 창에 가려졌거나 대상 창이 비활성 상태입니다.')
 
@@ -217,7 +226,7 @@ class TouchScriptInput:
             self._send((UPDATE if self.pressed else DOWN) | INRANGE | INCONTACT)
             self.pressed = True
         elif self.pressed:
-            flags = UP if self.native.active(self.target) else UP | CANCELED
+            flags = UP if not self.target or self.native.active(self.target) else UP | CANCELED
             self._send(flags)
             self.pressed = False
 
