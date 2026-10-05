@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from domain import MODES, Profile, Row, Settings, read_json, same_program
-from engine import Engine, Command
+from engine import Engine, Command, WINDOW_SIZE_CHANGED
 from native import Windows
 from hotkeys import Hotkeys
 from script_language import compile_script
@@ -52,6 +52,7 @@ class MainWindow(QMainWindow):
         self.setMinimumHeight(340)
         self.native = Windows()
         self.session = ExecutionSession(self.native)
+        self.run_size = None
         self.dirty = False
         self.rebuilding = False
         self.script_editor = None
@@ -415,6 +416,7 @@ class MainWindow(QMainWindow):
 
     def stop(self):
         self.armed = False
+        self.run_size = None
         self.engine.stop()
         if hasattr(self, "pause_button"):
             self.update_labels()
@@ -434,6 +436,10 @@ class MainWindow(QMainWindow):
             if not self.target:
                 self.native.refresh_displays()
                 self.native.validate_context(0)
+            self.run_size = tuple(self.native.size(self.target)) if self.target else None
+            if self.run_size is not None and self.profile.resolution and self.run_size != self.profile.resolution:
+                self.on_engine_error(WINDOW_SIZE_CHANGED)
+                return
             self.rebind()
             if self.hook_enabled:
                 self.hooks.start()
@@ -442,6 +448,18 @@ class MainWindow(QMainWindow):
             return
         self.armed = True
         self.update_labels()
+
+    def check_running_size(self, size=None):
+        if self.armed and self.target and self.run_size is not None:
+            try:
+                actual = tuple(size) if size is not None else tuple(self.native.size(self.target))
+            except OSError as error:
+                self.on_engine_error(str(error))
+                return False
+            if actual != self.run_size:
+                self.on_engine_error(WINDOW_SIZE_CHANGED)
+                return False
+        return True
 
     @editing_dialog(hooks=False, pause=False)
     def confirm_start(self):
@@ -499,6 +517,8 @@ class MainWindow(QMainWindow):
         if not row:
             return
         if action == "move" and self.eligible("move"):
+            if not self.check_running_size():
+                return
             s = self.settings
             program = None
             if row.action_mode == 'script':
@@ -512,7 +532,7 @@ class MainWindow(QMainWindow):
                     return
             command = Command(self.target, row.x, row.y, row.action_mode, row.move_hk,
                               s.move_to_click_delay_ms, s.click_hold_ms, row.script, drag_segment_duration_ms=s.drag_segment_duration_ms, program=program,
-                              cursor_return_delay_ms=s.cursor_return_delay_ms, return_cursor=s.return_cursor)
+                              cursor_return_delay_ms=s.cursor_return_delay_ms, return_cursor=s.return_cursor, expected_size=self.run_size)
             if not self.engine.submit(command):
                 self.statusBar().showMessage("실행기가 종료되어 실행할 수 없습니다.")
 
@@ -632,6 +652,7 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("대상 창이 닫혔습니다. 새 창을 선택하세요.")
             if self.target:
                 w, h = self.native.size(self.target)
+                self.check_running_size((w, h))
                 self.target_info.setText(f"{w} × {h}  ·  {'활성' if self.native.active(self.target) else '대기'}")
             else:
                 self.target_info.clear()

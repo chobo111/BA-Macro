@@ -188,3 +188,23 @@ class EngineTests(unittest.TestCase):
         self.engine.stop()
         with self.assertRaises(Cancelled):
             self.engine.execute(replace(self.command, hwnd=0))
+
+    def test_resize_during_click_releases_button_and_restores_cursor(self):
+        from unittest.mock import patch
+        with patch.object(self.native, 'size', return_value=(1920,1080)) as size:
+            self.engine.submit(replace(self.command, click_hold_ms=5000, expected_size=(1920,1080)))
+            self.assertTrue(self.native.down.wait(1))
+            size.return_value = (1280,720)
+            self.wait_idle()
+        self.assertIn(('button', False), self.native.events)
+        self.assertEqual(self.native.position, (200,300))
+        self.assertEqual(sum(event == ('button',True) for event in self.native.events), 1)
+        self.assertEqual(len(self.errors), 1)
+        self.assertIn('창 크기', self.errors[0])
+        self.assertIsNone(self.engine.pending)
+
+    def test_stale_window_size_rejected_before_any_physical_input(self):
+        self.engine.submit(replace(self.command, expected_size=(1280,720)))
+        self.wait_idle()
+        self.assertEqual(self.native.events, [])
+        self.assertEqual(len(self.errors), 1)

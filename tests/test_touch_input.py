@@ -319,3 +319,29 @@ class TouchTests(unittest.TestCase):
             self.assertEqual(self.native.events, [])
         finally:
             engine.shutdown()
+
+    def test_resize_releases_running_and_latched_touch_without_ui_tick(self):
+        for source in ('press 10,20\nsleep 600000', 'switch 10,20'):
+            with self.subTest(source=source):
+                self.setUp()
+                self.native.create_touch_input = lambda: self.adapter
+                reported = threading.Event()
+                errors = []
+                def report(message):
+                    errors.append(message)
+                    reported.set()
+                engine = Engine(self.native, lambda key: True, report)
+                try:
+                    with patch.object(self.native, 'size', return_value=(1920,1080)) as size:
+                        engine.submit(replace(self.command, script=source, expected_size=(1920,1080)))
+                        self.assertTrue(self.device.down.wait(1))
+                        size.return_value = (1280,720)
+                        self.assertTrue(reported.wait(1))
+                        self.assertTrue(self.device.closed)
+                        self.assertFalse(self.adapter.pressed)
+                        self.assertEqual(engine.runtime.buttons, set())
+                        self.assertIsNone(engine.pending)
+                        self.assertIn('창 크기', errors[0])
+                        self.assertEqual(sum(bool(flags & DOWN) for _,flags in self.device.events), 1)
+                finally:
+                    engine.shutdown()

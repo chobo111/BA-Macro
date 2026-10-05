@@ -388,3 +388,55 @@ class StartChecks(unittest.TestCase):
         dialog.exec()
         self.assertFalse(dialog.confirmed())
         dialog.deleteLater()
+
+    def test_window_resize_stops_armed_state_even_with_auto_pause_disabled(self):
+        w = self.window
+        w.settings.auto_pause = False
+        w.toggle()
+        self.assertTrue(w.armed)
+        self.assertEqual(w.run_size, (1280,720))
+        self.size.return_value = (1920,1080)
+        with patch.object(w.engine, 'stop', wraps=w.engine.stop) as stop:
+            w.tick()
+        self.assertFalse(w.armed)
+        self.assertIsNone(w.run_size)
+        self.assertIn('창 크기', w.statusBar().currentMessage())
+        stop.assert_called_once()
+        self.size.return_value = (1280,720)
+        w.tick()
+        self.assertFalse(w.armed)
+        w.toggle()
+        self.assertTrue(w.armed)
+        self.assertEqual(w.run_size, (1280,720))
+
+    def test_resize_between_ui_ticks_cannot_submit_a_new_action(self):
+        w = self.window
+        w.toggle()
+        self.size.return_value = (1920,1080)
+        with patch.object(w.native, 'active', return_value=True), \
+             patch.object(w.engine, 'submit') as submit:
+            w.dispatch('move', w.profile.rows[0].id)
+        submit.assert_not_called()
+        self.assertFalse(w.armed)
+
+    def test_unchanged_size_keeps_running_and_is_attached_to_commands(self):
+        w = self.window
+        w.toggle()
+        for active in (False, True):
+            with patch.object(w.native, 'active', return_value=active), \
+                 patch.object(w.native, 'cursor', return_value=(321,432)):
+                w.tick()
+            self.assertTrue(w.armed)
+        with patch.object(w.native, 'active', return_value=True), \
+             patch.object(w.engine, 'submit', return_value=True) as submit:
+            w.dispatch('move', w.profile.rows[0].id)
+        self.assertEqual(submit.call_args.args[0].expected_size, (1280,720))
+
+    def test_unknown_profile_resolution_still_monitors_start_size(self):
+        w = self.window
+        w.profile.resolution = None
+        w.toggle()
+        self.size.return_value = (1920,1080)
+        w.tick()
+        self.assertFalse(w.armed)
+        self.assertIsNone(w.profile.resolution)

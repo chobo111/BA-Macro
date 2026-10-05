@@ -3,6 +3,12 @@ from dataclasses import dataclass
 import threading
 from script_language import compile_script, ScriptRuntime, Program
 
+WINDOW_SIZE_CHANGED = '앱 창 크기가 변경되었습니다. 해상도를 확인한 뒤 다시 시작하세요.'
+
+
+class WindowSizeChanged(RuntimeError):
+    pass
+
 
 @dataclass(frozen=True)
 class Command:
@@ -18,6 +24,7 @@ class Command:
     program: Program | None = None
     cursor_return_delay_ms: int = 50
     return_cursor: bool = True
+    expected_size: tuple[int, int] | None = None
 
 
 class Cancelled(Exception):
@@ -33,6 +40,7 @@ class Engine:
         self.busy = False
         self.closed = False
         self.reset_requested = False
+        self.input_context = None
         self.runtime = ScriptRuntime(native.create_touch_input(), self.guard, self.wait, held)
         self.worker = threading.Thread(target=self._run, name="macro-input", daemon=True)
         self.worker.start()
@@ -65,11 +73,17 @@ class Engine:
             self.condition.notify()
         self.worker.join(timeout=2)
 
+    def check_size(self, command):
+        if command.hwnd and command.expected_size is not None:
+            if tuple(self.native.size(command.hwnd)) != command.expected_size:
+                raise WindowSizeChanged(WINDOW_SIZE_CHANGED)
+
     def guard(self, command):
         if hasattr(self.native, "validate_context"):
             self.native.validate_context(command.hwnd)
         if self.cancel.is_set() or (command.hwnd and not self.native.active(command.hwnd)):
             raise Cancelled()
+        self.check_size(command)
         self.runtime.native.keep_alive()
 
     def wait(self, milliseconds, command):
@@ -119,6 +133,7 @@ class Engine:
         self.runtime.native.close()
         self.runtime.buttons.clear()
         self.runtime.latched_buttons.clear()
+        self.input_context = None
 
     def _run(self):
         while True:
@@ -142,10 +157,14 @@ class Engine:
                 if closing:
                     return
                 if c is None:
+                    if self.runtime.buttons and self.input_context is not None:
+                        self.check_size(self.input_context)
                     self.runtime.native.keep_alive()
                     continue
                 if c.mode == 'script':
                     program = c.program if c.program is not None else compile_script(c.script)
+                    self.check_size(c)
+                    self.input_context = c
                     self.runtime.native.begin(c.hwnd)
                     self.runtime.run(program, c)
                     continue
@@ -155,6 +174,8 @@ class Engine:
             except Cancelled:
                 pass
             except Exception as error:
+                if isinstance(error, WindowSizeChanged):
+                    self.stop()
                 self.close_script_input()
                 self.report(str(error))
             finally:

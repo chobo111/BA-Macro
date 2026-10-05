@@ -495,7 +495,7 @@ class UiTests(unittest.TestCase):
     def test_pause_key_works_while_paused(self):
         w = self.window
         w.target = 99
-        with patch.object(w.native, "exists", return_value=True), patch.object(w.native, "window_identity", return_value={"exe": "Game.exe", "class": "Game", "title": "Game"}):
+        with patch.object(w.native, "size", return_value=(1280,720)), patch.object(w.native, "exists", return_value=True), patch.object(w.native, "window_identity", return_value={"exe": "Game.exe", "class": "Game", "title": "Game"}):
             QTest.mouseClick(w.pause_button, Qt.MouseButton.LeftButton)
             self.assertTrue(w.armed)
             w.dispatch("pause", "")
