@@ -47,3 +47,28 @@ class ConversionTests(unittest.TestCase):
         self.assertTrue(plan_conversion(profile,(100,100),(200,200)).errors)
         with self.assertRaises(ValueError):
             plan_conversion(profile,(0,100),(200,200))
+
+    def test_empty_scripts_preserved_while_other_coordinates_convert(self):
+        for blank in ('', '  \t\n'):
+            with self.subTest(blank=blank):
+                profile = Profile([
+                    Row(x=100, y=200, action_mode='script', script=blank),
+                    Row(action_mode='script', script='curve 300,400 mouse')], (1000,1000))
+                original = profile.export()
+                plan = plan_conversion(profile, (1000,1000), (500,500))
+                self.assertEqual(plan.errors, [])
+                self.assertEqual(plan.profile.rows[0].script, blank)
+                self.assertEqual((plan.profile.rows[0].x, plan.profile.rows[0].y), (50,100))
+                self.assertEqual(plan.profile.rows[1].script, 'curve 150,200 mouse')
+                self.assertEqual(plan.script_points, 1)
+                self.assertEqual(profile.export(), original)
+
+    def test_empty_script_skip_does_not_hide_errors_or_allow_empty_execution(self):
+        from script_language import compile_script
+        with self.assertRaises(ValueError):
+            compile_script('')
+        for source in ('curve X,Y mouse', 'click 1000,10', 'key_press a'):
+            with self.subTest(source=source):
+                profile = Profile([Row(action_mode='script', script=''),
+                                   Row(action_mode='script', script=source)])
+                self.assertTrue(plan_conversion(profile, (1000,1000), (500,500)).errors)

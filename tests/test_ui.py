@@ -1525,3 +1525,26 @@ class UiTests(unittest.TestCase):
             w.dispatch('move', row.id)
             submit.assert_called_once()
             self.assertEqual(submit.call_args.args[0].hwnd, 123)
+
+    def test_conversion_with_blank_script_rows_can_be_saved(self):
+        from domain import Row
+        from conversion_dialog import ConversionDialog
+        w = self.window
+        w.profile = Profile([
+            Row(move_hk='q', action_mode='script', script='curve 1353,961 mouse'),
+            Row(move_hk='1', action_mode='script', script=''),
+            Row(move_hk='3', action_mode='script', script=''),
+            Row(move_hk='2', action_mode='script', script='')], (1920,1080))
+        self.assertTrue(w.save())
+        dialog = ConversionDialog(w.profile, w.path, (1280,720), w.save_conversion, w)
+        self.assertEqual(dialog.error.text(), '')
+        self.assertTrue(dialog.copy_button.isEnabled())
+        self.assertTrue(dialog.apply_button.isEnabled())
+        dialog.save('apply')
+        self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+        saved = Profile.read(read_json(w.path))
+        self.assertEqual(saved.resolution, (1280,720))
+        self.assertEqual(saved.rows[0].script, 'curve 902,641 mouse')
+        self.assertEqual([row.script for row in saved.rows[1:]], ['', '', ''])
+        self.assertEqual([row.move_hk for row in saved.rows[1:]], ['1', '3', '2'])
+        dialog.deleteLater()

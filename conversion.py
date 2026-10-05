@@ -36,7 +36,8 @@ def plan_conversion(profile, source, destination):
     for index, row in enumerate(plan.profile.rows, 1):
         label = f'{index}행' + (f' · {row.move_hk.upper()}' if row.move_hk else '')
         row.x, row.y = point(row.x, row.y, f'{label} · 표')
-        if not row.script.strip() and row.action_mode != 'script':
+        # Empty script rows have no script coordinates to validate or convert.
+        if not row.script.strip():
             continue
         try:
             compile_script(row.script)
