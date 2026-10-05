@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 
 from coordinate_cache import scaled_point, scaled_program
+from coordinate_transform import require_same_aspect_ratio
 from domain import Row, Settings
 from engine import Command, WINDOW_SIZE_CHANGED, WindowSizeChanged
 from script_language import compile_script
@@ -18,6 +19,8 @@ class ExecutionPlan:
     def __post_init__(self):
         if self.automatic and (not self.target or self.source_resolution is None or self.expected_size is None):
             raise ValueError('자동 변환에는 앱과 기준·실행 해상도가 필요합니다.')
+        if self.automatic:
+            require_same_aspect_ratio(self.source_resolution, self.expected_size)
 
     @property
     def coordinate_transform(self):

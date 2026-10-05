@@ -69,8 +69,8 @@ class DomainTests(unittest.TestCase):
 
     def test_conversion_is_transactional(self):
         p = Profile([Row(x=100, y=200)])
-        p.convert((1000, 1000), (2000, 500))
-        self.assertEqual((p.rows[0].x, p.rows[0].y), (200, 100))
+        p.convert((1000, 1000), (2000, 2000))
+        self.assertEqual((p.rows[0].x, p.rows[0].y), (200, 400))
         before = p.export()
         with self.assertRaises(ValueError):
             p.convert((0, 1), (1, 1))

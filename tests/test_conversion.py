@@ -31,10 +31,10 @@ class ConversionTests(unittest.TestCase):
         profile.rows[1].script = 'curve X,Y mouse'
         self.assertTrue(plan_conversion(profile,(1000,1000),(500,500)).errors)
 
-    def test_edge_rounding_and_aspect_warning(self):
-        plan = plan_conversion(Profile([Row(x=999,y=999)]),(1000,1000),(3,2))
-        self.assertEqual((plan.profile.rows[0].x,plan.profile.rows[0].y),(2,1))
-        self.assertTrue(plan.warnings)
+    def test_edge_rounding_preserves_aspect(self):
+        plan = plan_conversion(Profile([Row(x=999,y=999)]),(1000,1000),(3,3))
+        self.assertEqual((plan.profile.rows[0].x,plan.profile.rows[0].y),(2,2))
+        self.assertFalse(plan.warnings)
         self.assertFalse(plan.errors)
 
     def test_dormant_scripts_are_converted_and_mouse_unchanged(self):
@@ -72,3 +72,15 @@ class ConversionTests(unittest.TestCase):
                 profile = Profile([Row(action_mode='script', script=''),
                                    Row(action_mode='script', script=source)])
                 self.assertTrue(plan_conversion(profile, (1000,1000), (500,500)).errors)
+
+    def test_different_aspect_is_rejected_without_mutating_original(self):
+        from coordinate_transform import AspectRatioMismatch
+        profile = Profile([Row(x=100,y=200,script='curve 10,20 mouse')], (1920,1080))
+        before = profile.export()
+        for destination in ((1280,960),(1920,1081)):
+            with self.subTest(destination=destination):
+                with self.assertRaises(AspectRatioMismatch):
+                    plan_conversion(profile, profile.resolution, destination)
+                with self.assertRaises(AspectRatioMismatch):
+                    profile.convert(profile.resolution, destination)
+                self.assertEqual(profile.export(), before)

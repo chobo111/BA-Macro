@@ -2,7 +2,7 @@
 from dataclasses import replace
 from functools import lru_cache
 
-from coordinate_transform import COORD_COMMANDS, transform_point
+from coordinate_transform import COORD_COMMANDS, transform_point, require_same_aspect_ratio
 from script_language import Program, compile_script
 
 
@@ -13,6 +13,7 @@ def scaled_point(point, source, destination):
 
 @lru_cache(maxsize=128)
 def scaled_program(script, source, destination):
+    require_same_aspect_ratio(source, destination)
     original = compile_script(script)
 
     def scale_instructions(items):

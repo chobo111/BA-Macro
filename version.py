@@ -1,6 +1,12 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'BA Macro'
 RELEASES = (
+    ('0.2.22-experimental', '2026-10-06', (
+        '기준 창 크기와 비율이 다르면 자동·수동 좌표 변환 차단',
+        '시작 화면의 변환 버튼 비활성화 및 기준 비율로 창 크기 변경 안내',
+        '같은 비율의 변환 유지, 1px 차이로 비율이 달라진 경우도 차단',
+        '자동 테스트 297개 통과, 실제 게임 입력은 사용자 검증',
+    )),
     ('0.2.21-experimental', '2026-10-06', (
         '앱 정보 저장 시 자동 변환 선택이 지워지는 문제 수정',
         '특정 디스플레이의 해상도 불일치 시 프로필 변환 경로 복구',

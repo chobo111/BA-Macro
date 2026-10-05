@@ -3,7 +3,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 import re
 
-from coordinate_transform import COORD_COMMANDS, CoordinateOutOfBounds, transform_point
+from coordinate_transform import COORD_COMMANDS, CoordinateOutOfBounds, transform_point, require_same_aspect_ratio
 from domain import bounded_int
 from script_language import compile_script
 
@@ -21,9 +21,8 @@ class ConversionPlan:
 
 def plan_conversion(profile, source, destination):
     sw, sh, dw, dh = [bounded_int(v, 1, 100000, '해상도') for v in (*source, *destination)]
+    require_same_aspect_ratio((sw, sh), (dw, dh))
     plan = ConversionPlan(deepcopy(profile), [], [], [])
-    if sw * dh != sh * dw:
-        plan.warnings.append('화면 비율이 다릅니다. X/Y를 각각 비례 변환하므로 게임 UI 배치나 검은 여백에 따라 수동 조정이 필요합니다.')
 
     def point(x, y, location):
         try:

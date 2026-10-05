@@ -44,7 +44,7 @@ class Coordinates(unittest.TestCase):
             '  curve mouse 999,599\r\n'
             '  click 0,0 mouse\r\n'
             'loop_end\r\n')
-        source, destination = (1000, 600), (3, 2)
+        source, destination = (1000, 600), (5, 3)
         profile = Profile([Row(x=999, y=599, action_mode='script', script=script)], source)
         original = profile.export()
         plan = plan_conversion(profile, source, destination)
@@ -52,7 +52,7 @@ class Coordinates(unittest.TestCase):
         converted = plan.profile.rows[0]
         self.assertEqual((converted.x, converted.y), scaled_point((999, 599), source, destination))
         self.assertEqual(compile_script(converted.script), scaled_program(script, source, destination))
-        self.assertIn('    CuRvE 2 , 1 mouse 0,0 // keep 999,599\r\n', converted.script)
+        self.assertIn('    CuRvE 4 , 2 mouse 0,0 // keep 999,599\r\n', converted.script)
         self.assertEqual(profile.export(), original)
 
     def test_file_and_runtime_conversion_match_rounding_and_edges(self):
@@ -84,3 +84,17 @@ class Coordinates(unittest.TestCase):
                     scaled_point(point, (100, 60), (200, 120))
                 with self.assertRaisesRegex(ValueError, '^원본 좌표가 프로필 기준 해상도 밖에 있습니다.$'):
                     scaled_program(profile.rows[0].script, (100, 60), (200, 120))
+
+    def test_aspect_gate_covers_points_scripts_without_points_and_start_plan(self):
+        from coordinate_transform import AspectRatioMismatch
+        from execution_plan import ExecutionPlan
+        source, destination = (1920,1080), (1280,960)
+        with self.assertRaises(AspectRatioMismatch):
+            scaled_point((100,200), source, destination)
+        for script in ('click 100,200','click mouse','sleep 5',''):
+            with self.subTest(script=script), self.assertRaises(AspectRatioMismatch):
+                scaled_program(script, source, destination)
+        with self.assertRaises(AspectRatioMismatch):
+            ExecutionPlan(123, source, destination, automatic=True)
+        self.assertEqual(scaled_point((960,540), source, (1280,720)), (640,360))
+        self.assertEqual(scaled_point((640,480), (1280,960), (800,600)), (400,300))

@@ -798,8 +798,12 @@ class UiTests(unittest.TestCase):
         dialog.destination.mode.setCurrentText('4:3')
         dialog.refresh()
         self.assertEqual(dialog.destination.value(),(640,480))
+        self.assertFalse(dialog.copy_button.isEnabled())
+        self.assertFalse(dialog.apply_button.isEnabled())
+        self.assertIn('비율',dialog.error.text())
+        dialog.destination.mode.setCurrentText('16:9')
+        dialog.refresh()
         self.assertTrue(dialog.copy_button.isEnabled())
-        self.assertIn('비율',dialog.notice.text())
         dialog.profile.rows[0].x=1920
         dialog.refresh()
         self.assertFalse(dialog.copy_button.isEnabled())
@@ -1578,3 +1582,27 @@ class UiTests(unittest.TestCase):
         w.set_value(w.profile.rows[0].id, 'action_mode', 'script')
         self.qt.processEvents()
         self.assertEqual(w.table.cellWidget(1,1).size(), before[-1])
+
+    def test_ratio_change_cannot_save_stale_conversion_plan(self):
+        from conversion_dialog import ConversionDialog
+        from unittest.mock import Mock
+        w = self.window
+        w.profile.resolution = (1920,1080)
+        before = w.profile.export()
+        saved = Mock(return_value=True)
+        dialog = ConversionDialog(w.profile,w.path,(1280,720),saved,w)
+        self.assertTrue(dialog.copy_button.isEnabled())
+        dialog.destination.set_value((1280,960))
+        self.assertFalse(dialog.copy_button.isEnabled())
+        for mode in ('copy','apply'):
+            dialog.save(mode)
+        saved.assert_not_called()
+        self.assertIsNone(dialog.plan)
+        self.assertEqual(w.profile.export(),before)
+        self.assertIn('16:9',dialog.error.text())
+        self.assertIn('4:3',dialog.error.text())
+        dialog.destination.set_value((1280,720))
+        dialog.refresh()
+        self.assertTrue(dialog.apply_button.isEnabled())
+        dialog.reject()
+        dialog.deleteLater()

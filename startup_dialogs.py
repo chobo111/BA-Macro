@@ -1,4 +1,5 @@
 """Explicit start decisions; input stays stopped while these dialogs are open."""
+from coordinate_transform import same_aspect_ratio, AspectRatioMismatch
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QCheckBox
 
@@ -41,10 +42,16 @@ class SizeMismatchDialog(QMessageBox):
                     '창 크기 변경 후에는 다시 시작을 눌러 주세요.' if can_resize else
                     '프로필 좌표를 선택한 디스플레이 크기로 변환할 수 있습니다.\n'
                     '변환을 저장한 후 다시 시작을 눌러 주세요.')
-        self.setInformativeText('프로필: %d × %d\n현재: %d × %d\n\n%s' % (*saved, *current, guidance))
+        compatible = same_aspect_ratio(saved, current)
+        if not compatible:
+            guidance = str(AspectRatioMismatch(saved, current))
+            guidance += ('\n창 크기 변경을 눌러 기준 창 크기로 맞춘 뒤 다시 시작하세요.' if can_resize else
+                         '\n같은 비율의 디스플레이를 선택하거나 앱을 선택한 뒤 창 크기를 맞춰 주세요.')
+        self.setInformativeText('기준 창 크기: %d × %d\n현재 크기: %d × %d\n\n%s' % (*saved, *current, guidance))
         self.resize_button = self.addButton('창 크기 변경', QMessageBox.ButtonRole.ActionRole)
         self.resize_button.setEnabled(can_resize and all(1 <= v <= 16384 for v in saved))
         self.convert_button = self.addButton('자동 변환으로 시작' if can_resize else '프로필 좌표 변환', QMessageBox.ButtonRole.ActionRole)
+        self.convert_button.setEnabled(compatible)
         self.cancel_button = self.addButton('취소', QMessageBox.ButtonRole.RejectRole)
         self.setDefaultButton(self.cancel_button)
         self.setEscapeButton(self.cancel_button)
