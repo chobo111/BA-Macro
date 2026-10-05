@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QSystemTrayIcon, QMenu, QGroupBox, QSizePolicy, QFrame,
 )
 
-from domain import MODES, Profile, Row, Settings, read_json, same_program
+from domain import MODES, Profile, Row, Settings, read_json, same_program, WindowSizeUnavailable
 from engine import Engine, Command, WINDOW_SIZE_CHANGED
 from native import Windows
 from hotkeys import Hotkeys
@@ -443,6 +443,10 @@ class MainWindow(QMainWindow):
             self.rebind()
             if self.hook_enabled:
                 self.hooks.start()
+        except WindowSizeUnavailable as error:
+            self.stop()
+            self.statusBar().showMessage(str(error))
+            return
         except Exception as error:
             self.error(str(error))
             return
@@ -453,6 +457,8 @@ class MainWindow(QMainWindow):
         if self.armed and self.target and self.run_size is not None:
             try:
                 actual = tuple(size) if size is not None else tuple(self.native.size(self.target))
+            except WindowSizeUnavailable:
+                return False
             except OSError as error:
                 self.on_engine_error(str(error))
                 return False
@@ -659,6 +665,10 @@ class MainWindow(QMainWindow):
             coordinate_target = self.script_editor.target if self.script_editor is not None else self.target
             x, y = self.native.cursor(coordinate_target or None)
             self.cursor_label.setText(f"{x:>5}, {y:>5}")
+        except WindowSizeUnavailable:
+            known = '%d × %d · ' % self.run_size if self.run_size is not None else ''
+            self.target_info.setText(known + '최소화 / 복원 중 · 대기')
+            self.cursor_label.setText('— , —')
         except OSError as error:
             if not self.target and self.native.display_id:
                 if self.armed:

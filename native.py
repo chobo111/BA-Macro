@@ -2,7 +2,7 @@
 import ntpath
 import ctypes as C
 from ctypes import wintypes as W
-from domain import target_identity, same_program
+from domain import target_identity, same_program, WindowSizeUnavailable
 from displays import enumerate_displays, monitor_info
 
 U = C.WinDLL("user32", use_last_error=True)
@@ -263,8 +263,16 @@ class Windows:
         if not hwnd:
             display = self.selected_display()
             return (display.width, display.height) if display else (metrics(78), metrics(79))
+        if minimized(hwnd):
+            raise WindowSizeUnavailable()
         rect = W.RECT()
-        check(get_rect(hwnd, C.byref(rect)))
+        result = get_rect(hwnd, C.byref(rect))
+        # Minimize/restore may race the query, and Unity can report an empty client area.
+        if minimized(hwnd):
+            raise WindowSizeUnavailable()
+        check(result)
+        if rect.right <= 0 or rect.bottom <= 0:
+            raise WindowSizeUnavailable()
         return rect.right, rect.bottom
 
     def bounds(self, hwnd):

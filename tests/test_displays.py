@@ -106,3 +106,31 @@ class DisplayTests(TestCase):
             self.assertEqual(monitor_name(identity,'Generic PnP Monitor'),'PHL 279M1RV')
         with patch('displays.winreg.OpenKey',side_effect=OSError):
             self.assertEqual(monitor_name(identity,'Generic PnP Monitor'),'Generic PnP Monitor')
+
+    def test_minimized_window_has_no_usable_size_and_does_not_read_client_rect(self):
+        from domain import WindowSizeUnavailable
+        with patch('native.minimized', return_value=True), patch('native.get_rect') as query:
+            with self.assertRaises(WindowSizeUnavailable):
+                self.native.size(99)
+            query.assert_not_called()
+
+    def test_minimize_during_client_query_is_not_a_zero_resolution(self):
+        from domain import WindowSizeUnavailable
+        with patch('native.minimized', side_effect=[False, True]), patch('native.get_rect', return_value=True):
+            with self.assertRaises(WindowSizeUnavailable):
+                self.native.size(99)
+
+    def test_empty_restoring_client_rect_is_rejected_then_actual_size_is_read(self):
+        from domain import WindowSizeUnavailable
+        for size in ((0,0), (1280,0), (0,720), (1280,720)):
+            def fill(hwnd, pointer):
+                rect = C.cast(pointer,C.POINTER(W.RECT)).contents
+                rect.right, rect.bottom = size
+                return True
+            with self.subTest(size=size), patch('native.minimized', return_value=False), \
+                 patch('native.get_rect', side_effect=fill):
+                if 0 in size:
+                    with self.assertRaises(WindowSizeUnavailable):
+                        self.native.size(99)
+                else:
+                    self.assertEqual(self.native.size(99), size)

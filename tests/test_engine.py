@@ -208,3 +208,15 @@ class EngineTests(unittest.TestCase):
         self.wait_idle()
         self.assertEqual(self.native.events, [])
         self.assertEqual(len(self.errors), 1)
+
+    def test_minimize_during_click_releases_without_resize_error(self):
+        from domain import WindowSizeUnavailable
+        from unittest.mock import patch
+        with patch.object(self.native, 'size', return_value=(1920,1080)) as size:
+            self.engine.submit(replace(self.command, click_hold_ms=5000, expected_size=(1920,1080)))
+            self.assertTrue(self.native.down.wait(1))
+            size.side_effect = WindowSizeUnavailable()
+            self.wait_idle()
+        self.assertIn(('button', False), self.native.events)
+        self.assertEqual(self.native.position, (200,300))
+        self.assertEqual(self.errors, [])

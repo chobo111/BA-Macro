@@ -16,6 +16,12 @@ MODES = {
 }
 
 
+class WindowSizeUnavailable(OSError):
+    """A minimized/restoring window has no usable client-size sample yet."""
+    def __init__(self):
+        super().__init__('앱이 최소화되었거나 복원 중입니다. 창을 복원한 뒤 다시 시도하세요.')
+
+
 def target_identity(data):
     """Validate the current filename-based target identity."""
     if not data:

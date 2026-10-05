@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 import threading
 from script_language import compile_script, ScriptRuntime, Program
+from domain import WindowSizeUnavailable
 
 WINDOW_SIZE_CHANGED = '앱 창 크기가 변경되었습니다. 해상도를 확인한 뒤 다시 시작하세요.'
 
@@ -173,6 +174,9 @@ class Engine:
                 self.execute(c)
             except Cancelled:
                 pass
+            except WindowSizeUnavailable:
+                # Cancel the current contact without disarming the app on minimization.
+                self.close_script_input()
             except Exception as error:
                 if isinstance(error, WindowSizeChanged):
                     self.stop()

@@ -440,3 +440,56 @@ class StartChecks(unittest.TestCase):
         w.tick()
         self.assertFalse(w.armed)
         self.assertIsNone(w.profile.resolution)
+
+    def test_minimize_preserves_start_size_and_same_size_restore_stays_armed(self):
+        from domain import WindowSizeUnavailable
+        w = self.window
+        w.toggle()
+        self.size.side_effect = WindowSizeUnavailable()
+        w.tick()
+        self.assertTrue(w.armed)
+        self.assertEqual(w.run_size, (1280,720))
+        self.assertIn('대기', w.target_info.text())
+        self.assertNotIn('0 × 0', w.target_info.text())
+        self.size.side_effect = None
+        w.tick()
+        self.assertTrue(w.armed)
+        self.assertNotIn('최소화', w.target_info.text())
+        self.assertTrue(w.check_running_size())
+
+    def test_restore_to_different_size_stops_after_minimized_wait(self):
+        from domain import WindowSizeUnavailable
+        w = self.window
+        w.toggle()
+        self.size.side_effect = WindowSizeUnavailable()
+        w.tick()
+        self.assertTrue(w.armed)
+        self.size.side_effect = None
+        self.size.return_value = (1920,1080)
+        w.tick()
+        self.assertFalse(w.armed)
+        self.assertIn('창 크기', w.statusBar().currentMessage())
+
+    def test_start_while_minimized_does_not_record_zero_or_show_resolution_warning(self):
+        from domain import WindowSizeUnavailable
+        for resolution in ((1280,720), None):
+            with self.subTest(resolution=resolution), patch('app.SizeMismatchDialog') as prompt:
+                self.window.profile.resolution = resolution
+                self.size.side_effect = WindowSizeUnavailable()
+                self.window.toggle()
+                prompt.assert_not_called()
+                self.assertFalse(self.window.armed)
+                self.assertIsNone(self.window.run_size)
+                self.assertEqual(self.window.profile.resolution, resolution)
+                self.assertIn('복원', self.window.statusBar().currentMessage())
+
+    def test_transient_unavailable_size_blocks_dispatch_without_disarming(self):
+        from domain import WindowSizeUnavailable
+        w = self.window
+        w.toggle()
+        self.size.side_effect = WindowSizeUnavailable()
+        with patch.object(w.native, 'active', return_value=True), patch.object(w.engine, 'submit') as submit:
+            w.dispatch('move', w.profile.rows[0].id)
+        submit.assert_not_called()
+        self.assertTrue(w.armed)
+        self.assertEqual(w.run_size, (1280,720))

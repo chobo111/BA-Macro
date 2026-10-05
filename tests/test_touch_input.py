@@ -345,3 +345,26 @@ class TouchTests(unittest.TestCase):
                         self.assertEqual(sum(bool(flags & DOWN) for _,flags in self.device.events), 1)
                 finally:
                     engine.shutdown()
+
+    def test_unavailable_window_size_releases_running_and_latched_touch_without_error(self):
+        from domain import WindowSizeUnavailable
+        for source in ('press 10,20\nsleep 600000', 'switch 10,20'):
+            with self.subTest(source=source):
+                self.setUp()
+                self.native.create_touch_input = lambda: self.adapter
+                errors = []
+                engine = Engine(self.native, lambda key: True, errors.append)
+                try:
+                    with patch.object(self.native, 'size', return_value=(1920,1080)) as size:
+                        engine.submit(replace(self.command, script=source, expected_size=(1920,1080)))
+                        self.assertTrue(self.device.down.wait(1))
+                        size.side_effect = WindowSizeUnavailable()
+                        deadline = time.monotonic() + 1
+                        while not self.device.closed and time.monotonic() < deadline:
+                            time.sleep(.005)
+                        self.assertTrue(self.device.closed)
+                        self.assertFalse(self.adapter.pressed)
+                        self.assertEqual(engine.runtime.buttons, set())
+                        self.assertEqual(errors, [])
+                finally:
+                    engine.shutdown()
