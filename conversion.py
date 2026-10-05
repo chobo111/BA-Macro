@@ -3,10 +3,10 @@ from copy import deepcopy
 from dataclasses import dataclass
 import re
 
+from coordinate_transform import COORD_COMMANDS, CoordinateOutOfBounds, transform_point
 from domain import bounded_int
 from script_language import compile_script
 
-COORD_COMMANDS = {'click', 'move', 'press', 'release', 'switch', 'curve'}
 POINT = re.compile(r'(-?\d+)(\s*,\s*)(-?\d+)')
 
 
@@ -26,10 +26,11 @@ def plan_conversion(profile, source, destination):
         plan.warnings.append('화면 비율이 다릅니다. X/Y를 각각 비례 변환하므로 게임 UI 배치나 검은 여백에 따라 수동 조정이 필요합니다.')
 
     def point(x, y, location):
-        if not (0 <= x < sw and 0 <= y < sh):
+        try:
+            new = transform_point((x, y), (sw, sh), (dw, dh))
+        except CoordinateOutOfBounds:
             plan.errors.append(f'{location}: {x}, {y} — 원본 해상도 범위 밖입니다.')
             return x, y
-        new = min(dw - 1, round(x * dw / sw)), min(dh - 1, round(y * dh / sh))
         plan.changes.append((location, (x, y), new))
         return new
 

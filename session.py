@@ -12,6 +12,25 @@ class ExecutionSession:
         self.editor_open = False
         self.closing = False
         self.target = 0
+        self.plan = None
+
+    @property
+    def run_size(self):
+        return self.plan.expected_size if self.plan is not None else None
+
+    @property
+    def coordinate_transform(self):
+        return self.plan.coordinate_transform if self.plan is not None else None
+
+    def start(self, plan):
+        if plan.target != self.target:
+            raise ValueError('선택한 앱이 변경되었습니다. 다시 시작하세요.')
+        self.plan = plan
+        self.armed = True
+
+    def stop(self):
+        self.armed = False
+        self.plan = None
 
     def eligible(self, action, auto_pause):
         if self.closing:

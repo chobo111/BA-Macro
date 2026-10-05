@@ -14,13 +14,13 @@ from PySide6.QtWidgets import (
 )
 
 from domain import MODES, Profile, Row, Settings, read_json, same_program, WindowSizeUnavailable
-from engine import Engine, Command, WINDOW_SIZE_CHANGED
+from engine import Engine
 from native import Windows
 from hotkeys import Hotkeys
-from coordinate_cache import scaled_point, scaled_program
-from script_language import compile_script
+from execution_plan import ExecutionPlan
 from script_editor import ScriptEditor
 from persistence import ProfileStore
+from profile_saves import ProfileSaves
 from conversion_dialog import ConversionDialog
 from version import APP_NAME, VERSION, RELEASES
 from session import ExecutionSession, editing_dialog
@@ -45,6 +45,9 @@ class MainWindow(QMainWindow):
     closing = property(lambda self: self.session.closing, lambda self, value: setattr(self.session, "closing", value))
     target = property(lambda self: self.session.target, lambda self, value: setattr(self.session, "target", value))
 
+    run_size = property(lambda self: self.session.run_size)
+    coordinate_transform = property(lambda self: self.session.coordinate_transform)
+
     def __init__(self, data_dir=None, hook_enabled=True):
         super().__init__()
         self.setWindowTitle(APP_NAME)
@@ -53,8 +56,6 @@ class MainWindow(QMainWindow):
         self.setMinimumHeight(340)
         self.native = Windows()
         self.session = ExecutionSession(self.native)
-        self.run_size = None
-        self.coordinate_transform = None
         self.dirty = False
         self.rebuilding = False
         self.script_editor = None
@@ -63,8 +64,7 @@ class MainWindow(QMainWindow):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.store = ProfileStore(self.data_dir)
         self.settings_path = self.store.settings_path
-        self.save_revision = 0
-        self.pending_saves = {}
+        self.profile_saves = ProfileSaves()
         self.settings_error = ""
         self.settings = Settings()
         self.profile = Profile.default()
@@ -423,9 +423,7 @@ class MainWindow(QMainWindow):
             self.stop()
 
     def stop(self):
-        self.armed = False
-        self.run_size = None
-        self.coordinate_transform = None
+        self.session.stop()
         self.engine.stop()
         if hasattr(self, "pause_button"):
             self.update_labels()
@@ -439,20 +437,19 @@ class MainWindow(QMainWindow):
         if self.target and not self.native.exists(self.target):
             self.statusBar().showMessage("먼저 대상 창을 선택하세요.")
             return
-        self.coordinate_transform = None
+        self.session.stop()
         try:
-            if not self.confirm_start():
+            plan = self.confirm_start()
+            if plan is None:
                 return
             if not self.target:
                 self.native.refresh_displays()
                 self.native.validate_context(0)
-            self.run_size = tuple(self.native.size(self.target)) if self.target else None
-            if self.run_size is not None and self.profile.resolution and self.run_size != self.profile.resolution and self.coordinate_transform != (self.profile.resolution, self.run_size):
-                self.on_engine_error(WINDOW_SIZE_CHANGED)
-                return
+            plan.check_context(self.native, self.target, self.profile.resolution)
             self.rebind()
             if self.hook_enabled:
                 self.hooks.start()
+            self.session.start(plan)
         except WindowSizeUnavailable as error:
             self.stop()
             self.statusBar().showMessage(str(error))
@@ -460,68 +457,81 @@ class MainWindow(QMainWindow):
         except Exception as error:
             self.error(str(error))
             return
-        self.armed = True
         self.update_labels()
 
     def check_running_size(self, size=None):
-        if self.armed and self.target and self.run_size is not None:
+        if self.armed and self.session.plan is not None:
             try:
-                actual = tuple(size) if size is not None else tuple(self.native.size(self.target))
+                self.session.plan.check_context(self.native, self.target, self.profile.resolution, size=size)
             except WindowSizeUnavailable:
                 return False
-            except OSError as error:
+            except (OSError, ValueError, RuntimeError) as error:
                 self.on_engine_error(str(error))
-                return False
-            if actual != self.run_size:
-                self.on_engine_error(WINDOW_SIZE_CHANGED)
                 return False
         return True
 
     @editing_dialog(hooks=False, pause=False)
     def confirm_start(self):
-        target = self.target
+        target, profile, path = self.target, self.profile, self.path
+        display_id = self.native.display_id
+
+        def selection_valid():
+            if target != self.target or (target and not self.native.exists(target)):
+                self.statusBar().showMessage('선택한 앱이 변경되거나 닫혔습니다. 다시 선택하세요.')
+                return False
+            if self.profile is not profile or self.path != path or (not target and self.native.display_id != display_id):
+                self.statusBar().showMessage('프로필 또는 디스플레이가 변경되었습니다. 다시 시작하세요.')
+                return False
+            return True
+
+        resolution = self.profile.resolution
+        automatic = False
         saved = dict(self.profile.target_program)
         current = self.native.window_identity(target) if target else {}
         if saved and not same_program(saved, current) and self.settings.warn_app_mismatch:
             with managed_dialog(AppMismatchDialog(saved, current, self)) as dialog:
                 dialog.exec()
                 if not dialog.confirmed():
-                    return False
+                    return None
                 if dialog.skip_warning.isChecked():
                     self.commit_settings(replace(self.settings, warn_app_mismatch=False))
-        if target != self.target or (target and not self.native.exists(target)):
-            self.statusBar().showMessage('선택한 앱이 변경되거나 닫혔습니다. 다시 선택하세요.')
-            return False
-        if self.profile.resolution and (target or self.native.display_id):
-            current_size = self.native.size(target)
-            if tuple(current_size) != self.profile.resolution:
+        if not selection_valid():
+            return None
+        current_size = tuple(self.native.size(target)) if target or self.native.display_id else None
+        if resolution and current_size is not None:
+            if current_size != resolution:
                 with managed_dialog(SizeMismatchDialog(
-                        self.profile.resolution, current_size, self, can_resize=bool(target))) as dialog:
+                        resolution, current_size, self, can_resize=bool(target))) as dialog:
                     dialog.exec()
                     choice = dialog.choice()
-                if target != self.target or (target and not self.native.exists(target)):
-                    self.statusBar().showMessage('선택한 앱이 변경되거나 닫혔습니다. 다시 선택하세요.')
-                    return False
+                if not selection_valid():
+                    return None
                 if choice == 'resize':
-                    self.resize_dialog(profile_size=self.profile.resolution)
-                    return False
+                    self.resize_dialog(profile_size=resolution)
+                    return None
                 elif choice == 'auto' and target:
                     if tuple(self.native.size(target)) != tuple(current_size):
                         self.statusBar().showMessage('앱 크기가 변경되었습니다. 다시 시작하세요.')
-                        return False
-                    self.coordinate_transform = (self.profile.resolution, tuple(current_size))
+                        return None
+                    automatic = True
+                elif choice == 'convert' and not target:
+                    self.convert_dialog(reason='프로필 좌표를 선택한 디스플레이 크기로 변환합니다. 저장 후 다시 시작하세요.')
+                    return None
                 else:
-                    return False
+                    return None
         if target:
             latest = self.native.window_identity(target)
             if not same_program(current, latest):
                 self.statusBar().showMessage('선택한 앱이 변경되었습니다. 다시 선택하세요.')
-                return False
+                return None
             current = latest
+        plan = ExecutionPlan(target, resolution, current_size if target else None,
+                             automatic=automatic, display_id=display_id)
+        plan.check_context(self.native, self.target, self.profile.resolution)
         if current != self.profile.target_program:
             self.profile.target_program = current
             self.changed()
-        return True
+        return plan
 
     def dispatch(self, action, rid):
         if not self.eligible(action):
@@ -540,28 +550,17 @@ class MainWindow(QMainWindow):
         if action == "move" and self.eligible("move"):
             if not self.check_running_size():
                 return
-            s = self.settings
-            program = None
-            x, y = row.x, row.y
-            transform = self.coordinate_transform
-            if row.action_mode == 'script':
-                if not self.target:
-                    self.statusBar().showMessage('스크립트를 실행하려면 앱을 선택하세요.')
-                    return
-                try:
-                    program = scaled_program(row.script, *transform) if transform else compile_script(row.script)
-                except ValueError as error:
-                    self.on_engine_error(str(error))
-                    return
-            elif transform:
-                try:
-                    x, y = scaled_point((x, y), *transform)
-                except ValueError as error:
-                    self.on_engine_error(str(error))
-                    return
-            command = Command(self.target, x, y, row.action_mode, row.move_hk,
-                              s.move_to_click_delay_ms, s.click_hold_ms, row.script, drag_segment_duration_ms=s.drag_segment_duration_ms, program=program,
-                              cursor_return_delay_ms=s.cursor_return_delay_ms, return_cursor=s.return_cursor, expected_size=self.run_size)
+            if row.action_mode == 'script' and not self.target:
+                self.statusBar().showMessage('스크립트를 실행하려면 앱을 선택하세요.')
+                return
+            plan = self.session.plan
+            if plan is None:
+                return
+            try:
+                command = plan.command(row, self.settings)
+            except ValueError as error:
+                self.on_engine_error(str(error))
+                return
             if not self.engine.submit(command):
                 self.statusBar().showMessage("실행기가 종료되어 실행할 수 없습니다.")
 
@@ -840,10 +839,9 @@ class MainWindow(QMainWindow):
                 return self.save_as()
         try:
             self.profile.validate((self.settings.capture_hk, self.settings.pause_hk))
-            self.save_revision += 1
-            revision = self.save_revision
+            revision = self.profile_saves.begin()
             future = self.store.save(self.path, self.profile.export(), asdict(self.settings), coalesce=automatic)
-            self.pending_saves[revision] = (self.path, future)
+            self.profile_saves.register(revision, self.path, future)
             self.dirty = True
             self.update_labels()
             if automatic:
@@ -859,8 +857,7 @@ class MainWindow(QMainWindow):
             return False
 
     def save_completed(self, revision, result):
-        pending = self.pending_saves.pop(revision, None)
-        if not pending or revision != self.save_revision or pending[0] != self.path:
+        if not self.profile_saves.complete(revision, self.path):
             return
         self.dirty = not result.profile_saved
         self.settings_error = result.error if result.profile_saved else ''
@@ -875,7 +872,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f'저장 완료: {self.path}')
 
     def flush_pending_saves(self):
-        for revision, (_, future) in list(self.pending_saves.items()):
+        for revision, future in self.profile_saves.pending():
             self.save_completed(revision, future.result())
 
     @editing_dialog(hooks=False)

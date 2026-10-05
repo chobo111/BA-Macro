@@ -208,9 +208,10 @@ class StartChecks(unittest.TestCase):
             dialog = SizeMismatchDialog((1280,720), (1920,1080), self.window, can_resize=can_resize)
             self.assertEqual(dialog.resize_button.isEnabled(), can_resize)
             self.assertIs(dialog.defaultButton(), dialog.cancel_button)
-            QTimer.singleShot(0, (dialog.convert_button if can_resize else dialog.cancel_button).click)
+            self.assertTrue(dialog.convert_button.isEnabled())
+            QTimer.singleShot(0, dialog.convert_button.click)
             dialog.exec()
-            self.assertEqual(dialog.choice(), 'auto' if can_resize else 'cancel')
+            self.assertEqual(dialog.choice(), 'auto' if can_resize else 'convert')
             dialog.deleteLater()
 
     def test_warning_preference_validation_and_settings_restore(self):
@@ -516,3 +517,121 @@ class StartChecks(unittest.TestCase):
         self.assertFalse(w.check_running_size())
         self.assertFalse(w.armed)
         self.assertIsNone(w.coordinate_transform)
+
+    def test_auto_conversion_survives_program_metadata_save(self):
+        w = self.window
+        row = w.profile.rows[0]
+        row.x, row.y = 640, 360
+        self.size.return_value = (1920, 1080)
+        for current in ({**GAME, 'title': 'Game updated title'}, OTHER):
+            for pause in (True, False):
+                with self.subTest(current=current, auto_pause=pause):
+                    w.stop()
+                    w.profile.target_program = dict(GAME)
+                    w.settings.auto_pause = pause
+                    self.identity.return_value = current
+                    with patch('app.AppMismatchDialog') as app_prompt, patch('app.SizeMismatchDialog') as size_prompt:
+                        app_prompt.return_value.confirmed.return_value = True
+                        app_prompt.return_value.skip_warning.isChecked.return_value = False
+                        size_prompt.return_value.choice.return_value = 'auto'
+                        w.toggle()
+                    self.assertTrue(w.armed)
+                    self.assertEqual(w.coordinate_transform, ((1280,720), (1920,1080)))
+                    with patch.object(w.native, 'active', return_value=True), patch.object(w.engine, 'submit', return_value=True) as submit:
+                        w.dispatch('move', row.id)
+                    command = submit.call_args.args[0]
+                    self.assertEqual((command.x, command.y), (960,540))
+                    w.flush_pending_saves()
+                    saved = Profile.read(read_json(w.path))
+                    self.assertEqual(saved.target_program, current)
+                    self.assertEqual(saved.resolution, (1280,720))
+                    self.assertEqual((saved.rows[0].x, saved.rows[0].y), (640,360))
+
+    def test_display_mismatch_routes_to_file_conversion_without_starting(self):
+        w = self.window
+        w.target = 0
+        w.profile.target_program = {}
+        w.native.display_id = 'display-test'
+        self.size.return_value = (1920,1080)
+        before = w.profile.export()
+        with patch('app.SizeMismatchDialog') as prompt, patch.object(w, 'convert_dialog') as convert:
+            prompt.return_value.choice.return_value = 'convert'
+            w.toggle()
+        convert.assert_called_once()
+        self.assertFalse(w.armed)
+        self.assertIsNone(w.session.plan)
+        self.assertEqual(w.profile.export(), before)
+
+    def test_cancel_and_hook_failure_do_not_publish_prepared_plan(self):
+        w = self.window
+        self.size.return_value = (1920,1080)
+        with patch('app.SizeMismatchDialog') as prompt:
+            prompt.return_value.choice.return_value = 'auto'
+            w.toggle()
+            self.assertIsNotNone(w.session.plan)
+            w.stop()
+            prompt.return_value.choice.return_value = 'cancel'
+            w.toggle()
+            self.assertIsNone(w.session.plan)
+            prompt.return_value.choice.return_value = 'auto'
+            w.hook_enabled = True
+            with patch.object(w.hooks, 'start', side_effect=OSError('hook failed')), patch.object(w, 'error') as error:
+                w.toggle()
+            error.assert_called_once_with('hook failed')
+            self.assertFalse(w.armed)
+            self.assertIsNone(w.session.plan)
+            w.hook_enabled = False
+
+    def test_profile_basis_changed_during_confirmation_rejects_start(self):
+        w = self.window
+        self.size.return_value = (1920,1080)
+        with patch('app.SizeMismatchDialog') as prompt, patch.object(w, 'error') as error:
+            prompt.return_value.choice.return_value = 'auto'
+            prompt.return_value.exec.side_effect = lambda: setattr(w.profile, 'resolution', (1600,900))
+            w.toggle()
+        self.assertFalse(w.armed)
+        self.assertIsNone(w.session.plan)
+        self.assertIn('기준 해상도', error.call_args.args[0])
+
+    def test_edited_source_resolution_cannot_reuse_previous_runtime_transform(self):
+        w = self.window
+        w.settings.auto_pause = False
+        self.size.return_value = (1920,1080)
+        with patch('app.SizeMismatchDialog') as prompt:
+            prompt.return_value.choice.return_value = 'auto'
+            w.toggle()
+        w.profile.resolution = (1600,900)
+        with patch.object(w.native, 'active', return_value=True), patch.object(w.engine, 'submit') as submit:
+            w.dispatch('move', w.profile.rows[0].id)
+        submit.assert_not_called()
+        self.assertFalse(w.armed)
+        self.assertIsNone(w.session.plan)
+
+    def test_confirmation_rejects_replaced_profile_even_at_same_resolution(self):
+        from copy import deepcopy
+        w = self.window
+        self.size.return_value = (1920,1080)
+        replacement = deepcopy(w.profile)
+        replacement.rows[0].x = 333
+        with patch('app.SizeMismatchDialog') as prompt:
+            prompt.return_value.choice.return_value = 'auto'
+            prompt.return_value.exec.side_effect = lambda: setattr(w, 'profile', replacement)
+            w.toggle()
+        self.assertFalse(w.armed)
+        self.assertIsNone(w.session.plan)
+        self.assertIn('프로필', w.statusBar().currentMessage())
+
+    def test_display_change_during_prompt_does_not_convert_new_selection(self):
+        w = self.window
+        w.target = 0
+        w.profile.target_program = {}
+        w.native.display_id = 'first-display'
+        self.size.return_value = (1920,1080)
+        with patch('app.SizeMismatchDialog') as prompt, patch.object(w, 'convert_dialog') as convert:
+            prompt.return_value.choice.return_value = 'convert'
+            prompt.return_value.exec.side_effect = lambda: setattr(w.native, 'display_id', 'second-display')
+            w.toggle()
+        convert.assert_not_called()
+        self.assertFalse(w.armed)
+        self.assertIsNone(w.session.plan)
+        self.assertIn('디스플레이', w.statusBar().currentMessage())
