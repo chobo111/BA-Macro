@@ -154,18 +154,21 @@ class StartChecks(unittest.TestCase):
     def test_resolution_choices_route_without_starting_or_changing_coordinates(self):
         self.size.return_value = (1920, 1080)
         before = self.window.profile.export()
-        for choice in ('cancel', 'resize', 'convert'):
+        for choice in ('cancel', 'resize', 'auto'):
             with self.subTest(choice=choice), patch('app.SizeMismatchDialog') as factory, \
                  patch.object(self.window, 'resize_dialog') as resize, \
                  patch.object(self.window, 'convert_dialog') as convert:
                 factory.return_value.choice.return_value = choice
                 self.window.toggle()
                 self.assertEqual(resize.called, choice == 'resize')
-                self.assertEqual(convert.called, choice == 'convert')
+                self.assertFalse(convert.called)
                 if choice == 'resize':
                     resize.assert_called_once_with(profile_size=(1280, 720))
-                self.assertFalse(self.window.armed)
+                self.assertEqual(self.window.armed, choice == 'auto')
                 self.assertEqual(self.window.profile.export(), before)
+                if choice == 'auto':
+                    self.assertEqual(self.window.coordinate_transform, ((1280,720), (1920,1080)))
+                    self.window.stop()
 
     def test_unknown_profile_resolution_is_not_guessed(self):
         self.window.profile.resolution = None
@@ -205,9 +208,9 @@ class StartChecks(unittest.TestCase):
             dialog = SizeMismatchDialog((1280,720), (1920,1080), self.window, can_resize=can_resize)
             self.assertEqual(dialog.resize_button.isEnabled(), can_resize)
             self.assertIs(dialog.defaultButton(), dialog.cancel_button)
-            QTimer.singleShot(0, dialog.convert_button.click)
+            QTimer.singleShot(0, (dialog.convert_button if can_resize else dialog.cancel_button).click)
             dialog.exec()
-            self.assertEqual(dialog.choice(), 'convert')
+            self.assertEqual(dialog.choice(), 'auto' if can_resize else 'cancel')
             dialog.deleteLater()
 
     def test_warning_preference_validation_and_settings_restore(self):
@@ -493,3 +496,23 @@ class StartChecks(unittest.TestCase):
         submit.assert_not_called()
         self.assertTrue(w.armed)
         self.assertEqual(w.run_size, (1280,720))
+
+    def test_auto_coordinates_dispatch_preserves_profile(self):
+        w = self.window
+        self.size.return_value = (1920,1080)
+        row = w.profile.rows[0]
+        row.x, row.y = 640,360
+        before = w.profile.export()
+        with patch('app.SizeMismatchDialog') as dialog:
+            dialog.return_value.choice.return_value = 'auto'
+            w.toggle()
+        with patch.object(w, 'eligible', return_value=True), patch.object(w.engine, 'submit', return_value=True) as submit:
+            w.dispatch('move', row.id)
+        command = submit.call_args.args[0]
+        self.assertEqual((command.x, command.y), (960,540))
+        self.assertEqual(command.expected_size, (1920,1080))
+        self.assertEqual(w.profile.export(), before)
+        self.size.return_value = (1600,900)
+        self.assertFalse(w.check_running_size())
+        self.assertFalse(w.armed)
+        self.assertIsNone(w.coordinate_transform)

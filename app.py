@@ -17,6 +17,7 @@ from domain import MODES, Profile, Row, Settings, read_json, same_program, Windo
 from engine import Engine, Command, WINDOW_SIZE_CHANGED
 from native import Windows
 from hotkeys import Hotkeys
+from coordinate_cache import scaled_point, scaled_program
 from script_language import compile_script
 from script_editor import ScriptEditor
 from persistence import ProfileStore
@@ -53,6 +54,7 @@ class MainWindow(QMainWindow):
         self.native = Windows()
         self.session = ExecutionSession(self.native)
         self.run_size = None
+        self.coordinate_transform = None
         self.dirty = False
         self.rebuilding = False
         self.script_editor = None
@@ -423,6 +425,7 @@ class MainWindow(QMainWindow):
     def stop(self):
         self.armed = False
         self.run_size = None
+        self.coordinate_transform = None
         self.engine.stop()
         if hasattr(self, "pause_button"):
             self.update_labels()
@@ -436,6 +439,7 @@ class MainWindow(QMainWindow):
         if self.target and not self.native.exists(self.target):
             self.statusBar().showMessage("먼저 대상 창을 선택하세요.")
             return
+        self.coordinate_transform = None
         try:
             if not self.confirm_start():
                 return
@@ -443,7 +447,7 @@ class MainWindow(QMainWindow):
                 self.native.refresh_displays()
                 self.native.validate_context(0)
             self.run_size = tuple(self.native.size(self.target)) if self.target else None
-            if self.run_size is not None and self.profile.resolution and self.run_size != self.profile.resolution:
+            if self.run_size is not None and self.profile.resolution and self.run_size != self.profile.resolution and self.coordinate_transform != (self.profile.resolution, self.run_size):
                 self.on_engine_error(WINDOW_SIZE_CHANGED)
                 return
             self.rebind()
@@ -500,9 +504,14 @@ class MainWindow(QMainWindow):
                     return False
                 if choice == 'resize':
                     self.resize_dialog(profile_size=self.profile.resolution)
-                elif choice == 'convert':
-                    self.convert_dialog(reason='프로필 좌표를 현재 화면 크기에 맞춥니다. 저장 후 다시 시작하세요.')
-                return False
+                    return False
+                elif choice == 'auto' and target:
+                    if tuple(self.native.size(target)) != tuple(current_size):
+                        self.statusBar().showMessage('앱 크기가 변경되었습니다. 다시 시작하세요.')
+                        return False
+                    self.coordinate_transform = (self.profile.resolution, tuple(current_size))
+                else:
+                    return False
         if target:
             latest = self.native.window_identity(target)
             if not same_program(current, latest):
@@ -533,16 +542,24 @@ class MainWindow(QMainWindow):
                 return
             s = self.settings
             program = None
+            x, y = row.x, row.y
+            transform = self.coordinate_transform
             if row.action_mode == 'script':
                 if not self.target:
                     self.statusBar().showMessage('스크립트를 실행하려면 앱을 선택하세요.')
                     return
                 try:
-                    program = compile_script(row.script)
+                    program = scaled_program(row.script, *transform) if transform else compile_script(row.script)
                 except ValueError as error:
                     self.on_engine_error(str(error))
                     return
-            command = Command(self.target, row.x, row.y, row.action_mode, row.move_hk,
+            elif transform:
+                try:
+                    x, y = scaled_point((x, y), *transform)
+                except ValueError as error:
+                    self.on_engine_error(str(error))
+                    return
+            command = Command(self.target, x, y, row.action_mode, row.move_hk,
                               s.move_to_click_delay_ms, s.click_hold_ms, row.script, drag_segment_duration_ms=s.drag_segment_duration_ms, program=program,
                               cursor_return_delay_ms=s.cursor_return_delay_ms, return_cursor=s.return_cursor, expected_size=self.run_size)
             if not self.engine.submit(command):

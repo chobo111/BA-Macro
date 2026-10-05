@@ -1,6 +1,12 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'BA Macro'
 RELEASES = (
+    ('0.2.20-experimental', '2026-10-06', (
+        '해상도 불일치 시 창 크기 변경 또는 자동 변환으로 시작 선택',
+        '원본을 보존하며 일반 행·스크립트 대체 좌표를 메모리에 캐시',
+        'mouse 실시간 위치와 실행 중 크기 변경 정지 유지',
+        '자동 테스트 275개 통과, 실제 게임 동작은 사용자 검증',
+    )),
     ('0.2.19-experimental', '2026-10-05', (
         '긴 메모 입력 시 창과 상단 UI가 늘어나지 않도록 수정',
         '스크립트·클릭 모드 전환 시 X/Y 열과 버튼 크기 유지',
