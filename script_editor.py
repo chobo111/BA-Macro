@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel,
 from mouse_hook import CoordinateHook
 from script_language import compile_script, ScriptError
 from script_help import ScriptHelpDialog
+from domain import same_program
 
 class Highlighter(QSyntaxHighlighter):
     def highlightBlock(self, text):
@@ -32,6 +33,7 @@ class ScriptEditor(QDialog):
         self.coordinate_hook = None
         self.coordinate_clicked.connect(self.capture_screen_point, Qt.ConnectionType.QueuedConnection)
         self.capture_resolution = None
+        self.capture_program = None
         self.source = source
         self.native, self.target = native, target
         self.syncing_geometry = False
@@ -156,6 +158,17 @@ class ScriptEditor(QDialog):
 
     def save(self):
         if self.validate():
+            if self.capture_resolution is not None:
+                try:
+                    identity = self.parentWidget().confirm_coordinate_app(self.target, expected=self.capture_program)
+                    if identity is None:
+                        return
+                    if self.native.size(self.target) != self.capture_resolution:
+                        raise ValueError('캡처 후 화면 크기가 변경되었습니다. 다시 캡처하세요.')
+                    self.capture_program = identity
+                except (ValueError, OSError) as error:
+                    self.log(str(error), error=True)
+                    return
             self.source = self.editor.toPlainText()
             self.accept()
 
@@ -225,6 +238,11 @@ class ScriptEditor(QDialog):
             if (basis and basis != size) or (not basis and has_coordinates):
                 self.log('해상도 기준이 다릅니다. 편집기를 닫고 설정 → 프로필 해상도 변환을 먼저 진행하세요.', error=True)
                 return
+            identity = self.native.window_identity(self.target) if self.target else {}
+            if self.capture_program is not None and identity != self.capture_program and not same_program(self.capture_program, identity):
+                self.log('좌표를 가져온 앱이 변경되었습니다. 편집기를 다시 열어 주세요.', error=True)
+                return
+            self.capture_program = identity
             self.capture_resolution = size
             self.editor.insertPlainText(f'{x},{y}')
             self.log(f'좌표 추가: {x}, {y}')

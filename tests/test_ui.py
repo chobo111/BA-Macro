@@ -300,7 +300,7 @@ class UiTests(unittest.TestCase):
         self.assertEqual(w.target, 0)
         self.assertEqual(w.profile.target_program, identity)
         with patch.object(w.native, 'windows', return_value=[(456, 'Game')]), patch.object(w.native, 'window_identity', return_value=identity):
-            w.refresh_windows()
+            w.refresh_windows(restore_saved=True)
             self.assertEqual(w.target, 456)
             self.assertFalse(w.armed)
             w.targets.setCurrentIndex(0)
@@ -378,7 +378,7 @@ class UiTests(unittest.TestCase):
     def test_capture_inactive_target_and_stops_run(self):
         w = self.window
         w.target = 99
-        with patch.object(w.native, "active", return_value=False), patch.object(w.native, "exists", return_value=True), patch.object(w.native, "cursor", return_value=(400, 500)), patch.object(w.native, "bounds", return_value=(0, 0, 1920, 1080)), patch.object(w.native, "size", return_value=(1920, 1080)):
+        with patch.object(w.native, "window_identity", return_value={"exe":"Game.exe","class":"Game","title":"Game"}), patch.object(w.native, "active", return_value=False), patch.object(w.native, "exists", return_value=True), patch.object(w.native, "cursor", return_value=(400, 500)), patch.object(w.native, "bounds", return_value=(0, 0, 1920, 1080)), patch.object(w.native, "size", return_value=(1920, 1080)):
             self.assertTrue(w.eligible('capture_selected'))
             w.armed = True
             w.capture(w.profile.rows[0].id)
@@ -875,7 +875,7 @@ class UiTests(unittest.TestCase):
     def test_script_capture_new_profile_records_basis_only_on_save(self):
         w=self.window
         editor=ScriptEditor('',w.native,99,w)
-        with patch.object(w.native,'size',return_value=(1280,720)), \
+        with patch.object(w.native,'window_identity',return_value={'exe':'Game.exe','class':'Game','title':'Game'}), patch.object(w.native,'size',return_value=(1280,720)), \
              patch.object(w.native,'bounds',return_value=(0,0,1280,720)):
             editor.pick_coordinate((100,200))
         self.assertEqual(editor.editor.toPlainText(),'100,200')

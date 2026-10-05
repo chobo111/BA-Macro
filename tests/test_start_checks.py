@@ -247,3 +247,144 @@ class StartChecks(unittest.TestCase):
         self.assertFalse(dialog.resize_button.isEnabled())
         self.assertTrue(dialog.convert_button.isEnabled())
         dialog.deleteLater()
+
+    def test_new_profile_always_stops_input_even_when_auto_pause_is_disabled(self):
+        w = self.window
+        w.settings.auto_pause = False
+        w.armed = True
+        with patch.object(w.native, 'windows', return_value=[]), \
+             patch.object(w.engine, 'stop', wraps=w.engine.stop) as stop:
+            w.new_profile()
+        self.assertFalse(w.armed)
+        self.assertEqual(w.target, 0)
+        stop.assert_called()
+        self.assertEqual(w.profile.target_program, {})
+
+    def test_cancel_new_profile_preserves_existing_profile(self):
+        w = self.window
+        before = w.profile
+        with patch.object(w, 'confirm_changes', return_value=False):
+            w.new_profile()
+        self.assertIs(w.profile, before)
+        self.assertEqual(w.target, 123)
+
+    def test_dropdown_refresh_preserves_explicit_fullscreen_and_other_app(self):
+        w = self.window
+        self.identity.side_effect = lambda hwnd: GAME if hwnd == 123 else OTHER
+        with patch.object(w.native, 'windows', return_value=[(123,'Game'),(456,'Other')]):
+            for target in (0, 456):
+                w.target = target
+                w.refresh_windows()
+                self.assertEqual(w.target, target)
+                self.assertEqual(w.targets.currentData(), target)
+                self.assertEqual(w.profile.target_program, GAME)
+            w.target = 0
+            w.refresh_windows(restore_saved=True)
+            self.assertEqual(w.target, 123)
+
+    def test_missing_selected_app_does_not_restore_another_app_on_dropdown_open(self):
+        w = self.window
+        w.target = 456
+        w.armed = True
+        with patch.object(w.native, 'windows', return_value=[(123,'Game')]):
+            w.refresh_windows()
+        self.assertEqual(w.target, 0)
+        self.assertFalse(w.armed)
+        self.assertEqual(w.profile.target_program, GAME)
+
+    def test_coordinate_capture_confirms_and_saves_app_and_point_together(self):
+        w = self.window
+        self.identity.return_value = OTHER
+        w.settings.warn_app_mismatch = False
+        with patch('app.CoordinateAppDialog') as prompt, \
+             patch.object(w.native, 'cursor', return_value=(700,600)), \
+             patch.object(w.native, 'bounds', return_value=(0,0,1280,720)):
+            prompt.return_value.confirmed.return_value = True
+            w.capture(w.profile.rows[0].id)
+        prompt.assert_called_once()
+        w.flush_pending_saves()
+        saved = Profile.read(read_json(w.path))
+        self.assertEqual(saved.target_program, OTHER)
+        self.assertEqual((saved.rows[0].x, saved.rows[0].y), (700,600))
+
+    def test_coordinate_capture_cancel_preserves_app_point_and_file(self):
+        w = self.window
+        w.save()
+        before = w.path.read_bytes()
+        self.identity.return_value = OTHER
+        with patch('app.CoordinateAppDialog') as prompt, \
+             patch.object(w.native, 'cursor', return_value=(700,600)), \
+             patch.object(w.native, 'bounds', return_value=(0,0,1280,720)):
+            prompt.return_value.confirmed.return_value = False
+            w.capture(w.profile.rows[0].id)
+        w.flush_pending_saves()
+        self.assertEqual(w.path.read_bytes(), before)
+        self.assertEqual(w.profile.target_program, GAME)
+        self.assertEqual(w.profile.rows[0].x, 0)
+
+    def test_capture_cannot_commit_if_app_disappears_during_confirmation(self):
+        w = self.window
+        before = w.profile.export()
+        self.identity.return_value = OTHER
+        with patch('app.CoordinateAppDialog') as prompt, \
+             patch.object(w.native, 'cursor', return_value=(700,600)), \
+             patch.object(w.native, 'bounds', return_value=(0,0,1280,720)):
+            prompt.return_value.confirmed.return_value = True
+            prompt.return_value.exec.side_effect = lambda: setattr(w, 'target', 0)
+            w.capture(w.profile.rows[0].id)
+        self.assertEqual(w.profile.export(), before)
+        self.assertFalse(w.armed)
+
+    def test_script_captured_coordinates_update_app_only_on_confirmed_save(self):
+        w = self.window
+        self.identity.return_value = OTHER
+        row = w.profile.rows[0]
+        row.action_mode = 'script'
+        w.edit_script(row.id)
+        editor = w.script_editor
+        editor.editor.setPlainText('click ')
+        cursor = editor.editor.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        editor.editor.setTextCursor(cursor)
+        with patch.object(w.native, 'bounds', return_value=(0,0,1280,720)):
+            editor.pick_coordinate((700,600))
+        self.assertEqual(w.profile.target_program, GAME)
+        with patch('app.CoordinateAppDialog') as prompt:
+            prompt.return_value.confirmed.return_value = False
+            editor.save()
+            self.assertIs(w.script_editor, editor)
+            self.assertEqual(row.script, '')
+            self.assertEqual(w.profile.target_program, GAME)
+            prompt.return_value.confirmed.return_value = True
+            editor.save()
+        self.assertIsNone(w.script_editor)
+        w.flush_pending_saves()
+        saved = Profile.read(read_json(w.path))
+        self.assertEqual(saved.target_program, OTHER)
+        self.assertEqual(saved.rows[0].script, 'click 700,600')
+
+    def test_script_capture_rejects_changed_app_before_save(self):
+        w = self.window
+        row = w.profile.rows[0]
+        row.action_mode = 'script'
+        w.edit_script(row.id)
+        editor = w.script_editor
+        with patch.object(w.native, 'bounds', return_value=(0,0,1280,720)):
+            editor.pick_coordinate((100,200))
+        editor.editor.setPlainText('click 100,200')
+        self.identity.return_value = OTHER
+        with patch('app.CoordinateAppDialog') as prompt:
+            editor.save()
+        prompt.assert_not_called()
+        self.assertIs(w.script_editor, editor)
+        self.assertIn('변경', editor.validation.text())
+        self.assertEqual(w.profile.target_program, GAME)
+
+    def test_coordinate_app_warning_defaults_to_cancel(self):
+        from startup_dialogs import CoordinateAppDialog
+        dialog = CoordinateAppDialog(GAME, OTHER, self.window)
+        self.assertIs(dialog.defaultButton(), dialog.cancel_button)
+        QTimer.singleShot(0, dialog.cancel_button.click)
+        dialog.exec()
+        self.assertFalse(dialog.confirmed())
+        dialog.deleteLater()

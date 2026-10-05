@@ -50,3 +50,20 @@ class SizeMismatchDialog(QMessageBox):
         if clicked is self.convert_button:
             return 'convert'
         return 'cancel'
+
+
+class CoordinateAppDialog(QMessageBox):
+    def __init__(self, saved, current, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('좌표를 저장할 앱 확인')
+        self.setIcon(QMessageBox.Icon.Warning)
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setText('현재 앱의 좌표를 프로필에 저장할까요?')
+        self.setInformativeText(f'프로필 앱: {app_label(saved)}\n좌표를 가져온 앱: {app_label(current)}\n\n저장하면 프로필의 앱 지정도 함께 변경됩니다. 기존의 다른 좌표는 변환하지 않습니다.')
+        self.save_button = self.addButton('앱 변경 후 저장', QMessageBox.ButtonRole.AcceptRole)
+        self.cancel_button = self.addButton('취소', QMessageBox.ButtonRole.RejectRole)
+        self.setDefaultButton(self.cancel_button)
+        self.setEscapeButton(self.cancel_button)
+
+    def confirmed(self):
+        return self.clickedButton() is self.save_button

@@ -24,7 +24,7 @@ from conversion_dialog import ConversionDialog
 from version import APP_NAME, VERSION, RELEASES
 from session import ExecutionSession, editing_dialog
 from single_instance import SingleInstance
-from startup_dialogs import AppMismatchDialog, SizeMismatchDialog
+from startup_dialogs import AppMismatchDialog, SizeMismatchDialog, CoordinateAppDialog
 from widgets import (managed_dialog, make_icon, make_run_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
                      BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog, NoWheelCombo, NoWheelSpinBox)
 
@@ -88,7 +88,7 @@ class MainWindow(QMainWindow):
         self.build_tray()
         self.apply_theme()
         self.rebuild()
-        self.refresh_windows()
+        self.refresh_windows(restore_saved=True)
         try:
             self.rebind()
             if hook_enabled:
@@ -381,6 +381,7 @@ class MainWindow(QMainWindow):
                 row.script = dialog.source
                 if isinstance(dialog.capture_resolution, tuple):
                     self.profile.resolution = dialog.capture_resolution
+                    self.profile.target_program = dialog.capture_program
                 self.changed()
                 self.rebuild(rid)
             dialog.deleteLater()
@@ -515,20 +516,42 @@ class MainWindow(QMainWindow):
             if not self.engine.submit(command):
                 self.statusBar().showMessage("실행기가 종료되어 실행할 수 없습니다.")
 
+    @editing_dialog(hooks=False, pause=False)
+    def confirm_coordinate_app(self, target, *, expected=None):
+        if target != self.target or (target and not self.native.exists(target)):
+            raise ValueError('좌표를 가져온 앱이 변경되거나 닫혔습니다. 다시 캡처하세요.')
+        current = self.native.window_identity(target) if target else {}
+        if expected is not None and current != expected and not same_program(expected, current):
+            raise ValueError('좌표를 가져온 앱이 변경되었습니다. 다시 캡처하세요.')
+        saved = self.profile.target_program
+        # This changes saved coordinate ownership, independently of start-warning preferences.
+        if saved and current != saved and not same_program(saved, current):
+            with managed_dialog(CoordinateAppDialog(saved, current, self)) as dialog:
+                dialog.exec()
+                if not dialog.confirmed():
+                    return None
+        if target != self.target or (target and not self.native.exists(target)):
+            raise ValueError('좌표를 가져온 앱이 변경되거나 닫혔습니다. 다시 캡처하세요.')
+        latest = self.native.window_identity(target) if target else {}
+        if latest != current and not same_program(current, latest):
+            raise ValueError('좌표를 가져온 앱이 변경되었습니다. 다시 캡처하세요.')
+        return latest
+
     def capture(self, rid):
         row = self.row(rid)
+        target = self.target
         if row and row.action_mode == 'script':
             self.statusBar().showMessage('스크립트 작성 화면에서 좌표를 추가하세요.')
             return
         if not row:
             return
-        if self.target and not self.native.exists(self.target):
+        if self.target and not self.native.exists(target):
             self.statusBar().showMessage('대상 창이 닫혔습니다. 창을 다시 선택하세요.')
             return
         try:
-            x, y = self.native.cursor(self.target)
-            w, h = self.native.size(self.target)
-            left, top, right, bottom = self.native.bounds(self.target)
+            x, y = self.native.cursor(target)
+            w, h = self.native.size(target)
+            left, top, right, bottom = self.native.bounds(target)
             if not left <= x < right or not top <= y < bottom:
                 raise ValueError("커서를 대상 영역 안으로 옮겨 주세요.")
             if abs(x) > 99999 or abs(y) > 99999:
@@ -538,7 +561,13 @@ class MainWindow(QMainWindow):
                     (not self.profile.resolution and has_coordinates)):
                 self.convert_dialog(reason="저장 좌표와 현재 화면의 해상도 기준을 먼저 맞춰 주세요. 변환 후 좌표를 다시 캡처하세요.")
                 return
+            identity = self.confirm_coordinate_app(target)
+            if identity is None:
+                return
+            if self.native.size(target) != (w, h):
+                raise ValueError('캡처 중 화면 크기가 변경되었습니다. 다시 캡처하세요.')
             row.x, row.y = x, y
+            self.profile.target_program = identity
             self.profile.resolution = (w, h)
             self.changed()
             self.rebuild(rid)
@@ -547,7 +576,7 @@ class MainWindow(QMainWindow):
         except Exception as error:
             self.on_engine_error(str(error))
 
-    def refresh_windows(self):
+    def refresh_windows(self, *, restore_saved=False):
         self.targets.blockSignals(True)
         self.targets.clear()
         self.targets.addItem("전체화면", 0)
@@ -556,7 +585,7 @@ class MainWindow(QMainWindow):
             for hwnd, title in windows:
                 self.targets.addItem(title, hwnd)
             index = self.targets.findData(self.target)
-            if not self.target or index < 0:
+            if restore_saved and (not self.target or index < 0):
                 restored = self.native.find_target(self.profile.target_program, windows)
                 index = self.targets.findData(restored)
             self.targets.setCurrentIndex(max(0, index))
@@ -710,6 +739,7 @@ class MainWindow(QMainWindow):
 
     def new_profile(self):
         if self.confirm_changes():
+            self.stop()
             self.finish_script_editor()
             self.profile, self.path, self.dirty = Profile.default(), self.next_profile_path(), False
             self.target = 0
@@ -734,7 +764,7 @@ class MainWindow(QMainWindow):
             self.profile, self.path, self.dirty = profile, Path(path), False
             self.stop()
             self.target = 0
-            self.refresh_windows()
+            self.refresh_windows(restore_saved=True)
             self.rebuild()
             self.rebind()
             self.persist_settings()
