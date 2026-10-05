@@ -667,7 +667,7 @@ class MainWindow(QMainWindow):
             self.cursor_label.setText(f"{x:>5}, {y:>5}")
         except WindowSizeUnavailable:
             known = '%d × %d · ' % self.run_size if self.run_size is not None else ''
-            self.target_info.setText(known + '최소화 / 복원 중 · 대기')
+            self.target_info.setText(known + '최소화')
             self.cursor_label.setText('— , —')
         except OSError as error:
             if not self.target and self.native.display_id:

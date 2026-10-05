@@ -449,7 +449,7 @@ class StartChecks(unittest.TestCase):
         w.tick()
         self.assertTrue(w.armed)
         self.assertEqual(w.run_size, (1280,720))
-        self.assertIn('대기', w.target_info.text())
+        self.assertIn('최소화', w.target_info.text())
         self.assertNotIn('0 × 0', w.target_info.text())
         self.size.side_effect = None
         w.tick()

@@ -1,6 +1,9 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'BA Macro'
 RELEASES = (
+    ('0.2.17-experimental', '2026-10-05', (
+        '앱 상태 표시를 최소화로 간소화하고 기존 대기·복원 처리는 유지',
+    )),
     ('0.2.16-experimental', '2026-10-05', (
         '최소화·복원 중의 0×0 크기를 실제 해상도 변경으로 처리하지 않도록 수정',
         '최소화 중에는 기준 크기와 작동 대기 상태를 유지하고 클릭·터치 입력 해제',
