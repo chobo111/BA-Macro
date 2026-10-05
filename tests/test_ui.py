@@ -461,8 +461,15 @@ class UiTests(unittest.TestCase):
         self.assertEqual([r.move_hk for r in w.profile.rows], ["q", "w", "e"])
         self.assertTrue(all(r.memo == "" for r in w.profile.rows))
         base = w.table.columnWidth(4)
-        w.table.item(0, 4).setText("긴 메모 내용 " * 30)
-        self.assertGreater(w.table.columnWidth(4), base)
+        geometry = (w.size(), w.target_box.size(), w.toolbar_panel.size(),
+                    w.pin_button.pos(), w.pause_button.pos())
+        text = "긴 메모 내용 " * 30
+        w.table.item(0, 4).setText(text)
+        self.qt.processEvents()
+        self.assertEqual(w.table.columnWidth(4), base)
+        self.assertEqual(w.table.item(0, 4).toolTip(), text)
+        self.assertEqual((w.size(), w.target_box.size(), w.toolbar_panel.size(),
+                          w.pin_button.pos(), w.pause_button.pos()), geometry)
         w.table.item(0, 4).setText("")
         self.assertEqual(w.table.columnWidth(4), base)
         handle = int(w.winId())
@@ -1548,3 +1555,25 @@ class UiTests(unittest.TestCase):
         self.assertEqual([row.script for row in saved.rows[1:]], ['', '', ''])
         self.assertEqual([row.move_hk for row in saved.rows[1:]], ['1', '3', '2'])
         dialog.deleteLater()
+
+    def test_script_to_click_keeps_columns_and_buttons_stable(self):
+        w = self.window
+        for row in w.profile.rows:
+            row.action_mode = 'script'
+        w.rebuild()
+        self.qt.processEvents()
+        before = ([w.table.columnWidth(i) for i in range(5)], w.size(),
+                  w.target_box.size(), w.toolbar_panel.size(),
+                  w.pin_button.pos(), w.pause_button.pos(),
+                  w.table.cellWidget(1, 1).size())
+        w.set_value(w.profile.rows[0].id, 'action_mode', 'move_and_click')
+        self.qt.processEvents()
+        self.qt.processEvents()
+        after = ([w.table.columnWidth(i) for i in range(5)], w.size(),
+                 w.target_box.size(), w.toolbar_panel.size(),
+                 w.pin_button.pos(), w.pause_button.pos(),
+                 w.table.cellWidget(1, 1).size())
+        self.assertEqual(after, before)
+        w.set_value(w.profile.rows[0].id, 'action_mode', 'script')
+        self.qt.processEvents()
+        self.assertEqual(w.table.cellWidget(1,1).size(), before[-1])

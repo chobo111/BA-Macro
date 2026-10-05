@@ -4,7 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import asdict
 
-from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent, QSignalBlocker
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolygon, QPen
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QHeaderView, QAbstractItemView,
@@ -114,7 +114,6 @@ class MemoDelegate(QStyledItemDelegate):
         editor = super().createEditor(parent, option, index)
         if isinstance(editor, QLineEdit):
             editor.setProperty('originalMemo', index.data(Qt.ItemDataRole.EditRole))
-            editor.textChanged.connect(lambda text: self.parent().resize_memo_column(index.row(), text))
             editor.textChanged.connect(lambda text: self.parent().memo_edited.emit(index.row(), text))
         return editor
 
@@ -129,7 +128,7 @@ class MemoDelegate(QStyledItemDelegate):
 
 class RowsTable(AnimatedRowsTable):
     memo_edited = Signal(int, str)
-    content_width_changed = Signal()
+    MEMO_MIN_WIDTH = 70
 
     def __init__(self):
         super().__init__(0, 5)
@@ -139,20 +138,20 @@ class RowsTable(AnimatedRowsTable):
         self.setAlternatingRowColors(True)
         self.verticalHeader().setDefaultSectionSize(36)
         self.setShowGrid(False)
-        self.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         delegate = MemoDelegate(self)
-        delegate.closeEditor.connect(lambda *_: QTimer.singleShot(0, self.resize_memo_column))
+        delegate.closeEditor.connect(lambda *_: QTimer.singleShot(0, self.update_memo_tooltips))
         self.setItemDelegateForColumn(4, delegate)
         for column, width in ((0, 72), (1, 60), (2, 60), (3, 122), (4, 70)):
             self.setColumnWidth(column, width)
 
-    def resize_memo_column(self, editing_row=-1, editing_text=""):
-        texts = [self.item(i, 4).text() for i in range(self.rowCount())
-                 if i != editing_row and self.item(i, 4)]
-        texts.append(editing_text)
-        width = max((self.fontMetrics().horizontalAdvance(text) + 18 for text in texts), default=70)
-        self.setColumnWidth(4, max(70, min(width, 1200)))
-        self.content_width_changed.emit()
+    def update_memo_tooltips(self):
+        # Long notes stay within the existing window; show full text on hover.
+        with QSignalBlocker(self):
+            for index in range(self.rowCount()):
+                item = self.item(index, 4)
+                if item is not None:
+                    item.setToolTip(item.text())
 
 
 

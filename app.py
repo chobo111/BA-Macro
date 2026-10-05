@@ -181,7 +181,6 @@ class MainWindow(QMainWindow):
         self.table.itemChanged.connect(self.memo_changed)
         self.table.memo_edited.connect(self.live_memo_changed)
         self.table.moved.connect(self.move_row)
-        self.table.content_width_changed.connect(self.fit_content_width, Qt.ConnectionType.QueuedConnection)
         self.table.horizontalHeader().sectionResized.connect(self.queue_fit_content_width)
         self.table.verticalScrollBar().rangeChanged.connect(self.queue_fit_content_width)
         layout.addWidget(self.table, 1)
@@ -195,9 +194,9 @@ class MainWindow(QMainWindow):
             return
         table = self.table
         margins = self.centralWidget().layout().contentsMargins()
-        content_width = (table.horizontalHeader().length() + table.verticalHeader().width()
-                         + table.frameWidth() * 2)
-        # Anchor the controls to the columns, not to extra window space.
+        content_width = (sum(table.columnWidth(column) for column in range(4))
+                         + table.MEMO_MIN_WIDTH + table.verticalHeader().width() + table.frameWidth() * 2)
+        # Stretching the memo column must not move controls or resize the window.
         self.target_box.setFixedWidth(content_width)
         self.toolbar_panel.setFixedWidth(content_width)
         width = content_width + margins.left() + margins.right()
@@ -309,6 +308,9 @@ class MainWindow(QMainWindow):
         self.table.clearSpans()
         self.table.setRowCount(0)
         self.table.setRowCount(len(self.profile.rows))
+        coordinate_width = self.table.fontMetrics().horizontalAdvance("-99999") + 16
+        for column in (1, 2):
+            self.table.setColumnWidth(column, coordinate_width)
         for i, row in enumerate(self.profile.rows):
             item = QTableWidgetItem(row.memo)
             item.setData(Qt.ItemDataRole.UserRole, row.id)
@@ -328,7 +330,6 @@ class MainWindow(QMainWindow):
                     spin.setRange(-99999, 99999)
                     spin.setValue(getattr(row, field))
                     spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-                    self.table.setColumnWidth(column, spin.fontMetrics().horizontalAdvance("-99999") + 16)
                     spin.valueChanged.connect(lambda value, rid=row.id, f=field: self.set_value(rid, f, value))
                     self.table.setCellWidget(i, column, spin)
             mode = NoWheelCombo()
@@ -343,7 +344,7 @@ class MainWindow(QMainWindow):
             mode.currentIndexChanged.connect(lambda index, rid=row.id: self.set_value(rid, "action_mode", list(MODES)[index]))
             self.table.setCellWidget(i, 3, mode)
         self.rebuilding = False
-        self.table.resize_memo_column()
+        self.table.update_memo_tooltips()
         if selected:
             index = next((i for i, r in enumerate(self.profile.rows) if r.id == selected), 0)
             self.table.selectRow(index)
@@ -358,7 +359,7 @@ class MainWindow(QMainWindow):
     def memo_changed(self, item):
         if not self.rebuilding and item.column() == 4:
             self.set_value(item.data(Qt.ItemDataRole.UserRole), "memo", item.text())
-            self.table.resize_memo_column()
+            self.table.update_memo_tooltips()
 
     def set_value(self, rid, field, value):
         row = self.row(rid)

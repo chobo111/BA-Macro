@@ -1,6 +1,10 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'BA Macro'
 RELEASES = (
+    ('0.2.19-experimental', '2026-10-05', (
+        '긴 메모 입력 시 창과 상단 UI가 늘어나지 않도록 수정',
+        '스크립트·클릭 모드 전환 시 X/Y 열과 버튼 크기 유지',
+    )),
     ('0.2.18-experimental', '2026-10-05', (
         '대상 창 영역의 오른쪽 끝을 좌표 표의 열 폭에 맞춰 정렬',
         '핀·시작 버튼을 오른쪽에 배치하고 창을 늘려도 위치 유지',
