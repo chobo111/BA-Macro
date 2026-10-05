@@ -1,6 +1,11 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'BA Macro'
 RELEASES = (
+    ('0.2.18-experimental', '2026-10-05', (
+        '대상 창 영역의 오른쪽 끝을 좌표 표의 열 폭에 맞춰 정렬',
+        '핀·시작 버튼을 오른쪽에 배치하고 창을 늘려도 위치 유지',
+        'UI 테스트 84개 통과 및 기본·확장 창 크기 화면 확인',
+    )),
     ('0.2.17-experimental', '2026-10-05', (
         '앱 상태 표시를 최소화로 간소화하고 기존 대기·복원 처리는 유지',
     )),

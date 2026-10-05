@@ -139,7 +139,9 @@ class MainWindow(QMainWindow):
         target_layout.addWidget(self.target_info, 1)
         layout.addWidget(target_box, 0, Qt.AlignmentFlag.AlignLeft)
 
-        toolbar = QHBoxLayout()
+        toolbar_panel = self.toolbar_panel = QWidget()
+        toolbar_panel.setFixedWidth(384)
+        toolbar = QHBoxLayout(toolbar_panel)
         toolbar.setSpacing(4)
         toolbar.setContentsMargins(0, 2, 0, 2)
         for text, name, callback, attribute in (
@@ -159,7 +161,7 @@ class MainWindow(QMainWindow):
         separator.setObjectName("toolbarSeparator")
         separator.setFixedSize(1, 20)
         toolbar.addWidget(separator)
-        toolbar.addSpacing(4)
+        toolbar.addStretch()
         self.pin_button = QPushButton()
         self.pin_button.setIcon(make_pin_icon())
         self.pin_button.setIconSize(QSize(20, 20))
@@ -174,8 +176,7 @@ class MainWindow(QMainWindow):
         self.run_icons = (make_run_icon(False), make_run_icon(True))
         self.pause_button.setIconSize(QSize(16, 16))
         toolbar.addWidget(self.pause_button)
-        toolbar.addStretch()
-        layout.addLayout(toolbar)
+        layout.addWidget(toolbar_panel, 0, Qt.AlignmentFlag.AlignLeft)
         self.table = RowsTable()
         self.table.itemChanged.connect(self.memo_changed)
         self.table.memo_edited.connect(self.live_memo_changed)
@@ -194,8 +195,12 @@ class MainWindow(QMainWindow):
             return
         table = self.table
         margins = self.centralWidget().layout().contentsMargins()
-        width = (table.horizontalHeader().length() + table.verticalHeader().width()
-                 + table.frameWidth() * 2 + margins.left() + margins.right())
+        content_width = (table.horizontalHeader().length() + table.verticalHeader().width()
+                         + table.frameWidth() * 2)
+        # Anchor the controls to the columns, not to extra window space.
+        self.target_box.setFixedWidth(content_width)
+        self.toolbar_panel.setFixedWidth(content_width)
+        width = content_width + margins.left() + margins.right()
         if table.verticalScrollBar().maximum() > 0:
             width += table.verticalScrollBar().sizeHint().width()
         screen = self.screen()
