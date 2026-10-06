@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from domain import MODES, Profile, Row, Settings, read_json, same_program, WindowSizeUnavailable
 from engine import Engine
 from native import Windows
+from interactive_resize import resize as resize_window
 from hotkeys import Hotkeys
 from execution_plan import ExecutionPlan
 from coordinate_transform import aspect_warning
@@ -962,7 +963,7 @@ class MainWindow(QMainWindow):
                 nonlocal refresh_notice
                 read_size()
                 self.stop()
-                refresh_notice = self.native.resize(target, *size) or ''
+                refresh_notice = resize_window(self.native, target, *size)
             with managed_dialog(ResizeDialog(
                     read_size(), self, convert_profile=False if profile_size else self.settings.resize_convert_profile,
                     request_resize=request_resize, read_size=read_size)) as dialog:

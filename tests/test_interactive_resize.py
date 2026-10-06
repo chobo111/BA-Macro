@@ -27,7 +27,7 @@ class InteractiveResizeTests(unittest.TestCase):
         self.buttons=self.stack.enter_context(patch.object(r,'key_state',return_value=0))
         self.monitors=self.stack.enter_context(patch.object(r,'monitor_from_point',return_value=1))
         self.stack.enter_context(patch.object(r,'frame',side_effect=lambda h:self.rect))
-        self.stack.enter_context(patch.object(r,'cursor',side_effect=lambda:self.point))
+        self.stack.enter_context(patch.object(r.win,'cursor_position',side_effect=lambda:self.point))
         self.stack.enter_context(patch.object(r,'sizing',side_effect=lambda h,t:self.active))
         self.stack.enter_context(patch.object(r.win,'foreground',side_effect=lambda:self.focus))
         self.foreground=self.stack.enter_context(patch.object(r.win,'set_foreground',side_effect=self.set_focus))

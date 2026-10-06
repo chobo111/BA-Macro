@@ -112,6 +112,12 @@ def check(value):
     return value
 
 
+def cursor_position():
+    point = W.POINT()
+    check(get_cursor(C.byref(point)))
+    return point.x, point.y
+
+
 class Windows:
     def __init__(self):
         self.display_id = ''
@@ -232,9 +238,7 @@ class Windows:
         return int(foreground() or 0)
 
     def cursor_screen(self):
-        point = W.POINT()
-        check(get_cursor(C.byref(point)))
-        return point.x, point.y
+        return cursor_position()
 
     def cursor(self, hwnd=None):
         return self.local_point(hwnd, *self.cursor_screen())
@@ -302,5 +306,3 @@ class Windows:
             check(adjust(*args))
         check(set_position(hwnd, None, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
                            0x0002 | 0x0004 | 0x0010))
-        from interactive_resize import refresh
-        return refresh(hwnd)

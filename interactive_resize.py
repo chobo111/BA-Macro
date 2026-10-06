@@ -31,12 +31,6 @@ def frame(hwnd):
     return rect.left,rect.top,rect.right,rect.bottom
 
 
-def cursor():
-    point = W.POINT()
-    win.check(win.get_cursor(C.byref(point)))
-    return point.x,point.y
-
-
 def sizing(hwnd,thread):
     info = GuiThreadInfo()
     info.cbSize = C.sizeof(info)
@@ -65,6 +59,12 @@ def corner(rect):
     raise OSError('창 모서리가 화면 안에 보이도록 창 위치를 옮겨 주세요.')
 
 
+def resize(window, hwnd, width, height):
+    """Apply the client size, then refresh rendering through system sizing."""
+    window.resize(hwnd, width, height)
+    return refresh(hwnd)
+
+
 def refresh(hwnd):
     """Return a diagnostic on failure; base resizing is already complete."""
     original_cursor = previous_focus = original_frame = None
@@ -83,7 +83,7 @@ def refresh(hwnd):
             raise OSError('이미 창을 이동하거나 크기를 조절하고 있습니다.')
         original_frame = frame(hwnd)
         edge,anchor,delta = corner(original_frame)
-        original_cursor,previous_focus = cursor(),win.foreground()
+        original_cursor,previous_focus = win.cursor_position(),win.foreground()
         win.check(win.set_foreground(hwnd))
         wait_for(lambda:win.foreground() == hwnd)
         win.check(win.set_cursor(*anchor))
@@ -93,7 +93,7 @@ def refresh(hwnd):
         win.check(win.post_message(hwnd,WM_SYSCOMMAND,SC_SIZE|edge,packed))
         started = True
         wait_for(lambda:sizing(hwnd,thread))
-        anchor = cursor()  # Windows may reposition the sizing cursor.
+        anchor = win.cursor_position()  # Windows may reposition the sizing cursor.
         def guarded():
             if win.foreground() != hwnd or not sizing(hwnd,thread):
                 raise OSError('자동 드래그 중 포커스 또는 크기 조절 상태가 바뀌었습니다.')

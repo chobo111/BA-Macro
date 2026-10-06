@@ -2,6 +2,7 @@ from contextlib import ExitStack
 import unittest
 from unittest.mock import patch
 import native
+from interactive_resize import resize
 
 
 class NativeResizeTests(unittest.TestCase):
@@ -24,7 +25,7 @@ class NativeResizeTests(unittest.TestCase):
         self.refresh=self.stack.enter_context(patch('interactive_resize.refresh',side_effect=lambda h:self.events.append('refresh') or ''))
 
     def test_resize_precedes_interactive_refresh_with_dpi_and_position_preserved(self):
-        self.assertEqual(self.native.resize(123,1920,1080),'')
+        self.assertEqual(resize(self.native,123,1920,1080),'')
         self.assertEqual(self.events,['resize','refresh'])
         self.position.assert_called_once_with(123,None,0,0,1936,1119,0x0002|0x0004|0x0010)
         self.assertEqual(self.adjust.call_args.args[-1],144)
@@ -33,26 +34,26 @@ class NativeResizeTests(unittest.TestCase):
     def test_refresh_notice_does_not_invalidate_base_resize(self):
         self.refresh.side_effect=None
         self.refresh.return_value='갱신 확인 필요'
-        self.assertEqual(self.native.resize(123,1280,720),'갱신 확인 필요')
+        self.assertEqual(resize(self.native,123,1280,720),'갱신 확인 필요')
         self.position.assert_called_once()
 
     def test_resize_failure_does_not_start_interactive_operation(self):
         self.position.side_effect=None
         self.position.return_value=0
         with self.assertRaises(OSError):
-            self.native.resize(123,1280,720)
+            resize(self.native,123,1280,720)
         self.refresh.assert_not_called()
 
     def test_adjust_failure_does_not_resize(self):
         self.adjust.side_effect=OSError('adjust failed')
         with self.assertRaisesRegex(OSError,'adjust failed'):
-            self.native.resize(123,1280,720)
+            resize(self.native,123,1280,720)
         self.position.assert_not_called()
         self.refresh.assert_not_called()
 
     def test_non_dpi_fallback_keeps_refresh(self):
         with patch('native.adjust_dpi',None),patch('native.adjust',return_value=1) as adjust:
-            self.native.resize(123,1280,720)
+            resize(self.native,123,1280,720)
         adjust.assert_called_once()
         self.position.assert_called_once_with(123,None,0,0,1280,720,0x0002|0x0004|0x0010)
         self.refresh.assert_called_once_with(123)

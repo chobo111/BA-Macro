@@ -120,7 +120,7 @@ loop_end
 - `persistence.py`: 프로필 로드, 단일 백그라운드 저장 스레드, 최근 프로필 복사, 변경된 설정만 저장
 - `domain.py`: 프로필·설정 데이터, 검증, 좌표 변환, JSON 저장
 - `engine.py`: 단일 입력 작업 스레드, 중단 가능한 대기, 클릭 해제 보장
-- `interactive_resize.py`: Windows 실제 크기 조절 모드로 미세 드래그 및 커서·포커스 복원
+- `interactive_resize.py`: 기본 크기 변경 후 실제 크기 조절 모드로 미세 드래그 및 커서·포커스 복원. `native.py`를 사용하며 역방향 참조는 없습니다.
 - `native.py`: 포인터 크기에 맞춘 Win32 함수·구조체 선언
 - `hotkeys.py`: 키 조합 해석, 대상 상태에 따른 단축키 처리와 선택적 차단
 - `script_language.py`: 스크립트 문법 검사와 실행

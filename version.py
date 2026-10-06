@@ -1,6 +1,12 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'BA Macro'
 RELEASES = (
+    ('0.2.31-experimental', '2026-10-07', (
+        '중복 커서 위치 조회를 공통 함수로 통합',
+        '창 크기 변경과 화면 갱신의 호출 구조를 분리해 모듈 상호 참조 제거',
+        '테스트의 미사용 import와 폐기한 알림 방식의 이름·예시 문구 정리',
+        '기존 미세 조절·취소·커서 및 포커스 복원 유지, 자동 테스트 334개 통과',
+    )),
     ('0.2.30-experimental', '2026-10-06', (
         '효과가 없었던 수동 갱신 알림을 Windows 실제 크기 조절 모드의 미세 드래그로 교체',
         '조절 모드 진입·크기 변화·복귀·종료 확인 후 커서와 이전 포커스 복원',

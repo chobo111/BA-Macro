@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QDialog, QFileDialog, Q
 from PySide6.QtTest import QTest
 from PySide6.QtCore import Qt, QPoint
 from domain import Profile, read_json
-from app import MainWindow, KeyDialog, SettingsDialog, ResizeDialog
+from app import MainWindow, KeyDialog, SettingsDialog, ResizeDialog, resize_window
 from script_editor import ScriptEditor
 from domain import MODES
 from execution_plan import ExecutionPlan
@@ -1706,14 +1706,13 @@ class UiTests(unittest.TestCase):
         self.assertIs(w.settings,original)
         self.assertIn('단독',w.statusBar().currentMessage())
 
-    def test_resize_verifies_actual_size_even_when_refresh_notification_is_rejected(self):
-        import native
+    def test_resize_verifies_actual_size_even_when_automatic_drag_is_skipped(self):
         w = self.window
         with patch('native.get_long',return_value=0), patch('native.get_menu',return_value=0), \
              patch('native.adjust_dpi',return_value=1), patch('native.window_dpi',return_value=96), \
              patch('native.set_position',return_value=1), patch('interactive_resize.refresh',return_value='갱신 확인 필요'):
             dialog = ResizeDialog((1280,720),w,
-                                  request_resize=lambda size:w.native.resize(123,*size),
+                                  request_resize=lambda size:resize_window(w.native,123,*size),
                                   read_size=lambda:(1920,1080))
             dialog.set_size((1920,1080))
             dialog.apply()
@@ -1730,7 +1729,8 @@ class UiTests(unittest.TestCase):
         with patch('app.ResizeDialog') as factory, \
              patch.object(w.native,'exists',return_value=True), \
              patch.object(w.native,'size',return_value=(1280,720)), \
-             patch.object(w.native,'resize',return_value='화면 갱신 크기 조절 알림 전달 불가(Windows 오류 5)') as resize:
+             patch.object(w.native,'resize') as resize, \
+             patch('interactive_resize.refresh',return_value='화면 갱신 자동 드래그: 마우스 버튼을 놓고 다시 적용해 주세요.'):
             dialog=factory.return_value
             dialog.current_size=(1920,1080)
             dialog.convert_profile.isChecked.return_value=False
@@ -1741,4 +1741,4 @@ class UiTests(unittest.TestCase):
             w.resize_dialog()
             resize.assert_called_once_with(123,1920,1080)
         self.assertIn('크기 변경 완료',w.statusBar().currentMessage())
-        self.assertIn('Windows 오류 5',w.statusBar().currentMessage())
+        self.assertIn('마우스 버튼을 놓고',w.statusBar().currentMessage())
