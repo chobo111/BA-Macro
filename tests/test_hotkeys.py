@@ -224,18 +224,12 @@ class HotkeyTests(unittest.TestCase):
         self.assertFalse(self.physical_event(73, 0x21, True, 'up'))
         self.assertFalse(self.hooks.held('ctrl+pgup'))
 
-    def test_windows_key_chords_work_from_both_sides(self):
-        for scan, vk in ((91, 0x5B), (92, 0x5C)):
-            with self.subTest(scan=scan):
-                self.hooks.close()
-                self.actions.clear()
-                self.hooks.configure([('meta+q', 'move', '1')], True)
-                self.physical_event(scan, vk, True)
-                self.assertFalse(self.physical_event(16, 0x51))
-                self.assertTrue(self.hooks.held('win+q'))
-                self.assertEqual(self.actions, [('move', '1')])
-                self.physical_event(16, 0x51, kind='up')
-                self.assertFalse(self.hooks.held('meta+q'))
+    def test_windows_combinations_are_rejected_without_replacing_bindings(self):
+        previous = list(self.hooks.bindings)
+        for key in ('win+q','meta+q','windows+q'):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'Win'):
+                self.hooks.configure([(key,'move','1')],True)
+            self.assertEqual(self.hooks.bindings,previous)
 
     def test_keypad_plus_and_ctrl_plus_do_not_match_unshifted_equals(self):
         from unittest.mock import patch
@@ -290,3 +284,43 @@ class HotkeyTests(unittest.TestCase):
                 self.assertFalse(self.physical_event(*event))
                 self.assertEqual(len(self.actions),2)
                 self.physical_event(*event,kind='up')
+
+    def test_modifier_prefix_conflict_keeps_active_bindings_and_suppression(self):
+        previous = list(self.hooks.bindings)
+        for modifier in ('ctrl','alt','shift'):
+            for keys in ((modifier,modifier+'+q'),(modifier+'+q',modifier)):
+                with self.subTest(keys=keys), self.assertRaisesRegex(ValueError,'단독'):
+                    self.hooks.configure([(key,'move',str(i)) for i,key in enumerate(keys)],False)
+                self.assertEqual(self.hooks.bindings,previous)
+                self.assertTrue(self.hooks.exclusive)
+
+    def test_standalone_modifiers_start_on_press_hold_until_release(self):
+        for modifier in ('ctrl','alt','shift'):
+            with self.subTest(modifier=modifier):
+                self.hooks.close()
+                self.actions.clear()
+                self.hooks.configure([(modifier,'move','script')],True)
+                self.assertFalse(self.event(modifier))
+                self.assertEqual(self.actions,[('move','script')])
+                self.assertTrue(self.hooks.held(modifier))
+                self.assertFalse(self.event(modifier))
+                self.assertEqual(len(self.actions),1)
+                self.assertFalse(self.event(modifier,'up'))
+                self.assertFalse(self.hooks.held(modifier))
+                self.assertFalse(self.event(modifier))
+                self.assertEqual(len(self.actions),2)
+
+    def test_combination_waits_for_primary_key(self):
+        for modifier in ('ctrl','alt','shift'):
+            with self.subTest(modifier=modifier):
+                self.hooks.close()
+                self.actions.clear()
+                self.hooks.configure([(modifier+'+q','move','script')],True)
+                self.event(modifier)
+                self.assertEqual(self.actions,[])
+                self.assertFalse(self.hooks.held(modifier+'+q'))
+                self.event('q')
+                self.assertEqual(self.actions,[('move','script')])
+                self.assertTrue(self.hooks.held(modifier+'+q'))
+                self.event('q','up')
+                self.assertFalse(self.hooks.held(modifier+'+q'))

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from domain import Settings
-from shortcuts import hotkey, qt_hotkey
+from shortcuts import hotkey, qt_hotkey, SHORTCUT_GUIDE
 from row_drag import AnimatedRowsTable
 
 
@@ -246,6 +246,9 @@ class KeyDialog(QDialog):
         if line_edit is not None:
             line_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.editor)
+        guide = QLabel(SHORTCUT_GUIDE)
+        guide.setWordWrap(True)
+        layout.addWidget(guide)
         clear = QPushButton("지정 해제")
         clear.clicked.connect(self.editor.clear)
         layout.addWidget(clear)
@@ -292,6 +295,9 @@ class SettingsDialog(QDialog):
             editor.setMaximumSequenceLength(1)
             self.keys[name] = editor
             form.addRow(label, editor)
+        guide = QLabel(SHORTCUT_GUIDE)
+        guide.setWordWrap(True)
+        form.addRow(guide)
         self.times = {}
         self.checks = {}
         for name, label in (("move_to_click_delay_ms", "이동 후 클릭 대기시간"), ("click_hold_ms", "클릭 유지 시간"),

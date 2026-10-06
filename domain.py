@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 import uuid
-from shortcuts import hotkey
+from shortcuts import hotkey, validate_hotkeys, ShortcutError
 
 MODES = {
     "move_and_click": "좌표 클릭",
@@ -127,15 +127,7 @@ class Profile:
         return obj
 
     def validate(self, reserved=()):
-        used = {hotkey(v) for v in reserved if v}
-        for row in self.rows:
-            for value in (row.move_hk,):
-                if not value:
-                    continue
-                normalized = hotkey(value)
-                if normalized in used:
-                    raise ValueError(f"중복된 단축키: {normalized.upper()}")
-                used.add(normalized)
+        validate_hotkeys((*reserved, *(row.move_hk for row in self.rows)))
 
     def export(self):
         return {"version": 3, "target_resolution": "%dx%d" % self.resolution if self.resolution else "알 수 없음",
@@ -182,7 +174,8 @@ class Settings:
         for name in ("capture_hk", "pause_hk"):
             setattr(obj, name, hotkey(data.get(name, getattr(obj, name))))
         if not obj.pause_hk or not obj.capture_hk or obj.pause_hk == obj.capture_hk:
-            raise ValueError("캡처와 작동/정지 단축키는 서로 다르게 지정하세요.")
+            raise ShortcutError("캡처와 작동/정지 단축키는 서로 다르게 지정하세요.")
+        validate_hotkeys((obj.pause_hk, obj.capture_hk))
         for name in ("move_to_click_delay_ms", "click_hold_ms", "cursor_return_delay_ms", "drag_segment_duration_ms"):
             setattr(obj, name, bounded_int(data.get(name, getattr(obj, name)), 1 if name == "click_hold_ms" else 0, 99999, name))
         for name in ("exclusive_hook", "auto_pause", "return_cursor", "resize_convert_profile", "warn_app_mismatch", "auto_convert_on_start"):

@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 import threading
 import keyboard
-from shortcuts import hotkey
+from shortcuts import hotkey, validate_hotkeys
 
 
 # Navigation, keypad and special keys share scan codes. The virtual key describes
@@ -95,14 +95,13 @@ class Hotkeys:
         return Binding(normalized, action, row_id, groups)
 
     def configure(self, values, exclusive=False):
-        bindings, seen = [], set()
+        values = tuple(values)
+        validate_hotkeys(value[0] for value in values)
+        bindings = []
         for value in values:
             binding = self.compile(*value)
             if binding is None:
                 continue
-            if binding.key in seen:
-                raise ValueError(f"중복된 단축키: {binding.key.upper()}")
-            seen.add(binding.key)
             bindings.append(binding)
         with self.lock:
             self.bindings = bindings

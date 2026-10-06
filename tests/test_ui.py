@@ -194,7 +194,10 @@ class UiTests(unittest.TestCase):
         dialog.log_timer.setInterval(20)
         dialog.log('오류 안내', error=True)
         self.assertFalse(dialog.validation.isHidden())
-        QTest.qWait(60)
+        for _ in range(50):
+            if dialog.validation.isHidden():
+                break
+            QTest.qWait(20)
         self.assertTrue(dialog.validation.isHidden())
         dialog.reject()
         dialog.deleteLater()
@@ -1424,24 +1427,25 @@ class UiTests(unittest.TestCase):
                          ('original',) * 3)
         self.assertFalse(w.dirty)
 
-    def test_reopening_windows_shortcut_does_not_clear_saved_binding(self):
+    def test_windows_combination_edit_preserves_previous_key_and_file(self):
         w = self.window
         row = w.profile.rows[0]
-        row.move_hk = 'win+q'
-        self.assertTrue(w.save())
-        w.rebuild()
-        with patch.object(KeyDialog, 'exec', return_value=QDialog.DialogCode.Accepted):
+        w.save()
+        with patch('app.KeyDialog') as factory, patch.object(QMessageBox,'warning') as warning:
+            factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            factory.return_value.value.return_value = 'win+q'
             w.edit_key(row.id)
+            warning.assert_not_called()
         w.flush_pending_saves()
-        self.assertEqual(row.move_hk, 'win+q')
-        self.assertEqual(read_json(w.path)['macros'][0]['move_hk'], 'win+q')
-        self.assertIn('win+q', [binding.key for binding in w.hooks.bindings])
+        self.assertEqual(row.move_hk,'q')
+        self.assertEqual(read_json(w.path)['macros'][0]['move_hk'],'q')
+        self.assertIn('Win',w.statusBar().currentMessage())
 
-    def test_win_and_plus_capture_round_trip_in_both_dialogs(self):
+    def test_supported_combinations_and_plus_round_trip_in_both_dialogs(self):
         from dataclasses import replace
         from hotkeys import Hotkeys
         from widgets import managed_dialog
-        cases = ((Qt.Key.Key_Q, Qt.KeyboardModifier.MetaModifier, 'win+q'),
+        cases = ((Qt.Key.Key_Q, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.ShiftModifier, 'ctrl+alt+shift+q'),
                  (Qt.Key.Key_Plus, Qt.KeyboardModifier.KeypadModifier, 'plus'),
                  (Qt.Key.Key_Plus, Qt.KeyboardModifier.ControlModifier, 'ctrl+plus'),
                  (Qt.Key.Key_Plus, Qt.KeyboardModifier.ShiftModifier, 'shift+plus'),
@@ -1611,6 +1615,7 @@ class UiTests(unittest.TestCase):
         dialog.deleteLater()
 
     def test_capture_navigation_lock_and_modifier_keys_in_both_dialogs(self):
+        from dataclasses import replace
         from widgets import managed_dialog
         from hotkeys import Hotkeys
         cases = ((Qt.Key.Key_Tab,Qt.KeyboardModifier.NoModifier,'tab'),
@@ -1639,7 +1644,7 @@ class UiTests(unittest.TestCase):
                 self.assertIsNotNone(Hotkeys.compile(expected))
                 with managed_dialog(KeyDialog(expected,self.window)) as reopened:
                     self.assertEqual(reopened.value(),expected)
-                with managed_dialog(SettingsDialog(self.window.settings,self.window)) as settings:
+                with managed_dialog(SettingsDialog(replace(self.window.settings,capture_hk='f12'),self.window)) as settings:
                     settings.show()
                     self.qt.processEvents()
                     target = settings.keys['pause_hk'].field
@@ -1671,3 +1676,32 @@ class UiTests(unittest.TestCase):
             dialog.editor.clearFocus()
             QTest.keyRelease(field,Qt.Key.Key_Control)
             self.assertEqual(dialog.value(),'ctrl+k')
+
+    def test_modifier_conflict_edit_keeps_key_and_reports_in_log(self):
+        w = self.window
+        row = w.profile.rows[0]
+        w.save()
+        with patch('app.KeyDialog') as factory, patch.object(QMessageBox,'warning') as warning:
+            factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            factory.return_value.value.return_value = 'ctrl'
+            w.edit_key(row.id)
+            warning.assert_not_called()
+        w.flush_pending_saves()
+        self.assertEqual(row.move_hk,'q')
+        self.assertEqual(read_json(w.path)['macros'][0]['move_hk'],'q')
+        self.assertIn('단독',w.statusBar().currentMessage())
+
+    def test_settings_modifier_conflict_preserves_settings_and_reports_in_log(self):
+        from dataclasses import replace
+        w = self.window
+        original = w.settings
+        w.profile.rows[0].move_hk = 'alt+q'
+        w.rebind()
+        with patch('app.SettingsDialog') as factory, patch.object(w,'error') as error, patch.object(w,'commit_settings') as commit:
+            factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            factory.return_value.value.return_value = replace(original,pause_hk='alt')
+            w.settings_dialog()
+            commit.assert_not_called()
+            error.assert_not_called()
+        self.assertIs(w.settings,original)
+        self.assertIn('단독',w.statusBar().currentMessage())

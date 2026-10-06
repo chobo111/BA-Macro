@@ -1,6 +1,13 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'BA Macro'
 RELEASES = (
+    ('0.2.26-experimental', '2026-10-06', (
+        '조합 보조키를 Ctrl·Alt·Shift로 제한하고 입력창·환경설정에 안내 추가',
+        '보조키 단독과 같은 보조키를 사용하는 조합의 중복 지정 방지',
+        '행·공통 단축키 충돌 시 기존 값 보존 및 일시적인 로그 안내',
+        '단독 키는 누르는 즉시 실행, 반복 스크립트의 유지·해제 동작 유지',
+        '자동 테스트 319개 통과 및 안내 화면 확인, 실제 게임 입력은 사용자 검증',
+    )),
     ('0.2.25-experimental', '2026-10-06', (
         'Tab·Shift+Tab 입력 시 포커스 이동 방지, Ctrl 단독·조합 및 Caps Lock 지정 지원',
         '행 단축키와 환경설정에 동일한 키 입력 처리 적용',

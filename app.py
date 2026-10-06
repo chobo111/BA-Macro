@@ -25,6 +25,7 @@ from profile_saves import ProfileSaves
 from conversion_dialog import ConversionDialog
 from version import APP_NAME, VERSION, RELEASES
 from session import ExecutionSession, editing_dialog
+from shortcuts import ShortcutError
 from single_instance import SingleInstance
 from startup_dialogs import AppMismatchDialog, SizeMismatchDialog, CoordinateAppDialog
 from widgets import (managed_dialog, make_icon, make_run_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
@@ -938,6 +939,9 @@ class MainWindow(QMainWindow):
                     self.commit_settings(settings, recover=True)
                     self.apply_theme()
                     self.update_labels()
+                    break
+                except ShortcutError as error:
+                    self.statusBar().showMessage(str(error))
                     break
                 except Exception as error:
                     self.error(str(error))

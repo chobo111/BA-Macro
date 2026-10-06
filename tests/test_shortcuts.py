@@ -8,7 +8,7 @@ class ShortcutTests(unittest.TestCase):
         for source, expected in (('', ''), ('+', 'plus'), ('plus', 'plus'),
                                  ('Ctrl++', 'ctrl+plus'), ('Ctrl+plus', 'ctrl+plus'),
                                  ('Control+Shift++', 'ctrl+shift+plus'),
-                                 ('Meta++', 'win+plus'), ('Ctrl+,', 'ctrl+,')):
+                                 ('Ctrl+,', 'ctrl+,')):
             with self.subTest(source=source):
                 self.assertEqual(hotkey(source), expected)
                 self.assertEqual(hotkey(qt_hotkey(expected)), expected)
@@ -21,7 +21,7 @@ class ShortcutTests(unittest.TestCase):
     def test_alias_duplicates_are_rejected_for_rows_and_global_shortcuts(self):
         aliases = (('Page Up', 'PgUp'), ('PageDown', 'PgDown'), ('PgDn', 'Page Down'),
                    ('Ins', 'Insert'), ('Del', 'Delete'), ('Spacebar', 'Space'),
-                   ('Meta+Q', 'Windows+Q'), ('Ctrl++', 'Control+plus'))
+                   ('Ctrl++', 'Control+plus'))
         for first, second in aliases:
             with self.subTest(first=first, second=second):
                 self.assertEqual(hotkey(first), hotkey(second))
@@ -35,11 +35,11 @@ class ShortcutTests(unittest.TestCase):
                     Profile.read(Profile([Row(move_hk=first), Row(move_hk=second)]).export())
 
     def test_canonical_shortcuts_survive_profile_and_settings_serialization(self):
-        for value in ('win+q', 'plus', 'ctrl+plus', 'ctrl+page up', 'alt+page down', 'tab', 'caps lock', 'ctrl', 'alt', 'shift', 'win'):
+        for value in ('plus', 'ctrl+plus', 'ctrl+page up', 'alt+page down', 'tab', 'caps lock', 'ctrl', 'alt', 'shift', 'win'):
             with self.subTest(value=value):
                 profile = Profile([Row(move_hk=value)])
                 self.assertEqual(Profile.read(profile.export()).rows[0].move_hk, value)
-                self.assertEqual(Settings.read({'pause_hk': value}).pause_hk, value)
+                self.assertEqual(Settings.read({'pause_hk': value, 'capture_hk': 'f12'}).pause_hk, value)
 
     def test_standalone_modifiers_round_trip_and_reject_alias_duplicates(self):
         for canonical in ('ctrl','alt','shift','win'):
@@ -49,3 +49,24 @@ class ShortcutTests(unittest.TestCase):
                 Profile([Row(move_hk=first),Row(move_hk=second)]).validate()
         with self.assertRaises(ValueError):
             hotkey('ctrl+shift')
+
+    def test_only_ctrl_alt_shift_can_prefix_a_chord(self):
+        for key in ('win+q', 'Meta++', 'Windows+Tab', 'ctrl+win+x', 'tab+q', 'space+q', 'q+w'):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                hotkey(key)
+        for key in ('ctrl+q', 'alt+q', 'shift+q', 'ctrl+alt+shift+q', 'space', 'tab'):
+            self.assertEqual(hotkey(key), key)
+
+    def test_standalone_modifier_conflicts_in_either_order_and_reserved_keys(self):
+        for modifier in ('ctrl', 'alt', 'shift'):
+            for chord in (modifier+'+q', 'ctrl+alt+shift+q'):
+                for keys in ((modifier,chord), (chord,modifier)):
+                    with self.subTest(keys=keys):
+                        with self.assertRaisesRegex(ValueError, '단독'):
+                            Profile([Row(move_hk=key) for key in keys]).validate()
+                        with self.assertRaisesRegex(ValueError, '단독'):
+                            Profile([Row(move_hk=keys[0])]).validate((keys[1],))
+                        with self.assertRaisesRegex(ValueError, '단독'):
+                            Settings.read({'pause_hk':keys[0], 'capture_hk':keys[1]})
+        Profile([Row(move_hk='ctrl'),Row(move_hk='alt+q'),Row(move_hk='shift+q')]).validate()
+        Profile([Row(move_hk='ctrl+q'),Row(move_hk='ctrl+w')]).validate()
