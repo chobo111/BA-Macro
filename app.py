@@ -957,10 +957,12 @@ class MainWindow(QMainWindow):
                 if target != self.target or not self.native.exists(target):
                     raise OSError("대상 창이 닫혔거나 변경되었습니다.")
                 return self.native.size(target)
+            refresh_notice = ''
             def request_resize(size):
+                nonlocal refresh_notice
                 read_size()
                 self.stop()
-                self.native.resize(target, *size)
+                refresh_notice = self.native.resize(target, *size) or ''
             with managed_dialog(ResizeDialog(
                     read_size(), self, convert_profile=False if profile_size else self.settings.resize_convert_profile,
                     request_resize=request_resize, read_size=read_size)) as dialog:
@@ -976,9 +978,9 @@ class MainWindow(QMainWindow):
                 if not profile_size and convert != self.settings.resize_convert_profile:
                     self.commit_settings(replace(self.settings, resize_convert_profile=convert))
                 if accepted:
-                    self.statusBar().showMessage('창 내부 크기 변경 완료: %d × %d' % dialog.current_size)
-                    if profile_size:
-                        self.statusBar().showMessage('창 크기를 변경했습니다. 다시 시작을 눌러 주세요.')
+                    message = ('창 크기를 변경했습니다. 다시 시작을 눌러 주세요.' if profile_size else
+                               '창 내부 크기 변경 완료: %d × %d' % dialog.current_size)
+                    self.statusBar().showMessage(message + (' · ' + refresh_notice if refresh_notice else ''))
                     if convert:
                         self.convert_dialog(reason="창 크기가 바뀌었습니다. 저장 좌표도 새 해상도에 맞출 수 있습니다.")
         except Exception as error:

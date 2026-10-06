@@ -1,6 +1,12 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'BA Macro'
 RELEASES = (
+    ('0.2.29-experimental', '2026-10-06', (
+        '창 크기 변경 전 WM_SIZING으로 변경할 창 영역을 전달하는 실험 방식 추가',
+        '크기 조절 알림은 최대 300ms 대기, 실패해도 기존 크기 변경과 완료 알림 진행',
+        '화면 갱신 알림 실패 원인을 크기 변경 완료 로그에 표시',
+        '자동 테스트 331개 통과, 실제 게임의 선명도 개선 여부는 미검증',
+    )),
     ('0.2.28-experimental', '2026-10-06', (
         '크기 조절 시작 알림 실패로 실제 창 크기 변경까지 차단되는 회귀 수정',
         '기존 크기 변경 후 완료 알림만 비동기로 전달하고 응답 대기 제거',

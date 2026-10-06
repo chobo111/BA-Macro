@@ -66,7 +66,13 @@ get_dwm_attribute.restype = C.c_long
 get_menu = bind("GetMenu", [W.HWND], W.HMENU)
 set_position = bind("SetWindowPos", [W.HWND, W.HWND, C.c_int, C.c_int, C.c_int, C.c_int, W.UINT], W.BOOL)
 post_message = bind("PostMessageW", [W.HWND, W.UINT, W.WPARAM, W.LPARAM], W.BOOL)
+send_message_timeout = bind("SendMessageTimeoutW",
+                            [W.HWND, W.UINT, W.WPARAM, W.LPARAM, W.UINT, W.UINT, C.POINTER(ULONG_PTR)],
+                            C.c_ssize_t)
+get_window_rect = bind("GetWindowRect", [W.HWND, C.POINTER(W.RECT)], W.BOOL)
+WM_SIZING = 0x0214
 WM_EXITSIZEMOVE = 0x0232
+WMSZ_BOTTOMRIGHT = 8
 
 adjust = bind("AdjustWindowRectEx", [C.POINTER(W.RECT), W.DWORD, W.BOOL, W.DWORD], W.BOOL)
 adjust_dpi = (bind("AdjustWindowRectExForDpi", [C.POINTER(W.RECT), W.DWORD, W.BOOL, W.DWORD, W.UINT], W.BOOL)
@@ -80,6 +86,12 @@ set_foreground = bind("SetForegroundWindow", [W.HWND], W.BOOL)
 last_popup = bind("GetLastActivePopup", [W.HWND], W.HWND)
 ENUM = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
 enum_windows = bind("EnumWindows", [ENUM, W.LPARAM], W.BOOL)
+
+
+def resize_notice(step):
+    code = C.get_last_error()
+    reason = f'Windows 오류 {code}' if code else '응답 확인 실패'
+    return f'화면 갱신 {step} 전달 불가({reason})'
 
 
 def restore_process_window(process_id):
@@ -300,9 +312,29 @@ class Windows:
             check(adjust_dpi(*args, window_dpi(hwnd) or 96))
         else:
             check(adjust(*args))
-        check(set_position(hwnd, None, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
-                           0x0002 | 0x0004 | 0x0010))
-        # A rendering refresh is advisory. Never gate resizing on a foreign
-        # window's notification handler; the caller verifies the client size.
-        # No synthetic start: some apps defer work until interactive sizing ends.
-        post_message(hwnd, WM_EXITSIZEMOVE, 0, 0)
+        outer_width, outer_height = rect.right - rect.left, rect.bottom - rect.top
+        # WM_SIZING carries an outer rectangle in screen coordinates. Keep the
+        # requested dimensions independent of the receiver's in/out RECT edits.
+        notices = []
+        frame = W.RECT()
+        C.set_last_error(0)
+        if get_window_rect(hwnd, C.byref(frame)):
+            proposed = W.RECT(frame.left, frame.top, frame.left + outer_width, frame.top + outer_height)
+            result = ULONG_PTR()
+            C.set_last_error(0)
+            # This system message contains a pointer: send synchronously so
+            # Windows can marshal the RECT. Never post a process-local pointer.
+            if not send_message_timeout(hwnd, WM_SIZING, WMSZ_BOTTOMRIGHT, C.addressof(proposed),
+                                        0x0001 | 0x0002 | 0x0020, 300, C.byref(result)):
+                notices.append(resize_notice('크기 조절 알림'))
+        else:
+            notices.append(resize_notice('창 영역 확인'))
+        try:
+            check(set_position(hwnd, None, 0, 0, outer_width, outer_height,
+                               0x0002 | 0x0004 | 0x0010))
+        finally:
+            # A refresh hint must not gate resizing or hide a SetWindowPos error.
+            C.set_last_error(0)
+            if not post_message(hwnd, WM_EXITSIZEMOVE, 0, 0):
+                notices.append(resize_notice('완료 알림'))
+        return ' / '.join(notices)

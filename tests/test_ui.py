@@ -1723,3 +1723,22 @@ class UiTests(unittest.TestCase):
             self.assertEqual(dialog.result(),QDialog.DialogCode.Accepted)
             self.assertEqual(dialog.current_size,(1920,1080))
             dialog.deleteLater()
+
+    def test_resize_refresh_failure_is_shown_in_completion_log(self):
+        w=self.window
+        w.target=123
+        with patch('app.ResizeDialog') as factory, \
+             patch.object(w.native,'exists',return_value=True), \
+             patch.object(w.native,'size',return_value=(1280,720)), \
+             patch.object(w.native,'resize',return_value='화면 갱신 크기 조절 알림 전달 불가(Windows 오류 5)') as resize:
+            dialog=factory.return_value
+            dialog.current_size=(1920,1080)
+            dialog.convert_profile.isChecked.return_value=False
+            def execute():
+                factory.call_args.kwargs['request_resize']((1920,1080))
+                return QDialog.DialogCode.Accepted
+            dialog.exec.side_effect=execute
+            w.resize_dialog()
+            resize.assert_called_once_with(123,1920,1080)
+        self.assertIn('크기 변경 완료',w.statusBar().currentMessage())
+        self.assertIn('Windows 오류 5',w.statusBar().currentMessage())
