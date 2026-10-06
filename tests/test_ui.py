@@ -1711,7 +1711,7 @@ class UiTests(unittest.TestCase):
         w = self.window
         with patch('native.get_long',return_value=0), patch('native.get_menu',return_value=0), \
              patch('native.adjust_dpi',return_value=1), patch('native.window_dpi',return_value=96), \
-             patch('native.set_position',return_value=1), patch('native.post_message',return_value=0):
+             patch('native.set_position',return_value=1), patch('interactive_resize.refresh',return_value='갱신 확인 필요'):
             dialog = ResizeDialog((1280,720),w,
                                   request_resize=lambda size:w.native.resize(123,*size),
                                   read_size=lambda:(1920,1080))
