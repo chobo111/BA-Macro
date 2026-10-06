@@ -38,12 +38,38 @@ def sizing(hwnd,thread):
     return bool(info.flags & 2 and info.hwndMoveSize == hwnd)
 
 
+class ResizeTimeout(OSError):
+    pass
+
+
+class ClientSizeMismatch(OSError):
+    pass
+
+
 def wait_for(predicate,timeout=0.5):
     deadline = time.monotonic()+timeout
     while not predicate():
         if time.monotonic() >= deadline:
-            raise OSError('크기 조절 응답 시간이 초과되었습니다.')
+            raise ResizeTimeout('크기 조절 응답 시간이 초과되었습니다.')
         time.sleep(0.01)
+
+
+def wait_for_size(window, hwnd, expected):
+    """Use the requested client size, with two matching samples as in the UI."""
+    matches = 0
+    actual = None
+    def settled():
+        nonlocal matches, actual
+        actual = tuple(window.size(hwnd))
+        matches = matches + 1 if actual == expected else 0
+        return matches >= 2
+    try:
+        wait_for(settled)
+    except ResizeTimeout as error:
+        if actual == expected:
+            raise OSError('창 내부 크기의 안정화를 확인하지 못했습니다.') from error
+        requested, measured = '%d × %d' % expected, '%d × %d' % actual
+        raise ClientSizeMismatch(f'창 내부 크기가 다릅니다. 요청 {requested} / 실제 {measured}') from error
 
 
 def corner(rect):
@@ -62,15 +88,16 @@ def corner(rect):
 def resize(window, hwnd, width, height):
     """Apply the client size, then refresh rendering through system sizing."""
     window.resize(hwnd, width, height)
-    return refresh(hwnd)
+    return refresh(window, hwnd, (width, height))
 
 
-def refresh(hwnd):
+def refresh(window, hwnd, expected_size):
     """Return a diagnostic on failure; base resizing is already complete."""
     original_cursor = previous_focus = original_frame = None
     started = False
     thread = 0
     issue = ''
+    size_mismatch = False
     try:
         if not win.valid_window(hwnd) or win.minimized(hwnd) or is_zoomed(hwnd) or is_hung(hwnd):
             raise OSError('일반 상태의 응답 중인 창에서만 자동 드래그할 수 있습니다.')
@@ -81,6 +108,7 @@ def refresh(hwnd):
         thread = win.get_pid(hwnd,None)
         if not thread or sizing(hwnd,thread):
             raise OSError('이미 창을 이동하거나 크기를 조절하고 있습니다.')
+        wait_for_size(window, hwnd, expected_size)
         original_frame = frame(hwnd)
         edge,anchor,delta = corner(original_frame)
         original_cursor,previous_focus = win.cursor_position(),win.foreground()
@@ -99,19 +127,19 @@ def refresh(hwnd):
                 raise OSError('자동 드래그 중 포커스 또는 크기 조절 상태가 바뀌었습니다.')
         guarded()
         win.check(win.set_cursor(anchor[0]+delta[0],anchor[1]+delta[1]))
-        wait_for(lambda:frame(hwnd) != original_frame)
+        wait_for(lambda:tuple(window.size(hwnd)) != expected_size)
         guarded()
         win.check(win.set_cursor(*anchor))
-        wait_for(lambda:frame(hwnd) == original_frame)
+        wait_for_size(window, hwnd, expected_size)
         guarded()
         # Finish the system operation without synthesizing a click in the game.
         win.check(win.post_message(hwnd,WM_LBUTTONUP,0,0))
         wait_for(lambda:not sizing(hwnd,thread))
         started = False
-        if frame(hwnd) != original_frame:
-            raise OSError('자동 드래그 후 창 크기가 달라졌습니다.')
+        wait_for_size(window, hwnd, expected_size)
     except OSError as error:
         issue = str(error)
+        size_mismatch = isinstance(error, ClientSizeMismatch)
     finally:
         loop_closed = True
         if started:
@@ -125,9 +153,16 @@ def refresh(hwnd):
                 issue += ' / 크기 조절 종료를 확인하지 못했습니다. Esc를 눌러 주세요.'
         if issue and loop_closed and original_frame and win.valid_window(hwnd):
             try:
-                if frame(hwnd) != original_frame:
+                if tuple(window.size(hwnd)) != expected_size:
                     left,top,right,bottom = original_frame
                     win.check(win.set_position(hwnd,None,left,top,right-left,bottom-top,0x0004|0x0010))
+                    wait_for_size(window, hwnd, expected_size)
+                    if size_mismatch:
+                        issue = '크기 차이를 요청한 %d × %d로 복원했습니다.' % expected_size
+                elif size_mismatch:
+                    # A delayed resize may have settled while the loop was ending.
+                    wait_for_size(window, hwnd, expected_size)
+                    issue = ''
             except OSError:
                 issue += ' / 창 크기를 복원하지 못했습니다.'
         if loop_closed and original_cursor is not None and not win.set_cursor(*original_cursor):

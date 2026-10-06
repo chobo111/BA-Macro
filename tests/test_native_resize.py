@@ -22,14 +22,14 @@ class NativeResizeTests(unittest.TestCase):
         self.stack.enter_context(patch('native.get_long',return_value=0))
         self.stack.enter_context(patch('native.get_menu',return_value=0))
         self.position=self.stack.enter_context(patch('native.set_position',side_effect=lambda *a:self.events.append('resize') or 1))
-        self.refresh=self.stack.enter_context(patch('interactive_resize.refresh',side_effect=lambda h:self.events.append('refresh') or ''))
+        self.refresh=self.stack.enter_context(patch('interactive_resize.refresh',side_effect=lambda *args:self.events.append('refresh') or ''))
 
     def test_resize_precedes_interactive_refresh_with_dpi_and_position_preserved(self):
         self.assertEqual(resize(self.native,123,1920,1080),'')
         self.assertEqual(self.events,['resize','refresh'])
         self.position.assert_called_once_with(123,None,0,0,1936,1119,0x0002|0x0004|0x0010)
         self.assertEqual(self.adjust.call_args.args[-1],144)
-        self.refresh.assert_called_once_with(123)
+        self.refresh.assert_called_once_with(self.native,123,(1920,1080))
 
     def test_refresh_notice_does_not_invalidate_base_resize(self):
         self.refresh.side_effect=None
@@ -56,4 +56,4 @@ class NativeResizeTests(unittest.TestCase):
             resize(self.native,123,1280,720)
         adjust.assert_called_once()
         self.position.assert_called_once_with(123,None,0,0,1280,720,0x0002|0x0004|0x0010)
-        self.refresh.assert_called_once_with(123)
+        self.refresh.assert_called_once_with(self.native,123,(1280,720))
