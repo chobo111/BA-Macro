@@ -1,7 +1,7 @@
 """Canonical shortcut names shared by JSON, Qt adapters and input bindings."""
 MODIFIERS = ('ctrl', 'alt', 'shift', 'win')
 COMBINATION_MODIFIERS = ('ctrl', 'alt', 'shift')
-SHORTCUT_GUIDE = '조합키: Ctrl / Alt / Shift + 키\nWin 조합 및 Tab·Space + 문자 조합은 지원하지 않습니다.'
+SHORTCUT_GUIDE = 'Ctrl, Alt, Shift + 키만 가능합니다.'
 
 
 class ShortcutError(ValueError):

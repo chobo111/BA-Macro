@@ -183,6 +183,7 @@ class ClickToCaptureEdit(QKeySequenceEdit):
             self.field.setReadOnly(True)
             self.field.installEventFilter(self)
         self.keySequenceChanged.connect(self.finish_waiting)
+        self.finish_waiting()
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.ShortcutOverride:
@@ -228,10 +229,11 @@ class ClickToCaptureEdit(QKeySequenceEdit):
         self.finish_waiting()
 
     def finish_waiting(self, *_):
-        if self.waiting:
-            self.waiting = False
-            if self.field is not None:
-                self.field.setText(self.keySequence().toString(QKeySequence.SequenceFormat.NativeText))
+        self.waiting = False
+        if self.field is not None:
+            # Keep Qt's key identity (standalone Control) intact; normalize display only.
+            label = self.keySequence().toString(QKeySequence.SequenceFormat.NativeText)
+            self.field.setText(label.replace('Control', 'Ctrl'))
 
 
 class KeyDialog(QDialog):

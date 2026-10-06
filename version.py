@@ -1,6 +1,11 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'BA Macro'
 RELEASES = (
+    ('0.2.33-experimental', '2026-10-07', (
+        '행 단축키 및 환경설정 입력창의 Control 표기를 Ctrl로 통일',
+        '조합키 안내를 Ctrl, Alt, Shift + 키만 가능합니다로 간소화',
+        '내부 키 식별·저장 방식 유지, 자동 테스트 339개 및 두 입력창 표시·입력 확인 통과',
+    )),
     ('0.2.32-experimental', '2026-10-07', (
         '자동 드래그 크기 판정을 위치 포함 외곽 사각형 대신 요청한 창 내부 크기로 통일',
         '내부 크기를 두 번 연속 확인해 조절 직후 지연 갱신으로 인한 오경고 완화',
