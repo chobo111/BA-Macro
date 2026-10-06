@@ -284,7 +284,8 @@ class SettingsDialog(QDialog):
             action_form.addRow(label, field)
         for name, label in (("exclusive_hook", "처리한 단축키를 다른 앱에 전달하지 않기"),
                             ("auto_pause", "설정·편집 창을 열거나 변경할 때 자동 정지"),
-                            ("warn_app_mismatch", "시작 시 프로필 앱 불일치 알림")):
+                            ("warn_app_mismatch", "시작 시 프로필 앱 불일치 알림"),
+                            ("auto_convert_on_start", "창 크기가 다르면 묻지 않고 자동 변환")):
             checkbox = QCheckBox(label)
             checkbox.setChecked(getattr(settings, name))
             self.checks[name] = checkbox

@@ -18,6 +18,7 @@ from engine import Engine
 from native import Windows
 from hotkeys import Hotkeys
 from execution_plan import ExecutionPlan
+from coordinate_transform import aspect_warning
 from script_editor import ScriptEditor
 from persistence import ProfileStore
 from profile_saves import ProfileSaves
@@ -458,6 +459,10 @@ class MainWindow(QMainWindow):
             self.error(str(error))
             return
         self.update_labels()
+        if plan.automatic and self.settings.auto_convert_on_start:
+            warning = aspect_warning(plan.source_resolution, plan.expected_size)
+            if warning:
+                self.statusBar().showMessage(warning)
 
     def check_running_size(self, size=None):
         if self.armed and self.session.plan is not None:
@@ -486,6 +491,7 @@ class MainWindow(QMainWindow):
 
         resolution = self.profile.resolution
         automatic = False
+        remember_automatic = False
         saved = dict(self.profile.target_program)
         current = self.native.window_identity(target) if target else {}
         if saved and not same_program(saved, current) and self.settings.warn_app_mismatch:
@@ -500,10 +506,15 @@ class MainWindow(QMainWindow):
         current_size = tuple(self.native.size(target)) if target or self.native.display_id else None
         if resolution and current_size is not None:
             if current_size != resolution:
-                with managed_dialog(SizeMismatchDialog(
-                        resolution, current_size, self, can_resize=bool(target))) as dialog:
-                    dialog.exec()
-                    choice = dialog.choice()
+                if target and self.settings.auto_convert_on_start:
+                    choice = 'auto'
+                else:
+                    with managed_dialog(SizeMismatchDialog(
+                            resolution, current_size, self, can_resize=bool(target))) as dialog:
+                        dialog.exec()
+                        choice = dialog.choice()
+                        remember_automatic = (choice == 'auto' and bool(target)
+                                              and dialog.skip_warning.isChecked() is True)
                 if not selection_valid():
                     return None
                 if choice == 'resize':
@@ -528,6 +539,8 @@ class MainWindow(QMainWindow):
         plan = ExecutionPlan(target, resolution, current_size if target else None,
                              automatic=automatic, display_id=display_id)
         plan.check_context(self.native, self.target, self.profile.resolution)
+        if remember_automatic:
+            self.commit_settings(replace(self.settings, auto_convert_on_start=True))
         if current != self.profile.target_program:
             self.profile.target_program = current
             self.changed()

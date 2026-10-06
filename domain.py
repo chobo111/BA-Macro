@@ -166,6 +166,7 @@ class Settings:
     exclusive_hook: bool = True
     auto_pause: bool = True
     warn_app_mismatch: bool = True
+    auto_convert_on_start: bool = False
     theme: str = "Dark"
     last_profile: str = ""
     display_id: str = ""
@@ -184,7 +185,7 @@ class Settings:
             raise ValueError("캡처와 작동/정지 단축키는 서로 다르게 지정하세요.")
         for name in ("move_to_click_delay_ms", "click_hold_ms", "cursor_return_delay_ms", "drag_segment_duration_ms"):
             setattr(obj, name, bounded_int(data.get(name, getattr(obj, name)), 1 if name == "click_hold_ms" else 0, 99999, name))
-        for name in ("exclusive_hook", "auto_pause", "return_cursor", "resize_convert_profile", "warn_app_mismatch"):
+        for name in ("exclusive_hook", "auto_pause", "return_cursor", "resize_convert_profile", "warn_app_mismatch", "auto_convert_on_start"):
             value = data.get(name, getattr(obj, name))
             if not isinstance(value, bool):
                 raise ValueError(f"{name}: 참/거짓 값이 필요합니다.")

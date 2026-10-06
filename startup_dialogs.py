@@ -49,6 +49,10 @@ class SizeMismatchDialog(QMessageBox):
         self.resize_button = self.addButton('창 크기 변경', QMessageBox.ButtonRole.ActionRole)
         self.resize_button.setEnabled(can_resize and all(1 <= v <= 16384 for v in saved))
         self.convert_button = self.addButton('자동 변환으로 시작' if can_resize else '프로필 좌표 변환', QMessageBox.ButtonRole.ActionRole)
+        self.skip_warning = None
+        if can_resize:
+            self.skip_warning = QCheckBox('다음부터 묻지 않기')
+            self.setCheckBox(self.skip_warning)
         self.cancel_button = self.addButton('취소', QMessageBox.ButtonRole.RejectRole)
         self.setDefaultButton(self.cancel_button)
         self.setEscapeButton(self.cancel_button)

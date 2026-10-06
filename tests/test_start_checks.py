@@ -671,3 +671,105 @@ class StartChecks(unittest.TestCase):
         w.toggle()
         self.assertTrue(w.armed)
         self.assertIsNone(w.coordinate_transform)
+
+    def test_auto_conversion_preference_persists_and_skips_next_size_prompt(self):
+        w = self.window
+        self.size.return_value = (1835,1032)
+        with patch('app.SizeMismatchDialog') as prompt:
+            prompt.return_value.choice.return_value = 'auto'
+            prompt.return_value.skip_warning.isChecked.return_value = True
+            w.toggle()
+        self.assertTrue(w.armed)
+        self.assertTrue(w.settings.auto_convert_on_start)
+        persisted = Settings.read(read_json(w.settings_path))
+        self.assertTrue(persisted.auto_convert_on_start)
+        w.stop()
+        w.settings = persisted
+        self.size.return_value = (1920,1080)
+        with patch('app.SizeMismatchDialog') as prompt:
+            w.toggle()
+        prompt.assert_not_called()
+        self.assertTrue(w.armed)
+        self.assertEqual(w.coordinate_transform,((1280,720),(1920,1080)))
+        self.assertEqual(w.profile.resolution,(1280,720))
+
+    def test_auto_conversion_checkbox_cancel_and_resize_do_not_save_preference(self):
+        w = self.window
+        self.size.return_value = (1920,1080)
+        for choice in ('cancel','resize'):
+            with self.subTest(choice=choice), patch('app.SizeMismatchDialog') as prompt, patch.object(w,'resize_dialog'):
+                prompt.return_value.choice.return_value = choice
+                prompt.return_value.skip_warning.isChecked.return_value = True
+                w.toggle()
+            self.assertFalse(w.armed)
+            self.assertFalse(w.settings.auto_convert_on_start)
+
+    def test_auto_conversion_preference_failure_stops_and_preserves_settings(self):
+        w = self.window
+        self.size.return_value = (1920,1080)
+        with patch('app.SizeMismatchDialog') as prompt, patch.object(w.store,'settings',side_effect=OSError('save failed')), patch.object(w,'error') as error:
+            prompt.return_value.choice.return_value = 'auto'
+            prompt.return_value.skip_warning.isChecked.return_value = True
+            w.toggle()
+        error.assert_called_once_with('save failed')
+        self.assertFalse(w.armed)
+        self.assertIsNone(w.session.plan)
+        self.assertFalse(w.settings.auto_convert_on_start)
+
+    def test_auto_preference_keeps_app_warning_and_display_conversion(self):
+        w = self.window
+        w.settings.auto_convert_on_start = True
+        self.size.return_value = (1920,1080)
+        self.identity.return_value = OTHER
+        with patch('app.AppMismatchDialog') as app_prompt, patch('app.SizeMismatchDialog') as size_prompt:
+            app_prompt.return_value.confirmed.return_value = False
+            w.toggle()
+        app_prompt.assert_called_once()
+        size_prompt.assert_not_called()
+        self.assertFalse(w.armed)
+        w.target = 0
+        w.profile.target_program = {}
+        w.native.display_id = 'test-display'
+        with patch('app.SizeMismatchDialog') as prompt:
+            prompt.return_value.choice.return_value = 'cancel'
+            w.toggle()
+        prompt.assert_called_once()
+        self.assertFalse(w.armed)
+
+    def test_automatic_ratio_warning_goes_to_log_and_resize_still_stops(self):
+        w = self.window
+        w.settings.auto_convert_on_start = True
+        self.size.return_value = (1280,960)
+        with patch('app.SizeMismatchDialog') as prompt:
+            w.toggle()
+        prompt.assert_not_called()
+        self.assertTrue(w.armed)
+        self.assertIn('경고',w.statusBar().currentMessage())
+        self.size.return_value = (1600,900)
+        self.assertFalse(w.check_running_size())
+        self.assertFalse(w.armed)
+
+    def test_auto_conversion_checkbox_and_settings_can_restore_prompt(self):
+        from widgets import SettingsDialog
+        self.assertFalse(Settings.read({}).auto_convert_on_start)
+        with self.assertRaises(ValueError):
+            Settings.read({'auto_convert_on_start':'true'})
+        for selected in (True,False):
+            dialog = SizeMismatchDialog((1280,720),(1920,1080),self.window,can_resize=selected)
+            if selected:
+                self.assertEqual(dialog.skip_warning.text(),'다음부터 묻지 않기')
+                self.assertFalse(dialog.skip_warning.isChecked())
+            else:
+                self.assertIsNone(dialog.skip_warning)
+            dialog.deleteLater()
+        w = self.window
+        settings = SettingsDialog(Settings(auto_convert_on_start=True),w)
+        self.assertTrue(settings.checks['auto_convert_on_start'].isChecked())
+        settings.checks['auto_convert_on_start'].setChecked(False)
+        w.commit_settings(settings.value())
+        settings.deleteLater()
+        self.size.return_value = (1920,1080)
+        with patch('app.SizeMismatchDialog') as prompt:
+            prompt.return_value.choice.return_value = 'cancel'
+            w.toggle()
+        prompt.assert_called_once()

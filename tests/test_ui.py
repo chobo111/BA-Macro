@@ -209,7 +209,7 @@ class UiTests(unittest.TestCase):
         self.assertNotIn('auto_fire', asdict(settings))
         self.assertNotIn('show_realtime', asdict(settings))
         dialog = SettingsDialog(settings, self.window)
-        self.assertEqual(set(dialog.checks), {'auto_pause', 'exclusive_hook', 'return_cursor', 'warn_app_mismatch'})
+        self.assertEqual(set(dialog.checks), {'auto_pause', 'exclusive_hook', 'return_cursor', 'warn_app_mismatch', 'auto_convert_on_start'})
         dialog.checks['auto_pause'].setChecked(False)
         self.assertFalse(dialog.value().auto_pause)
         dialog.deleteLater()
