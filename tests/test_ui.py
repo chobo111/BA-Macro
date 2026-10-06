@@ -1705,3 +1705,21 @@ class UiTests(unittest.TestCase):
             error.assert_not_called()
         self.assertIs(w.settings,original)
         self.assertIn('단독',w.statusBar().currentMessage())
+
+    def test_resize_verifies_actual_size_even_when_refresh_notification_is_rejected(self):
+        import native
+        w = self.window
+        with patch('native.get_long',return_value=0), patch('native.get_menu',return_value=0), \
+             patch('native.adjust_dpi',return_value=1), patch('native.window_dpi',return_value=96), \
+             patch('native.set_position',return_value=1), patch('native.post_message',return_value=0):
+            dialog = ResizeDialog((1280,720),w,
+                                  request_resize=lambda size:w.native.resize(123,*size),
+                                  read_size=lambda:(1920,1080))
+            dialog.set_size((1920,1080))
+            dialog.apply()
+            self.assertTrue(dialog.pending)
+            dialog.verify_resize()
+            dialog.verify_resize()
+            self.assertEqual(dialog.result(),QDialog.DialogCode.Accepted)
+            self.assertEqual(dialog.current_size,(1920,1080))
+            dialog.deleteLater()

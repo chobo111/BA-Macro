@@ -65,12 +65,8 @@ get_dwm_attribute.argtypes = [W.HWND, W.DWORD, C.c_void_p, W.DWORD]
 get_dwm_attribute.restype = C.c_long
 get_menu = bind("GetMenu", [W.HWND], W.HMENU)
 set_position = bind("SetWindowPos", [W.HWND, W.HWND, C.c_int, C.c_int, C.c_int, C.c_int, W.UINT], W.BOOL)
-send_message_timeout = bind("SendMessageTimeoutW",
-                            [W.HWND, W.UINT, W.WPARAM, W.LPARAM, W.UINT, W.UINT, C.POINTER(ULONG_PTR)],
-                            C.c_ssize_t)
-WM_ENTERSIZEMOVE = 0x0231
+post_message = bind("PostMessageW", [W.HWND, W.UINT, W.WPARAM, W.LPARAM], W.BOOL)
 WM_EXITSIZEMOVE = 0x0232
-RESIZE_NOTIFICATION_TIMEOUT_MS = 1000
 
 adjust = bind("AdjustWindowRectEx", [C.POINTER(W.RECT), W.DWORD, W.BOOL, W.DWORD], W.BOOL)
 adjust_dpi = (bind("AdjustWindowRectExForDpi", [C.POINTER(W.RECT), W.DWORD, W.BOOL, W.DWORD, W.UINT], W.BOOL)
@@ -84,19 +80,6 @@ set_foreground = bind("SetForegroundWindow", [W.HWND], W.BOOL)
 last_popup = bind("GetLastActivePopup", [W.HWND], W.HWND)
 ENUM = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
 enum_windows = bind("EnumWindows", [ENUM, W.LPARAM], W.BOOL)
-
-
-def notify_resize(hwnd, message):
-    """Wait for the target to process a resize boundary, not its LRESULT value."""
-    result = ULONG_PTR()
-    C.set_last_error(0)
-    # BLOCK avoids re-entry; ABORTIFHUNG/ERRORONEXIT bound failure handling.
-    if not send_message_timeout(hwnd, message, 0, 0, 0x0001 | 0x0002 | 0x0020,
-                                RESIZE_NOTIFICATION_TIMEOUT_MS, C.byref(result)):
-        code = C.get_last_error()
-        detail = str(C.WinError(code)) if code else '앱의 응답을 확인하지 못했습니다.'
-        phase = '시작' if message == WM_ENTERSIZEMOVE else '완료'
-        raise OSError(f'창 크기 조절 {phase} 알림 실패: {detail}')
 
 
 def restore_process_window(process_id):
@@ -317,16 +300,9 @@ class Windows:
             check(adjust_dpi(*args, window_dpi(hwnd) or 96))
         else:
             check(adjust(*args))
-        try:
-            notify_resize(hwnd, WM_ENTERSIZEMOVE)
-            check(set_position(hwnd, None, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
-                               0x0002 | 0x0004 | 0x0010))
-        except Exception:
-            # Even a timed-out start may have reached the app. Always try to
-            # release its resize state, without replacing the original error.
-            try:
-                notify_resize(hwnd, WM_EXITSIZEMOVE)
-            except OSError:
-                pass
-            raise
-        notify_resize(hwnd, WM_EXITSIZEMOVE)
+        check(set_position(hwnd, None, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
+                           0x0002 | 0x0004 | 0x0010))
+        # A rendering refresh is advisory. Never gate resizing on a foreign
+        # window's notification handler; the caller verifies the client size.
+        # No synthetic start: some apps defer work until interactive sizing ends.
+        post_message(hwnd, WM_EXITSIZEMOVE, 0, 0)
