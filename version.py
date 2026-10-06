@@ -1,6 +1,12 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'BA Macro'
 RELEASES = (
+    ('0.2.27-experimental', '2026-10-06', (
+        '창 크기 변경 전후에 조절 시작·완료 알림을 보내 게임의 렌더링 해상도 갱신 유도',
+        '추가 알림은 각각 최대 1초 대기, 실패 시 완료 알림 정리 및 오류 안내',
+        'DPI 보정·창 위치·포커스 유지와 실제 크기 확인 로직 유지',
+        '자동 테스트 326개 통과, 확대 후 선명도 개선 여부는 실제 게임에서 사용자 검증 필요',
+    )),
     ('0.2.26-experimental', '2026-10-06', (
         '조합 보조키를 Ctrl·Alt·Shift로 제한하고 입력창·환경설정에 안내 추가',
         '보조키 단독과 같은 보조키를 사용하는 조합의 중복 지정 방지',
