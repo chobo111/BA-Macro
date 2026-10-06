@@ -798,9 +798,9 @@ class UiTests(unittest.TestCase):
         dialog.destination.mode.setCurrentText('4:3')
         dialog.refresh()
         self.assertEqual(dialog.destination.value(),(640,480))
-        self.assertFalse(dialog.copy_button.isEnabled())
-        self.assertFalse(dialog.apply_button.isEnabled())
-        self.assertIn('비율',dialog.error.text())
+        self.assertTrue(dialog.copy_button.isEnabled())
+        self.assertTrue(dialog.apply_button.isEnabled())
+        self.assertIn('비율',dialog.notice.text())
         dialog.destination.mode.setCurrentText('16:9')
         dialog.refresh()
         self.assertTrue(dialog.copy_button.isEnabled())
@@ -1583,26 +1583,28 @@ class UiTests(unittest.TestCase):
         self.qt.processEvents()
         self.assertEqual(w.table.cellWidget(1,1).size(), before[-1])
 
-    def test_ratio_change_cannot_save_stale_conversion_plan(self):
+    def test_ratio_change_refreshes_warning_and_saves_latest_conversion(self):
         from conversion_dialog import ConversionDialog
         from unittest.mock import Mock
         w = self.window
         w.profile.resolution = (1920,1080)
         before = w.profile.export()
-        saved = Mock(return_value=True)
+        saved = Mock(return_value=False)
         dialog = ConversionDialog(w.profile,w.path,(1280,720),saved,w)
         self.assertTrue(dialog.copy_button.isEnabled())
         dialog.destination.set_value((1280,960))
         self.assertFalse(dialog.copy_button.isEnabled())
         for mode in ('copy','apply'):
             dialog.save(mode)
-        saved.assert_not_called()
-        self.assertIsNone(dialog.plan)
+            self.assertEqual(saved.call_args.args[0].resolution,(1280,960))
+        self.assertEqual(saved.call_count,2)
         self.assertEqual(w.profile.export(),before)
-        self.assertIn('16:9',dialog.error.text())
-        self.assertIn('4:3',dialog.error.text())
-        dialog.destination.set_value((1280,720))
+        self.assertIn('16:9',dialog.notice.text())
+        self.assertIn('4:3',dialog.notice.text())
+        self.assertEqual(dialog.error.text(),'')
+        dialog.destination.set_value((1835,1032))
         dialog.refresh()
         self.assertTrue(dialog.apply_button.isEnabled())
+        self.assertEqual(dialog.notice.text(),'')
         dialog.reject()
         dialog.deleteLater()

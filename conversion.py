@@ -3,7 +3,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 import re
 
-from coordinate_transform import COORD_COMMANDS, CoordinateOutOfBounds, transform_point, require_same_aspect_ratio
+from coordinate_transform import COORD_COMMANDS, CoordinateOutOfBounds, transform_point, aspect_warning
 from domain import bounded_int
 from script_language import compile_script
 
@@ -21,8 +21,8 @@ class ConversionPlan:
 
 def plan_conversion(profile, source, destination):
     sw, sh, dw, dh = [bounded_int(v, 1, 100000, '해상도') for v in (*source, *destination)]
-    require_same_aspect_ratio((sw, sh), (dw, dh))
-    plan = ConversionPlan(deepcopy(profile), [], [], [])
+    warning = aspect_warning((sw, sh), (dw, dh))
+    plan = ConversionPlan(deepcopy(profile), [], [], [warning] if warning else [])
 
     def point(x, y, location):
         try:

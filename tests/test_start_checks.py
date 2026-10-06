@@ -636,28 +636,26 @@ class StartChecks(unittest.TestCase):
         self.assertIsNone(w.session.plan)
         self.assertIn('디스플레이', w.statusBar().currentMessage())
 
-    def test_different_ratio_disables_conversion_and_keeps_resize_available(self):
+    def test_different_ratio_warns_and_keeps_conversion_available(self):
         for app_selected in (True,False):
             with self.subTest(app_selected=app_selected):
                 dialog = SizeMismatchDialog((1280,720),(1280,960),self.window,can_resize=app_selected)
-                self.assertFalse(dialog.convert_button.isEnabled())
+                self.assertTrue(dialog.convert_button.isEnabled())
                 self.assertEqual(dialog.resize_button.isEnabled(),app_selected)
                 self.assertIn('16:9',dialog.informativeText())
                 self.assertIn('4:3',dialog.informativeText())
                 dialog.deleteLater()
 
-    def test_different_ratio_cannot_start_even_if_auto_choice_is_injected(self):
+    def test_different_ratio_starts_after_auto_choice_with_original_coordinates_preserved(self):
         w = self.window
         self.size.return_value = (1280,960)
-        self.identity.return_value = {**GAME,'title':'Updated title'}
         before = w.profile.export()
         with patch('app.SizeMismatchDialog') as prompt, patch.object(w,'error') as error:
             prompt.return_value.choice.return_value = 'auto'
             w.toggle()
-        error.assert_called_once()
-        self.assertIn('비율',error.call_args.args[0])
-        self.assertFalse(w.armed)
-        self.assertIsNone(w.session.plan)
+        error.assert_not_called()
+        self.assertTrue(w.armed)
+        self.assertEqual(w.coordinate_transform,((1280,720),(1280,960)))
         self.assertEqual(w.profile.export(),before)
 
     def test_different_ratio_resize_then_restart_uses_original_coordinates(self):

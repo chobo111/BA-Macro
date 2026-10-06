@@ -85,16 +85,26 @@ class Coordinates(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, '^원본 좌표가 프로필 기준 해상도 밖에 있습니다.$'):
                     scaled_program(profile.rows[0].script, (100, 60), (200, 120))
 
-    def test_aspect_gate_covers_points_scripts_without_points_and_start_plan(self):
-        from coordinate_transform import AspectRatioMismatch
+    def test_different_aspect_allows_points_scripts_and_start_plan(self):
         from execution_plan import ExecutionPlan
         source, destination = (1920,1080), (1280,960)
-        with self.assertRaises(AspectRatioMismatch):
-            scaled_point((100,200), source, destination)
-        for script in ('click 100,200','click mouse','sleep 5',''):
-            with self.subTest(script=script), self.assertRaises(AspectRatioMismatch):
-                scaled_program(script, source, destination)
-        with self.assertRaises(AspectRatioMismatch):
-            ExecutionPlan(123, source, destination, automatic=True)
-        self.assertEqual(scaled_point((960,540), source, (1280,720)), (640,360))
-        self.assertEqual(scaled_point((640,480), (1280,960), (800,600)), (400,300))
+        self.assertEqual(scaled_point((960,540), source, destination), (640,480))
+        for script in ('click 100,200','click mouse','sleep 5'):
+            with self.subTest(script=script):
+                self.assertIsNotNone(scaled_program(script, source, destination))
+        plan = ExecutionPlan(123, source, destination, automatic=True)
+        self.assertEqual(plan.coordinate_transform, (source,destination))
+        for script in ('click mouse','sleep 5'):
+            with self.assertRaises(ValueError):
+                scaled_program(script, source, (1280,0))
+
+    def test_warning_tolerates_quantized_width_on_both_sides(self):
+        from coordinate_transform import aspect_warning
+        for source,destination in (((1920,1080),(1835,1032)), ((1835,1032),(1920,1080)),
+                                   ((1835,1032),(7680,4320)), ((1280,720),(1920,1080)),
+                                   ((1920,1080),(1922,1080))):
+            with self.subTest(source=source,destination=destination):
+                self.assertEqual(aspect_warning(source,destination),'')
+                self.assertEqual(plan_conversion(Profile.default(),source,destination).warnings,[])
+        for destination in ((1923,1080),(1280,960)):
+            self.assertIn('경고',aspect_warning((1920,1080),destination))

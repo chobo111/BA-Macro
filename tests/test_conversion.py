@@ -73,14 +73,13 @@ class ConversionTests(unittest.TestCase):
                                    Row(action_mode='script', script=source)])
                 self.assertTrue(plan_conversion(profile, (1000,1000), (500,500)).errors)
 
-    def test_different_aspect_is_rejected_without_mutating_original(self):
-        from coordinate_transform import AspectRatioMismatch
+    def test_different_aspect_warns_without_mutating_original(self):
         profile = Profile([Row(x=100,y=200,script='curve 10,20 mouse')], (1920,1080))
         before = profile.export()
-        for destination in ((1280,960),(1920,1081)):
-            with self.subTest(destination=destination):
-                with self.assertRaises(AspectRatioMismatch):
-                    plan_conversion(profile, profile.resolution, destination)
-                with self.assertRaises(AspectRatioMismatch):
-                    profile.convert(profile.resolution, destination)
-                self.assertEqual(profile.export(), before)
+        plan = plan_conversion(profile, profile.resolution, (1280,960))
+        self.assertTrue(plan.warnings)
+        self.assertFalse(plan.errors)
+        self.assertEqual(plan.profile.resolution, (1280,960))
+        self.assertEqual(profile.export(), before)
+        profile.convert((1920,1080),(1280,960))
+        self.assertEqual(profile.resolution, (1280,960))
