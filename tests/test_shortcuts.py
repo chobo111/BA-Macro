@@ -35,8 +35,17 @@ class ShortcutTests(unittest.TestCase):
                     Profile.read(Profile([Row(move_hk=first), Row(move_hk=second)]).export())
 
     def test_canonical_shortcuts_survive_profile_and_settings_serialization(self):
-        for value in ('win+q', 'plus', 'ctrl+plus', 'ctrl+page up', 'alt+page down'):
+        for value in ('win+q', 'plus', 'ctrl+plus', 'ctrl+page up', 'alt+page down', 'tab', 'caps lock', 'ctrl', 'alt', 'shift', 'win'):
             with self.subTest(value=value):
                 profile = Profile([Row(move_hk=value)])
                 self.assertEqual(Profile.read(profile.export()).rows[0].move_hk, value)
                 self.assertEqual(Settings.read({'pause_hk': value}).pause_hk, value)
+
+    def test_standalone_modifiers_round_trip_and_reject_alias_duplicates(self):
+        for canonical in ('ctrl','alt','shift','win'):
+            self.assertEqual(hotkey(qt_hotkey(canonical)),canonical)
+        for first,second in (('Control','ctrl'),('Meta','win'),('CapsLock','caps lock')):
+            with self.assertRaises(ValueError):
+                Profile([Row(move_hk=first),Row(move_hk=second)]).validate()
+        with self.assertRaises(ValueError):
+            hotkey('ctrl+shift')

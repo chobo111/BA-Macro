@@ -28,11 +28,16 @@ def hotkey(value: str) -> str:
         raise ValueError('단축키에 같은 키가 두 번 들어갔습니다.')
     modifiers = [key for key in MODIFIERS if key in parts]
     keys = [key for key in parts if key not in MODIFIERS]
+    if not keys and len(modifiers) == 1:
+        return modifiers[0]
     if len(keys) != 1:
-        raise ValueError('단축키는 보조키와 일반 키 하나로 지정하세요.')
+        raise ValueError('단축키는 키 하나 또는 보조키와 일반 키 조합으로 지정하세요.')
     return '+'.join(modifiers + keys)
 
 
 def qt_hotkey(value: str) -> str:
     """Translate canonical storage names to Qt PortableText without losing keys."""
-    return '+'.join(QT_NAMES.get(part, part) for part in hotkey(value).split('+'))
+    canonical = hotkey(value)
+    if canonical == 'ctrl':
+        return 'Control'
+    return '+'.join(QT_NAMES.get(part, part) for part in canonical.split('+'))

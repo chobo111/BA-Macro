@@ -7,6 +7,8 @@ from mouse_hook import CoordinateHook
 from script_language import compile_script, ScriptError
 from script_help import ScriptHelpDialog
 from domain import same_program
+from coordinate_cache import scaled_point
+from coordinate_transform import aspect_warning
 
 class Highlighter(QSyntaxHighlighter):
     def highlightBlock(self, text):
@@ -33,6 +35,9 @@ class ScriptEditor(QDialog):
         self.coordinate_hook = None
         self.coordinate_clicked.connect(self.capture_screen_point, Qt.ConnectionType.QueuedConnection)
         self.capture_resolution = None
+        self.capture_size = None
+        self.capture_profile = parent.profile
+        self.profile_resolution = parent.profile.resolution
         self.capture_program = None
         self.source = source
         self.native, self.target = native, target
@@ -160,10 +165,11 @@ class ScriptEditor(QDialog):
         if self.validate():
             if self.capture_resolution is not None:
                 try:
+                    self.validate_capture_profile()
                     identity = self.parentWidget().confirm_coordinate_app(self.target, expected=self.capture_program)
                     if identity is None:
                         return
-                    if self.native.size(self.target) != self.capture_resolution:
+                    if self.native.size(self.target) != self.capture_size:
                         raise ValueError('캡처 후 화면 크기가 변경되었습니다. 다시 캡처하세요.')
                     self.capture_program = identity
                 except (ValueError, OSError) as error:
@@ -224,6 +230,12 @@ class ScriptEditor(QDialog):
                 self.sync_to_parent()
         return super().eventFilter(watched, event)
 
+    def validate_capture_profile(self):
+        profile = self.parentWidget().profile
+        if profile is not self.capture_profile or profile.resolution != self.profile_resolution:
+            raise ValueError('프로필 기준 크기가 변경되었습니다. 편집기를 다시 열어 주세요.')
+        return profile
+
     def pick_coordinate(self, point=None):
         try:
             x, y = point if point is not None else self.native.cursor(self.target)
@@ -232,20 +244,29 @@ class ScriptEditor(QDialog):
                 self.log('대상 영역 안의 좌표를 우클릭하세요. 좌표는 최대 5자리입니다.', error=True)
                 return
             size = self.native.size(self.target)
-            profile = self.parentWidget().profile
+            profile = self.validate_capture_profile()
             basis = self.capture_resolution or profile.resolution
             has_coordinates = any(row.x or row.y or row.script.strip() for row in profile.rows)
-            if (basis and basis != size) or (not basis and has_coordinates):
+            if (not basis and has_coordinates) or (basis and basis != size and not self.target):
                 self.log('해상도 기준이 다릅니다. 편집기를 닫고 설정 → 프로필 해상도 변환을 먼저 진행하세요.', error=True)
                 return
             identity = self.native.window_identity(self.target) if self.target else {}
             if self.capture_program is not None and identity != self.capture_program and not same_program(self.capture_program, identity):
                 self.log('좌표를 가져온 앱이 변경되었습니다. 편집기를 다시 열어 주세요.', error=True)
                 return
+            warning = ''
+            converted = basis is not None and basis != size
+            if converted:
+                x, y = scaled_point((x, y), size, basis)
+                warning = aspect_warning(basis, size)
+            if self.native.size(self.target) != size:
+                raise ValueError('캡처 중 창 크기가 변경되었습니다. 다시 캡처하세요.')
             self.capture_program = identity
-            self.capture_resolution = size
+            self.capture_resolution = basis or size
+            self.capture_size = size
             self.editor.insertPlainText(f'{x},{y}')
-            self.log(f'좌표 추가: {x}, {y}')
+            message = f'기준 좌표로 변환하여 추가: {x}, {y}' if converted else f'좌표 추가: {x}, {y}'
+            self.log(message + (' · ' + warning if warning else ''))
             self.editor.setFocus()
-        except OSError as error:
+        except (OSError, ValueError) as error:
             self.log(str(error), error=True)

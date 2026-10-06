@@ -773,3 +773,93 @@ class StartChecks(unittest.TestCase):
             prompt.return_value.choice.return_value = 'cancel'
             w.toggle()
         prompt.assert_called_once()
+
+    def test_script_capture_uses_original_basis_after_automatic_conversion_and_pause(self):
+        w = self.window
+        w.show()
+        self.qt.processEvents()
+        w.settings.auto_convert_on_start = True
+        row = w.profile.rows[0]
+        row.action_mode = 'script'
+        row.script = 'click 640,360'
+        self.size.return_value = (1920,1080)
+        w.toggle()
+        self.assertTrue(w.armed)
+        w.edit_script(row.id)
+        editor = w.script_editor
+        self.assertFalse(w.armed)
+        editor.editor.setPlainText('click ')
+        cursor = editor.editor.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        editor.editor.setTextCursor(cursor)
+        with patch.object(w.native,'bounds',return_value=(0,0,1920,1080)), patch.object(w.native,'local_point',return_value=(960,540)):
+            editor.capture_screen_point(1200,800)
+        self.assertEqual(editor.editor.toPlainText(),'click 640,360')
+        self.assertEqual(editor.capture_resolution,(1280,720))
+        self.assertEqual(editor.capture_size,(1920,1080))
+        editor.save()
+        self.assertIsNone(w.script_editor)
+        w.flush_pending_saves()
+        saved = Profile.read(read_json(w.path))
+        self.assertEqual(saved.resolution,(1280,720))
+        self.assertEqual(saved.rows[0].script,'click 640,360')
+
+    def test_script_reverse_capture_handles_rounding_and_ratio_warning(self):
+        from coordinate_cache import scaled_point
+        w = self.window
+        row = w.profile.rows[0]
+        row.action_mode = 'script'
+        w.edit_script(row.id)
+        editor = w.script_editor
+        for size,point in (((1835,1032),(1834,1031)),((1280,960),(640,480))):
+            self.size.return_value = size
+            editor.editor.setPlainText('')
+            with patch.object(w.native,'bounds',return_value=(0,0,*size)):
+                editor.pick_coordinate(point)
+            expected = scaled_point(point,size,(1280,720))
+            self.assertEqual(editor.editor.toPlainText(),'%d,%d' % expected)
+            self.assertEqual(editor.capture_resolution,(1280,720))
+            self.assertEqual(editor.capture_size,size)
+        self.assertIn('경고',editor.validation.text())
+        self.assertFalse(editor.validation.property('error'))
+
+    def test_script_capture_rejects_actual_size_change_before_save(self):
+        w = self.window
+        row = w.profile.rows[0]
+        row.action_mode = 'script'
+        w.edit_script(row.id)
+        editor = w.script_editor
+        self.size.return_value = (1920,1080)
+        with patch.object(w.native,'bounds',return_value=(0,0,1920,1080)):
+            editor.pick_coordinate((960,540))
+        editor.editor.setPlainText('click 640,360')
+        self.size.return_value = (1600,900)
+        editor.save()
+        self.assertIs(w.script_editor,editor)
+        self.assertIn('크기가 변경',editor.validation.text())
+        self.assertEqual(row.script,'')
+        self.assertEqual(w.profile.resolution,(1280,720))
+
+    def test_script_capture_rejects_changed_profile_basis_and_unknown_nonempty_basis(self):
+        w = self.window
+        row = w.profile.rows[0]
+        row.action_mode = 'script'
+        w.edit_script(row.id)
+        editor = w.script_editor
+        self.size.return_value = (1920,1080)
+        with patch.object(w.native,'bounds',return_value=(0,0,1920,1080)):
+            editor.pick_coordinate((960,540))
+        editor.editor.setPlainText('click 640,360')
+        w.profile.resolution = (1600,900)
+        editor.save()
+        self.assertIs(w.script_editor,editor)
+        self.assertIn('기준 크기',editor.validation.text())
+        editor.reject()
+        w.profile.resolution = None
+        row.script = 'click 50,50'
+        w.edit_script(row.id)
+        editor = w.script_editor
+        with patch.object(w.native,'bounds',return_value=(0,0,1920,1080)):
+            editor.pick_coordinate((960,540))
+        self.assertEqual(editor.editor.toPlainText(),'click 50,50')
+        self.assertIsNone(editor.capture_resolution)

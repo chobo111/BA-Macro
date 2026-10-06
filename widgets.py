@@ -4,7 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import asdict
 
-from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent, QSignalBlocker
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent, QSignalBlocker, QKeyCombination
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolygon, QPen
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QHeaderView, QAbstractItemView,
@@ -161,36 +161,77 @@ class BriefStatusBar(QStatusBar):
 
 
 class ClickToCaptureEdit(QKeySequenceEdit):
-    """Display a capture prompt without clearing the stored shortcut."""
+    """Capture one chord before Qt handles dialog navigation or default buttons."""
+    MODIFIER_KEYS = {
+        Qt.Key.Key_Control: Qt.KeyboardModifier.ControlModifier,
+        Qt.Key.Key_Shift: Qt.KeyboardModifier.ShiftModifier,
+        Qt.Key.Key_Alt: Qt.KeyboardModifier.AltModifier,
+        Qt.Key.Key_Meta: Qt.KeyboardModifier.MetaModifier,
+    }
+    MODIFIER_MASK = (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+                     | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)
+
     def __init__(self, sequence, parent=None):
         super().__init__(sequence, parent)
         self.waiting = False
+        self.pending_modifier = None
+        self.setMaximumSequenceLength(1)
+        self.setFinishingKeyCombinations([])
         self.field = self.findChild(QLineEdit)
         self.installEventFilter(self)
         if self.field is not None:
+            self.field.setReadOnly(True)
             self.field.installEventFilter(self)
         self.keySequenceChanged.connect(self.finish_waiting)
 
     def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.ShortcutOverride:
+            event.accept()
+            return True
+        if event.type() in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+            self.capture_key(event)
+            event.accept()
+            return True
         if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            self.pending_modifier = None
             self.waiting = True
             if self.field is not None:
-                self.field.setText("입력 대기중...")
+                self.field.setText('입력 대기중...')
+        elif event.type() == QEvent.Type.FocusOut:
+            self.pending_modifier = None
+            self.finish_waiting()
         return super().eventFilter(watched, event)
+
+    def capture_key(self, event):
+        if event.isAutoRepeat():
+            return
+        key = event.key()
+        if event.type() == QEvent.Type.KeyRelease:
+            if key == self.pending_modifier:
+                self.pending_modifier = None
+                self.setKeySequence(QKeySequence(key))
+                self.finish_waiting()
+            return
+        modifiers = event.modifiers() & self.MODIFIER_MASK
+        if key in self.MODIFIER_KEYS:
+            # Do not record a leading Ctrl as a standalone key when Ctrl+Q follows.
+            other_modifiers = modifiers & ~self.MODIFIER_KEYS[key]
+            self.pending_modifier = key if not other_modifiers else None
+            return
+        self.pending_modifier = None
+        if key == Qt.Key.Key_unknown:
+            return
+        if key == Qt.Key.Key_Backtab:
+            key = Qt.Key.Key_Tab
+            modifiers |= Qt.KeyboardModifier.ShiftModifier
+        self.setKeySequence(QKeySequence(QKeyCombination(modifiers, Qt.Key(key))))
+        self.finish_waiting()
 
     def finish_waiting(self, *_):
         if self.waiting:
             self.waiting = False
             if self.field is not None:
                 self.field.setText(self.keySequence().toString(QKeySequence.SequenceFormat.NativeText))
-
-    def keyPressEvent(self, event):
-        self.finish_waiting()
-        super().keyPressEvent(event)
-
-    def focusOutEvent(self, event):
-        self.finish_waiting()
-        super().focusOutEvent(event)
 
 
 class KeyDialog(QDialog):
@@ -247,7 +288,7 @@ class SettingsDialog(QDialog):
         form.addRow("작동 디스플레이", self.displays)
         self.keys = {}
         for name, label in (("pause_hk", "작동 / 정지"), ("capture_hk", "선택한 행 좌표 캡처")):
-            editor = QKeySequenceEdit(QKeySequence(qt_hotkey(getattr(settings, name)), QKeySequence.SequenceFormat.PortableText))
+            editor = ClickToCaptureEdit(QKeySequence(qt_hotkey(getattr(settings, name)), QKeySequence.SequenceFormat.PortableText))
             editor.setMaximumSequenceLength(1)
             self.keys[name] = editor
             form.addRow(label, editor)

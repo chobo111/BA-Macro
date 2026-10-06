@@ -1,6 +1,13 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'BA Macro'
 RELEASES = (
+    ('0.2.25-experimental', '2026-10-06', (
+        'Tab·Shift+Tab 입력 시 포커스 이동 방지, Ctrl 단독·조합 및 Caps Lock 지정 지원',
+        '행 단축키와 환경설정에 동일한 키 입력 처리 적용',
+        '스크립트 우클릭 좌표를 프로필 기준 크기로 역변환하여 대체 좌표 사용 중 편집 허용',
+        '캡처 이후 앱 크기·프로필 기준 변경 검사 유지',
+        '자동 테스트 312개 통과, 실제 게임 입력은 사용자 검증',
+    )),
     ('0.2.24-experimental', '2026-10-06', (
         '창 크기 확인창에 다음부터 묻지 않기 추가, 자동 변환 시작 선택 기억',
         '환경설정 일반에서 확인 없이 자동 변환 옵션 해제 가능',

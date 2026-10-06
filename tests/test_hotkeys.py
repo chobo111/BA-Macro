@@ -273,3 +273,20 @@ class HotkeyTests(unittest.TestCase):
             self.hooks.configure([('+', 'move', '1')], True)
         self.assertFalse(self.physical_event(13, 0xBB))
         self.assertEqual(self.actions, [('move', '1')])
+
+    def test_tab_caps_lock_and_standalone_control_fire_once_and_release(self):
+        for shortcut,event in (('tab',(15,0x09,False)),('caps lock',(58,0x14,False)),
+                               ('ctrl',(29,0xA2,False)),('ctrl',(29,0xA3,True))):
+            with self.subTest(shortcut=shortcut,event=event):
+                self.hooks.close()
+                self.actions.clear()
+                self.hooks.configure([(shortcut,'move','row')],True)
+                self.assertFalse(self.physical_event(*event))
+                self.assertFalse(self.physical_event(*event))
+                self.assertEqual(self.actions,[('move','row')])
+                self.assertTrue(self.hooks.held(shortcut))
+                self.assertFalse(self.physical_event(*event,kind='up'))
+                self.assertFalse(self.hooks.held(shortcut))
+                self.assertFalse(self.physical_event(*event))
+                self.assertEqual(len(self.actions),2)
+                self.physical_event(*event,kind='up')

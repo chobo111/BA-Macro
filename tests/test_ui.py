@@ -873,15 +873,16 @@ class UiTests(unittest.TestCase):
             self.assertIsNone(dialog.call_args.args[2])
             size.assert_not_called()
 
-    def test_script_capture_blocks_mismatched_resolution(self):
+    def test_script_capture_converts_mismatched_resolution_to_profile_basis(self):
         w=self.window
         w.profile.resolution=(1920,1080)
         editor=ScriptEditor('',w.native,99,w)
-        with patch.object(w.native,'size',return_value=(1280,720)), \
+        with patch.object(w.native,'window_identity',return_value={'exe':'Game.exe','class':'Game','title':'Game'}), patch.object(w.native,'size',return_value=(1280,720)), \
              patch.object(w.native,'bounds',return_value=(0,0,1280,720)):
             editor.pick_coordinate((100,200))
-        self.assertEqual(editor.editor.toPlainText(),'')
-        self.assertIsNone(editor.capture_resolution)
+        self.assertEqual(editor.editor.toPlainText(),'150,300')
+        self.assertEqual(editor.capture_resolution,(1920,1080))
+        self.assertEqual(editor.capture_size,(1280,720))
         editor.close()
 
     def test_script_capture_new_profile_records_basis_only_on_save(self):
@@ -1608,3 +1609,65 @@ class UiTests(unittest.TestCase):
         self.assertEqual(dialog.notice.text(),'')
         dialog.reject()
         dialog.deleteLater()
+
+    def test_capture_navigation_lock_and_modifier_keys_in_both_dialogs(self):
+        from widgets import managed_dialog
+        from hotkeys import Hotkeys
+        cases = ((Qt.Key.Key_Tab,Qt.KeyboardModifier.NoModifier,'tab'),
+                 (Qt.Key.Key_Tab,Qt.KeyboardModifier.ShiftModifier,'shift+tab'),
+                 (Qt.Key.Key_Backtab,Qt.KeyboardModifier.ShiftModifier,'shift+tab'),
+                 (Qt.Key.Key_Tab,Qt.KeyboardModifier.ControlModifier,'ctrl+tab'),
+                 (Qt.Key.Key_CapsLock,Qt.KeyboardModifier.NoModifier,'caps lock'),
+                 (Qt.Key.Key_CapsLock,Qt.KeyboardModifier.ControlModifier,'ctrl+caps lock'),
+                 (Qt.Key.Key_Control,Qt.KeyboardModifier.NoModifier,'ctrl'),
+                 (Qt.Key.Key_Shift,Qt.KeyboardModifier.NoModifier,'shift'),
+                 (Qt.Key.Key_Alt,Qt.KeyboardModifier.NoModifier,'alt'),
+                 (Qt.Key.Key_Meta,Qt.KeyboardModifier.NoModifier,'win'),
+                 (Qt.Key.Key_Escape,Qt.KeyboardModifier.NoModifier,'esc'),
+                 (Qt.Key.Key_Return,Qt.KeyboardModifier.NoModifier,'enter'))
+        for key,modifiers,expected in cases:
+            with self.subTest(key=expected), managed_dialog(KeyDialog('q',self.window)) as dialog:
+                dialog.show()
+                self.qt.processEvents()
+                field = dialog.editor.field
+                QTest.mouseClick(field,Qt.MouseButton.LeftButton)
+                focused = dialog.focusWidget()
+                QTest.keyClick(field,key,modifiers)
+                self.assertIs(dialog.focusWidget(),focused)
+                self.assertEqual(dialog.value(),expected)
+                self.assertTrue(dialog.isVisible())
+                self.assertIsNotNone(Hotkeys.compile(expected))
+                with managed_dialog(KeyDialog(expected,self.window)) as reopened:
+                    self.assertEqual(reopened.value(),expected)
+                with managed_dialog(SettingsDialog(self.window.settings,self.window)) as settings:
+                    settings.show()
+                    self.qt.processEvents()
+                    target = settings.keys['pause_hk'].field
+                    QTest.mouseClick(target,Qt.MouseButton.LeftButton)
+                    focused = settings.focusWidget()
+                    QTest.keyClick(target,key,modifiers)
+                    self.assertIs(settings.focusWidget(),focused)
+                    self.assertEqual(settings.value().pause_hk,expected)
+
+    def test_ctrl_is_committed_on_release_without_overwriting_chord(self):
+        from widgets import managed_dialog
+        with managed_dialog(KeyDialog('q',self.window)) as dialog:
+            dialog.show()
+            self.qt.processEvents()
+            field = dialog.editor.field
+            QTest.mouseClick(field,Qt.MouseButton.LeftButton)
+            QTest.keyPress(field,Qt.Key.Key_Control)
+            self.assertEqual(dialog.value(),'q')
+            QTest.keyRelease(field,Qt.Key.Key_Control)
+            self.assertEqual(dialog.value(),'ctrl')
+            QTest.keyPress(field,Qt.Key.Key_Control)
+            QTest.keyPress(field,Qt.Key.Key_K,Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(dialog.value(),'ctrl+k')
+            QTest.keyRelease(field,Qt.Key.Key_K,Qt.KeyboardModifier.ControlModifier)
+            QTest.keyRelease(field,Qt.Key.Key_Control)
+            self.assertEqual(dialog.value(),'ctrl+k')
+            QTest.mouseClick(field,Qt.MouseButton.LeftButton)
+            QTest.keyPress(field,Qt.Key.Key_Control)
+            dialog.editor.clearFocus()
+            QTest.keyRelease(field,Qt.Key.Key_Control)
+            self.assertEqual(dialog.value(),'ctrl+k')
