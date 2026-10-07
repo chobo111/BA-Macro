@@ -67,7 +67,7 @@ class ScriptEditor(QDialog):
         self.editor = QPlainTextEdit(source)
         self.editor.setObjectName('codeEditor')
         self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.editor.setPlaceholderText('프로그램 밖에서 우클릭하면\n현재 입력 위치에 좌표(x,y)가 추가됩니다.' if target else '좌표를 불러오려면 앱을 선택한 뒤\n편집기를 다시 열어 주세요.')
+        self.editor.setPlaceholderText('프로그램 밖에서 우클릭하면\n현재 입력 위치에 좌표(x,y)가 추가됩니다.' if target is not None else '앱 또는 전체화면을 선택한 뒤\n편집기를 다시 열어 주세요.')
         self.highlighter = Highlighter(self.editor.document())
         body.addWidget(self.editor, 1)
         layout.addLayout(body, 1)
@@ -125,7 +125,7 @@ class ScriptEditor(QDialog):
         super().showEvent(event)
         self.parentWidget().installEventFilter(self)
         self.sync_to_parent()
-        if self.target and self.parentWidget().hook_enabled and self.coordinate_hook is None:
+        if self.target is not None and self.parentWidget().hook_enabled and self.coordinate_hook is None:
             hook = CoordinateHook(self.coordinate_clicked.emit)
             try:
                 hook.start()
@@ -143,6 +143,8 @@ class ScriptEditor(QDialog):
 
     def capture_screen_point(self, x, y):
         if not self.isVisible() or QApplication.activeModalWidget() or QApplication.activePopupWidget():
+            return
+        if self.target is None:
             return
         try:
             self.pick_coordinate(self.native.local_point(self.target, x, y))
@@ -237,8 +239,8 @@ class ScriptEditor(QDialog):
         return profile
 
     def pick_coordinate(self, point=None):
-        if not self.target:
-            self.log('좌표를 불러오려면 앱을 선택한 뒤 편집기를 다시 열어 주세요.', error=True)
+        if self.target is None:
+            self.log('앱 또는 전체화면을 선택한 뒤 편집기를 다시 열어 주세요.', error=True)
             return
         try:
             x, y = point if point is not None else self.native.cursor(self.target)
@@ -250,10 +252,10 @@ class ScriptEditor(QDialog):
             profile = self.validate_capture_profile()
             basis = self.capture_resolution or profile.resolution
             has_coordinates = any(row.x or row.y or row.script.strip() for row in profile.rows)
-            if not basis and has_coordinates:
+            if (not basis and has_coordinates) or (basis and basis != size and not self.target):
                 self.log('해상도 기준이 다릅니다. 편집기를 닫고 설정 → 프로필 해상도 변환을 먼저 진행하세요.', error=True)
                 return
-            identity = self.native.window_identity(self.target)
+            identity = self.native.window_identity(self.target) if self.target else {}
             if self.capture_program is not None and identity != self.capture_program and not same_program(self.capture_program, identity):
                 self.log('좌표를 가져온 앱이 변경되었습니다. 편집기를 다시 열어 주세요.', error=True)
                 return

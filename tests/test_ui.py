@@ -133,8 +133,8 @@ class UiTests(unittest.TestCase):
         row = w.profile.rows[0]
         row.action_mode, row.script = 'script', 'sleep 1'
         w.target = 123
-        w.session.start(ExecutionPlan(w.target, w.profile.resolution, None))
-        with patch('execution_plan.compile_script', wraps=compile_script) as compile_once, patch.object(w.engine, 'submit', return_value=True) as submit, patch.object(w.native, 'active', return_value=True), patch.object(w.native, 'exists', return_value=True):
+        w.session.start(ExecutionPlan(w.target, w.profile.resolution, None, display_id=w.native.display_id))
+        with patch('execution_plan.compile_script', wraps=compile_script) as compile_once, patch.object(w.engine, 'submit', return_value=True) as submit, patch.object(w.native, 'active', return_value=True):
             w.dispatch('move', row.id)
         compile_once.assert_called_once_with(row.script)
         self.assertIsNotNone(submit.call_args.args[0].program)
@@ -228,7 +228,7 @@ class UiTests(unittest.TestCase):
             self.assertEqual(w.armed, not automatic)
         w.modal = True
         w.target = 99
-        with patch.object(w.native, 'foreground_owned_by', return_value=False), patch.object(w.native, 'active', return_value=True), patch.object(w.native, 'exists', return_value=True):
+        with patch.object(w.native, 'foreground_owned_by', return_value=False), patch.object(w.native, 'active', return_value=True):
             self.assertTrue(w.eligible('move'))
             self.assertFalse(w.eligible('capture_selected'))
             w.dispatch('pause', '')
@@ -264,10 +264,11 @@ class UiTests(unittest.TestCase):
 
     def test_editor_resize_sync_and_live_coordinates(self):
         w = self.window
+        w.target = 0
         w.resize(520, 440)
         self.qt.processEvents()
         self.assertNotEqual(w.minimumWidth(), w.maximumWidth())
-        dialog = ScriptEditor('', w.native, 99, w)
+        dialog = ScriptEditor('', w.native, 0, w)
         dialog.show()
         self.qt.processEvents()
         self.assertEqual(dialog.size(), dialog.parent_area().size())
@@ -278,14 +279,12 @@ class UiTests(unittest.TestCase):
         self.qt.processEvents()
         self.assertEqual(dialog.size(), dialog.parent_area().size())
         self.assertEqual(dialog.panel.size(), dialog.size())
-        w.script_editor = dialog
         with patch.object(w.native, 'cursor', return_value=(123, 456)):
             w.tick()
         self.assertFalse(hasattr(dialog, 'cursor_label'))
         self.assertIs(w.menuBar().cornerWidget(Qt.Corner.TopRightCorner), w.cursor_label)
         self.assertIn('123', w.cursor_label.text())
         position = w.cursor_label.mapToGlobal(QPoint())
-        w.script_editor = None
         dialog.reject()
         self.qt.processEvents()
         self.assertTrue(w.timer.isActive())
@@ -297,13 +296,13 @@ class UiTests(unittest.TestCase):
         identity = {'exe': 'Game.exe', 'class': 'GameWindow', 'title': 'Game'}
         with patch.object(w.native, 'windows', return_value=[(123, 'Game')]), patch.object(w.native, 'window_identity', return_value=identity):
             w.refresh_windows()
-            w.targets.setCurrentIndex(1)
+            w.targets.setCurrentIndex(w.targets.findData(123))
             self.assertEqual(Profile.read(self.saved(w.path)).target_program, identity)
             self.assertEqual(w.targets.currentText(), 'Game')
-        w.target = 0
+        w.target = None
         with patch.object(w.native, 'windows', return_value=[]):
             w.refresh_windows()
-        self.assertEqual(w.target, 0)
+        self.assertIsNone(w.target)
         self.assertEqual(w.profile.target_program, identity)
         with patch.object(w.native, 'windows', return_value=[(456, 'Game')]), patch.object(w.native, 'window_identity', return_value=identity):
             w.refresh_windows(restore_saved=True)
@@ -454,12 +453,12 @@ class UiTests(unittest.TestCase):
         w = self.window
         with patch.object(w.native, "windows", return_value=[(10, "게임")]):
             w.refresh_windows()
-        w.targets.setCurrentIndex(1)
+        w.targets.setCurrentIndex(w.targets.findData(10))
         with patch.object(w.native, "windows", return_value=[(20, "다른 창"), (10, "게임")]) as windows:
             w.targets.showPopup()
             windows.assert_called_once()
             self.assertEqual(w.targets.currentData(), 10)
-            self.assertEqual(w.targets.count(), 3)
+            self.assertEqual(w.targets.count(), 4)
             w.targets.hidePopup()
 
     def test_memo_width_and_pin(self):
@@ -516,23 +515,24 @@ class UiTests(unittest.TestCase):
             w.dispatch("pause", "")
             self.assertTrue(w.armed)
 
-    def test_unselected_start_capture_are_blocked_and_controls_stay_fixed(self):
+    def test_fullscreen_start_capture_and_fixed_controls(self):
         w = self.window
-        self.assertEqual(w.targets.currentText(), '앱 선택')
+        self.assertEqual(w.targets.currentText(), "미선택")
+        w.targets.setCurrentIndex(w.targets.findData(0))
+        self.assertEqual(w.targets.currentText(), "전체화면")
         w.toggle()
-        self.assertFalse(w.armed)
-        self.assertFalse(w.eligible('move'))
-        before = w.profile.export()
-        with patch.object(w.native, 'cursor') as cursor, patch.object(w, 'convert_dialog') as convert:
+        self.assertTrue(w.armed)
+        self.assertTrue(w.eligible("move"))
+        with patch.object(w.native, "cursor", return_value=(-300, 150)), \
+             patch.object(w.native, "bounds", return_value=(-1920, 0, 1920, 1080)), \
+             patch.object(w.native, "size", return_value=(3840, 1080)):
             w.capture(w.profile.rows[0].id)
-        cursor.assert_not_called()
-        convert.assert_not_called()
-        self.assertEqual(w.profile.export(), before)
-        self.assertIn('앱을 선택', w.statusBar().currentMessage())
+        self.assertEqual(w.profile.rows[0].x, -300)
         w.resize(480, 340)
         self.qt.processEvents()
         positions = (w.pin_button.pos(), w.pause_button.pos())
         w.resize(900, 340)
+        w.cursor_label.setText("-99999, -99999")
         self.qt.processEvents()
         self.assertEqual((w.pin_button.pos(), w.pause_button.pos()), positions)
 
@@ -567,7 +567,7 @@ class UiTests(unittest.TestCase):
 
     def test_editor_follows_main_window_and_captures_external_coordinates(self):
         w = self.window
-        dialog = ScriptEditor('', w.native, 99, w)
+        dialog = ScriptEditor('', w.native, 0, w)
         dialog.show()
         self.qt.processEvents()
         self.assertEqual(dialog.validation.text(), '')
@@ -582,23 +582,23 @@ class UiTests(unittest.TestCase):
         self.qt.processEvents()
         self.assertEqual(dialog.mapToGlobal(QPoint()) - before, w.pos() - parent_before)
         self.assertEqual(dialog.geometry(), dialog.parent_area())
-        with patch.object(w.native, 'cursor', return_value=(123, 456)), \
-             patch.object(w.native, 'bounds', return_value=(0, 0, 1920, 1080)), patch.object(w.native, 'size', return_value=(1920,1080)), patch.object(w.native, 'window_identity', return_value={}):
+        with patch.object(w.native, 'cursor', return_value=(-123, 456)), \
+             patch.object(w.native, 'bounds', return_value=(-1920, 0, 1920, 1080)):
             self.assertEqual(dialog.editor.toPlainText(), '')
             dialog.pick_coordinate()
-            self.assertEqual(dialog.editor.toPlainText(), '123,456')
+            self.assertEqual(dialog.editor.toPlainText(), '-123,456')
             QTest.mouseClick(dialog, Qt.MouseButton.RightButton, pos=dialog.panel.geometry().center())
-            self.assertEqual(dialog.editor.toPlainText(), '123,456')
+            self.assertEqual(dialog.editor.toPlainText(), '-123,456')
         with patch.object(w.native, 'cursor', return_value=(99999, 456)), \
-             patch.object(w.native, 'bounds', return_value=(0, 0, 1920, 1080)), patch.object(w.native, 'size', return_value=(1920,1080)), patch.object(w.native, 'window_identity', return_value={}):
+             patch.object(w.native, 'bounds', return_value=(0, 0, 1920, 1080)):
             dialog.pick_coordinate()
-            self.assertEqual(dialog.editor.toPlainText(), '123,456')
+            self.assertEqual(dialog.editor.toPlainText(), '-123,456')
         dialog.editor.setPlainText('click ')
         cursor = dialog.editor.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         dialog.editor.setTextCursor(cursor)
         with patch.object(w.native, 'cursor', return_value=(123, 456)), \
-             patch.object(w.native, 'bounds', return_value=(0, 0, 1920, 1080)), patch.object(w.native, 'size', return_value=(1920,1080)), patch.object(w.native, 'window_identity', return_value={}):
+             patch.object(w.native, 'bounds', return_value=(0, 0, 1920, 1080)):
             dialog.pick_coordinate()
             self.assertEqual(dialog.editor.toPlainText(), 'click 123,456')
         dialog.source = dialog.editor.toPlainText()
@@ -692,8 +692,8 @@ class UiTests(unittest.TestCase):
         row.action_mode, row.script = 'script', 'curve 10,20 30,40'
         w.settings.drag_segment_duration_ms = 25
         w.target = 123
-        w.session.start(ExecutionPlan(w.target, w.profile.resolution, None))
-        with patch.object(w.engine, 'submit', return_value=True) as submit, patch.object(w.native, 'active', return_value=True), patch.object(w.native, 'exists', return_value=True):
+        w.session.start(ExecutionPlan(w.target, w.profile.resolution, None, display_id=w.native.display_id))
+        with patch.object(w.engine, 'submit', return_value=True) as submit, patch.object(w.native, 'active', return_value=True):
             w.dispatch('move', row.id)
             self.assertEqual(submit.call_args.args[0].drag_segment_duration_ms, 25)
         w.persist_settings()
@@ -921,31 +921,48 @@ class UiTests(unittest.TestCase):
         self.assertEqual(dialog.value(),'ctrl+k')
         dialog.close()
 
-    def test_settings_hide_obsolete_display_choice_and_preserve_saved_data(self):
+    def test_display_settings_selection_and_missing_device(self):
+        from displays import Display
         from domain import Settings
-        dialog = SettingsDialog(Settings(display_id='previous-monitor'), self.window)
-        self.assertFalse(hasattr(dialog, 'displays'))
-        self.assertEqual(dialog.value().display_id, 'previous-monitor')
+        monitor=Display('test-monitor','Test display',12,'DISPLAY2',-1920,0,1920,1080,False)
+        dialog=SettingsDialog(Settings(),self.window,[monitor])
+        self.assertEqual(dialog.displays.count(),2)
+        dialog.displays.setCurrentIndex(1)
+        self.assertEqual(dialog.value().display_id,'test-monitor')
+        dialog.close()
+        dialog=SettingsDialog(Settings(display_id='missing'),self.window,[monitor])
+        self.assertIn('연결되지 않은',dialog.displays.currentText())
+        self.assertEqual(dialog.value().display_id,'missing')
         dialog.close()
 
-    def test_unselected_tick_stops_and_does_not_read_desktop_coordinates(self):
-        w = self.window
-        w.target = 0
-        w.armed = True
-        with patch.object(w.native, 'cursor') as cursor:
+    def test_disconnected_display_stops_fullscreen_but_not_target_window(self):
+        w=self.window
+        w.native.display_id='missing'
+        with patch.object(w.native,'refresh_displays',return_value=()):
+            w.native.displays=()
+            w.display_ticks=9
+            w.target=0
+            w.armed=True
             w.tick()
-        self.assertFalse(w.armed)
-        self.assertEqual(w.cursor_label.text(), '— , —')
-        cursor.assert_not_called()
+            self.assertFalse(w.armed)
+            w.target=99
+            w.armed=True
+            w.display_ticks=9
+            with patch.object(w.native,'exists',return_value=True), \
+                 patch.object(w.native,'size',return_value=(1920,1080)), \
+                 patch.object(w.native,'cursor',return_value=(10,20)), \
+                 patch.object(w.native,'active',return_value=True):
+                w.tick()
+                self.assertTrue(w.armed)
 
-    def test_conversion_without_app_requires_manual_destination(self):
-        w = self.window
-        w.target = 0
-        w.native.display_id = 'old-monitor'
-        with patch('app.ConversionDialog') as dialog, patch.object(w.native, 'size') as size:
+    def test_selected_monitor_used_as_conversion_destination(self):
+        w=self.window
+        w.target=0
+        w.native.display_id='test-monitor'
+        with patch('app.ConversionDialog') as dialog, patch.object(w.native,'size',return_value=(1920,1080)):
             w.convert_dialog()
-        self.assertIsNone(dialog.call_args.args[2])
-        size.assert_not_called()
+            self.assertEqual(dialog.call_args.args[2],(1920,1080))
+            self.assertEqual(dialog.call_args.kwargs['target_label'],'선택한 디스플레이')
 
     def test_settings_units_are_outside_inputs_and_return_option_controls_delay(self):
         dialog = SettingsDialog(self.window.settings, self.window)
@@ -1494,34 +1511,34 @@ class UiTests(unittest.TestCase):
         self.assertFalse(w.isMinimized())
         self.assertTrue(w.isMaximized())
 
-    def test_unselected_app_never_submits_any_action(self):
+    def test_fullscreen_script_warns_without_submitting_or_stopping_other_actions(self):
         w = self.window
         w.target = 0
-        with self.assertRaisesRegex(ValueError, '앱을 선택'):
-            ExecutionPlan(0, None, None)
-        w.armed = True
+        w.session.start(ExecutionPlan(w.target, w.profile.resolution, None, display_id=w.native.display_id))
         row = w.profile.rows[0]
-        with patch.object(w.engine, 'submit') as submit:
-            for mode in ('script', 'move_and_click', 'move_only'):
-                row.action_mode = mode
-                w.dispatch('move', row.id)
+        row.action_mode, row.script = 'script', 'click 10,20'
+        with patch.object(w.engine, 'submit', return_value=True) as submit, \
+             patch('execution_plan.compile_script') as compile_script, \
+             patch.object(QMessageBox, 'warning') as popup:
+            w.dispatch('move', row.id)
+            self.assertEqual(w.statusBar().currentMessage(), '스크립트를 실행하려면 앱을 선택하세요.')
+            self.assertTrue(w.armed)
             submit.assert_not_called()
-        editor = ScriptEditor('', w.native, 0, w)
-        with patch.object(w.native, 'cursor') as cursor:
-            editor.pick_coordinate()
-            cursor.assert_not_called()
-        self.assertEqual(editor.editor.toPlainText(), '')
-        self.assertIn('앱을 선택', editor.validation.text())
-        editor.close()
+            compile_script.assert_not_called()
+            popup.assert_not_called()
+            row.action_mode = 'move_and_click'
+            w.dispatch('move', row.id)
+            submit.assert_called_once()
+            self.assertEqual(submit.call_args.args[0].hwnd, 0)
 
     def test_selected_app_script_waits_for_focus_then_submits(self):
         w = self.window
         w.target = 123
-        w.session.start(ExecutionPlan(w.target, w.profile.resolution, None))
+        w.session.start(ExecutionPlan(w.target, w.profile.resolution, None, display_id=w.native.display_id))
         row = w.profile.rows[0]
         row.action_mode, row.script = 'script', 'click 10,20'
         with patch.object(w.engine, 'submit', return_value=True) as submit, \
-             patch.object(w.native, 'active', return_value=False) as active, patch.object(w.native, 'exists', return_value=True):
+             patch.object(w.native, 'active', return_value=False) as active:
             w.dispatch('move', row.id)
             submit.assert_not_called()
             active.return_value = True
@@ -1728,3 +1745,72 @@ class UiTests(unittest.TestCase):
             resize.assert_called_once_with(123,1920,1080)
         self.assertIn('크기 변경 완료',w.statusBar().currentMessage())
         self.assertIn('마우스 버튼을 놓고',w.statusBar().currentMessage())
+
+    def test_unselected_start_and_capture_do_not_fall_back_to_desktop(self):
+        w = self.window
+        self.assertIsNone(w.target)
+        self.assertEqual(w.targets.currentText(), '미선택')
+        before = w.profile.export()
+        with patch.object(w.native, 'windows') as windows, patch.object(w.native, 'cursor') as cursor, patch.object(w, 'convert_dialog') as convert:
+            w.toggle()
+            self.assertFalse(w.armed)
+            self.assertIn('전체화면을 선택', w.statusBar().currentMessage())
+            w.dispatch('capture_selected', '')
+            w.tick()
+        windows.assert_not_called()
+        cursor.assert_not_called()
+        convert.assert_not_called()
+        self.assertEqual(w.profile.export(), before)
+        self.assertEqual(w.cursor_label.text(), '— , —')
+
+    def test_unselecting_fullscreen_stops_and_disables_action_dispatch(self):
+        w = self.window
+        w.targets.setCurrentIndex(w.targets.findData(0))
+        w.toggle()
+        self.assertTrue(w.armed)
+        w.targets.setCurrentIndex(0)
+        self.assertIsNone(w.target)
+        self.assertFalse(w.armed)
+        self.assertIsNone(w.session.plan)
+        with patch.object(w.engine, 'submit') as submit:
+            w.dispatch('move', w.profile.rows[0].id)
+        submit.assert_not_called()
+        with self.assertRaises(ValueError):
+            ExecutionPlan(None, None, None)
+
+    def test_unselected_script_editor_does_not_capture_external_clicks(self):
+        w = self.window
+        editor = ScriptEditor('', w.native, None, w)
+        w.hook_enabled = True
+        try:
+            with patch('script_editor.CoordinateHook') as hook, patch.object(w.native, 'cursor') as cursor:
+                editor.show()
+                self.qt.processEvents()
+                editor.pick_coordinate()
+                hook.assert_not_called()
+                cursor.assert_not_called()
+            self.assertEqual(editor.editor.toPlainText(), '')
+            self.assertIn('선택', editor.validation.text())
+        finally:
+            w.hook_enabled = False
+            editor.reject()
+            editor.deleteLater()
+
+    def test_missing_saved_app_defaults_to_unselected_and_preserves_identity(self):
+        from domain import atomic_json
+        identity = {'exe': 'Game.exe', 'class': 'Game', 'title': 'Game'}
+        with tempfile.TemporaryDirectory() as folder:
+            profile = Profile.default()
+            profile.target_program = identity
+            atomic_json(Path(folder) / 'macro.json', profile.export())
+            with patch('app.Windows.windows', return_value=[]):
+                other = MainWindow(data_dir=folder, hook_enabled=False)
+            try:
+                self.assertIsNone(other.target)
+                self.assertEqual(other.targets.currentText(), '미선택')
+                self.assertEqual(other.profile.target_program, identity)
+            finally:
+                other.shutdown()
+                other.close()
+                other.deleteLater()
+                self.qt.processEvents()

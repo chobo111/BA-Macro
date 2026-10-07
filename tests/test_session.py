@@ -22,7 +22,7 @@ class SessionTests(unittest.TestCase):
         native = Mock()
         native.foreground_owned_by.return_value = True
         state = ExecutionSession(native)
-        state.target = 123
+        state.target = 0
         state.armed = True
         with state.editing(False, Mock()):
             self.assertTrue(state.eligible('pause', False))

@@ -76,6 +76,12 @@ class MainWindow(QMainWindow):
         loaded = self.store.load()
         self.settings, self.profile, self.path = loaded.settings, loaded.profile, loaded.path
         self.load_error = loaded.warning
+        self.native.display_id = self.settings.display_id
+        self.display_ticks = 0
+        try:
+            self.native.refresh_displays()
+        except OSError as error:
+            self.load_error = str(error)
         self.bridge = Bridge()
         self.engine = Engine(self.native, lambda key: self.hooks.held(key), self.bridge.error.emit)
         self.hooks = Hotkeys(self.bridge.action.emit, self.eligible, self.engine.stop)
@@ -431,18 +437,20 @@ class MainWindow(QMainWindow):
             return
         if self.modal or (self.session.editor_open and self.settings.auto_pause):
             return
-        if not self.target or not self.native.exists(self.target):
-            self.target = 0
-            self.refresh_windows(restore_saved=True)
-            if not self.target or not self.native.exists(self.target):
-                self.stop()
-                self.statusBar().showMessage('실행할 앱을 선택하세요. 프로필에 지정된 앱을 찾을 수 없거나 구분할 수 없습니다.')
-                return
+        if self.target is None:
+            self.statusBar().showMessage('앱 또는 전체화면을 선택하세요.')
+            return
+        if self.target and not self.native.exists(self.target):
+            self.statusBar().showMessage("먼저 대상 창을 선택하세요.")
+            return
         self.session.stop()
         try:
             plan = self.confirm_start()
             if plan is None:
                 return
+            if not self.target:
+                self.native.refresh_displays()
+                self.native.validate_context(0)
             plan.check_context(self.native, self.target, self.profile.resolution)
             self.rebind()
             if self.hook_enabled:
@@ -475,16 +483,17 @@ class MainWindow(QMainWindow):
     @editing_dialog(hooks=False, pause=False)
     def confirm_start(self):
         target, profile, path = self.target, self.profile, self.path
-        if not target or not self.native.exists(target):
-            self.statusBar().showMessage('실행할 앱을 선택하세요.')
+        if target is None:
+            self.statusBar().showMessage('앱 또는 전체화면을 선택하세요.')
             return None
+        display_id = self.native.display_id
 
         def selection_valid():
             if target != self.target or (target and not self.native.exists(target)):
                 self.statusBar().showMessage('선택한 앱이 변경되거나 닫혔습니다. 다시 선택하세요.')
                 return False
-            if self.profile is not profile or self.path != path:
-                self.statusBar().showMessage('프로필이 변경되었습니다. 다시 시작하세요.')
+            if self.profile is not profile or self.path != path or (not target and self.native.display_id != display_id):
+                self.statusBar().showMessage('프로필 또는 디스플레이가 변경되었습니다. 다시 시작하세요.')
                 return False
             return True
 
@@ -492,7 +501,7 @@ class MainWindow(QMainWindow):
         automatic = False
         remember_automatic = False
         saved = dict(self.profile.target_program)
-        current = self.native.window_identity(target)
+        current = self.native.window_identity(target) if target else {}
         if saved and not same_program(saved, current) and self.settings.warn_app_mismatch:
             with managed_dialog(AppMismatchDialog(saved, current, self)) as dialog:
                 dialog.exec()
@@ -502,35 +511,41 @@ class MainWindow(QMainWindow):
                     self.commit_settings(replace(self.settings, warn_app_mismatch=False))
         if not selection_valid():
             return None
-        current_size = tuple(self.native.size(target))
-        if resolution:
+        current_size = tuple(self.native.size(target)) if target or self.native.display_id else None
+        if resolution and current_size is not None:
             if current_size != resolution:
-                if self.settings.auto_convert_on_start:
+                if target and self.settings.auto_convert_on_start:
                     choice = 'auto'
                 else:
                     with managed_dialog(SizeMismatchDialog(
-                            resolution, current_size, self)) as dialog:
+                            resolution, current_size, self, can_resize=bool(target))) as dialog:
                         dialog.exec()
                         choice = dialog.choice()
-                        remember_automatic = (choice == 'auto' and dialog.skip_warning.isChecked() is True)
+                        remember_automatic = (choice == 'auto' and bool(target)
+                                              and dialog.skip_warning.isChecked() is True)
                 if not selection_valid():
                     return None
                 if choice == 'resize':
                     self.resize_dialog(profile_size=resolution)
                     return None
-                elif choice == 'auto':
+                elif choice == 'auto' and target:
                     if tuple(self.native.size(target)) != tuple(current_size):
                         self.statusBar().showMessage('앱 크기가 변경되었습니다. 다시 시작하세요.')
                         return None
                     automatic = True
+                elif choice == 'convert' and not target:
+                    self.convert_dialog(reason='프로필 좌표를 선택한 디스플레이 크기로 변환합니다. 저장 후 다시 시작하세요.')
+                    return None
                 else:
                     return None
-        latest = self.native.window_identity(target)
-        if not same_program(current, latest):
-            self.statusBar().showMessage('선택한 앱이 변경되었습니다. 다시 선택하세요.')
-            return None
-        current = latest
-        plan = ExecutionPlan(target, resolution, current_size, automatic=automatic)
+        if target:
+            latest = self.native.window_identity(target)
+            if not same_program(current, latest):
+                self.statusBar().showMessage('선택한 앱이 변경되었습니다. 다시 선택하세요.')
+                return None
+            current = latest
+        plan = ExecutionPlan(target, resolution, current_size if target else None,
+                             automatic=automatic, display_id=display_id)
         plan.check_context(self.native, self.target, self.profile.resolution)
         if remember_automatic:
             self.commit_settings(replace(self.settings, auto_convert_on_start=True))
@@ -556,6 +571,9 @@ class MainWindow(QMainWindow):
         if action == "move" and self.eligible("move"):
             if not self.check_running_size():
                 return
+            if row.action_mode == 'script' and not self.target:
+                self.statusBar().showMessage('스크립트를 실행하려면 앱을 선택하세요.')
+                return
             plan = self.session.plan
             if plan is None:
                 return
@@ -569,9 +587,9 @@ class MainWindow(QMainWindow):
 
     @editing_dialog(hooks=False, pause=False)
     def confirm_coordinate_app(self, target, *, expected=None):
-        if not target or target != self.target or not self.native.exists(target):
+        if target is None or target != self.target or (target and not self.native.exists(target)):
             raise ValueError('좌표를 가져온 앱이 변경되거나 닫혔습니다. 다시 캡처하세요.')
-        current = self.native.window_identity(target)
+        current = self.native.window_identity(target) if target else {}
         if expected is not None and current != expected and not same_program(expected, current):
             raise ValueError('좌표를 가져온 앱이 변경되었습니다. 다시 캡처하세요.')
         saved = self.profile.target_program
@@ -581,16 +599,16 @@ class MainWindow(QMainWindow):
                 dialog.exec()
                 if not dialog.confirmed():
                     return None
-        if not target or target != self.target or not self.native.exists(target):
+        if target is None or target != self.target or (target and not self.native.exists(target)):
             raise ValueError('좌표를 가져온 앱이 변경되거나 닫혔습니다. 다시 캡처하세요.')
-        latest = self.native.window_identity(target)
+        latest = self.native.window_identity(target) if target else {}
         if latest != current and not same_program(current, latest):
             raise ValueError('좌표를 가져온 앱이 변경되었습니다. 다시 캡처하세요.')
         return latest
 
     def capture(self, rid):
-        if not self.target:
-            self.statusBar().showMessage('좌표를 불러오려면 앱을 선택하세요.')
+        if self.target is None:
+            self.statusBar().showMessage('좌표를 불러오려면 앱 또는 전체화면을 선택하세요.')
             return
         row = self.row(rid)
         target = self.target
@@ -633,15 +651,16 @@ class MainWindow(QMainWindow):
     def refresh_windows(self, *, restore_saved=False):
         self.targets.blockSignals(True)
         self.targets.clear()
-        self.targets.addItem("앱 선택", 0)
+        self.targets.addItem("미선택", None)
+        self.targets.addItem("전체화면", 0)
         try:
             windows = self.native.windows(os.getpid())
             for hwnd, title in windows:
                 self.targets.addItem(title, hwnd)
             index = self.targets.findData(self.target)
-            if restore_saved and (not self.target or index < 0):
+            if restore_saved and (self.target is None or index < 0):
                 restored = self.native.find_target(self.profile.target_program, windows)
-                index = self.targets.findData(restored)
+                index = self.targets.findData(restored) if restored else 0
             self.targets.setCurrentIndex(max(0, index))
         except Exception as error:
             self.statusBar().showMessage(str(error))
@@ -649,12 +668,12 @@ class MainWindow(QMainWindow):
         self.change_target(remember=False)
 
     def change_target(self, *_, remember=True):
-        target = self.targets.currentData() or 0
+        target = self.targets.currentData()
         self.targets.setToolTip(self.targets.currentText())
         if target != self.target:
             self.stop()
             self.target = target
-        if remember:
+        if remember and target is not None:
             try:
                 identity = self.native.window_identity(target) if target else {}
                 if identity != self.profile.target_program and (
@@ -666,9 +685,20 @@ class MainWindow(QMainWindow):
 
     def tick(self):
         try:
+            self.display_ticks += 1
+            if self.display_ticks % 10 == 0:
+                previous = self.native.displays
+                self.native.refresh_displays()
+                if self.target == 0 and self.native.display_id:
+                    before = [d for d in previous if d.id == self.native.display_id]
+                    after = [d for d in self.native.displays if d.id == self.native.display_id]
+                    if before != after:
+                        self.stop()
+                        self.statusBar().showMessage('디스플레이 연결·배치가 변경되어 중지했습니다. 환경설정에서 확인하세요.')
+                    self.native.validate_context(0)
             if self.target and not self.native.exists(self.target):
                 self.stop()
-                self.target = 0
+                self.target = None
                 self.targets.blockSignals(True)
                 self.targets.setCurrentIndex(0)
                 self.targets.blockSignals(False)
@@ -680,20 +710,24 @@ class MainWindow(QMainWindow):
             else:
                 self.target_info.clear()
             coordinate_target = self.script_editor.target if self.script_editor is not None else self.target
-            if coordinate_target:
+            if coordinate_target is None:
+                self.cursor_label.setText('— , —')
+            else:
                 x, y = self.native.cursor(coordinate_target)
                 self.cursor_label.setText(f"{x:>5}, {y:>5}")
-            else:
-                if self.armed:
-                    self.stop()
-                self.cursor_label.setText('— , —')
         except WindowSizeUnavailable:
             known = '%d × %d · ' % self.run_size if self.run_size is not None else ''
             self.target_info.setText(known + '최소화')
             self.cursor_label.setText('— , —')
-        except OSError:
-            self.target_info.setText("창 상태 확인 중")
-            self.cursor_label.setText("— , —")
+        except OSError as error:
+            if self.target == 0 and self.native.display_id:
+                if self.armed:
+                    self.stop()
+                    self.statusBar().showMessage(str(error))
+                self.cursor_label.setText('디스플레이 확인 필요')
+            else:
+                self.target_info.setText("창 상태 확인 중")
+                self.cursor_label.setText("— , —")
 
     @editing_dialog(hooks=True)
     def edit_key(self, rid):
@@ -789,7 +823,7 @@ class MainWindow(QMainWindow):
             self.stop()
             self.finish_script_editor()
             self.profile, self.path, self.dirty = Profile.default(), self.next_profile_path(), False
-            self.target = 0
+            self.target = None
             self.refresh_windows()
             self.changed()
             self.rebuild()
@@ -810,7 +844,7 @@ class MainWindow(QMainWindow):
             self.finish_script_editor()
             self.profile, self.path, self.dirty = profile, Path(path), False
             self.stop()
-            self.target = 0
+            self.target = None
             self.refresh_windows(restore_saved=True)
             self.rebuild()
             self.rebind()
@@ -896,12 +930,20 @@ class MainWindow(QMainWindow):
         self.flush_pending_saves()
         candidate = replace(settings)
         candidate.last_profile = self.store.settings(self.path, asdict(candidate), recover=recover)
+        if candidate.display_id != self.settings.display_id:
+            self.stop()
         self.settings = candidate
+        self.native.display_id = candidate.display_id
         self.settings_error = ''
 
     @editing_dialog(hooks=True)
     def settings_dialog(self):
-        with managed_dialog(SettingsDialog(self.settings, self)) as dialog:
+        try:
+            displays = self.native.refresh_displays()
+        except OSError as error:
+            self.statusBar().showMessage(str(error))
+            displays = self.native.displays
+        with managed_dialog(SettingsDialog(self.settings, self, displays)) as dialog:
             while dialog.exec() == QDialog.DialogCode.Accepted:
                 try:
                     settings = dialog.value()
@@ -965,10 +1007,11 @@ class MainWindow(QMainWindow):
         self.stop()
         self.flush_pending_saves()
         try:
-            current = self.native.size(self.target) if self.target and self.native.exists(self.target) else None
+            current = self.native.size(self.target) if (self.target and self.native.exists(self.target)) or (self.target == 0 and self.native.display_id) else None
             with managed_dialog(ConversionDialog(
                     self.profile, self.path or self.data_dir / "macro.json",
-                    current, self.save_conversion, self, reason)) as dialog:
+                    current, self.save_conversion, self, reason,
+                    target_label="선택한 디스플레이" if self.target == 0 and self.native.display_id else "대상 창 내부")) as dialog:
                 dialog.exec()
         except Exception as error:
             self.error(str(error))
