@@ -16,6 +16,98 @@ from execution_plan import ExecutionPlan
 
 
 class UiTests(unittest.TestCase):
+    def test_profile_menu_actions_and_rename_preserve_editor_draft(self):
+        from profile_dialogs import RenameProfileDialog
+        w = self.window
+        menus = {action.text(): action.menu() for action in w.menuBar().actions()}
+        self.assertIn('프로필 이름 변경…', [a.text() for a in menus['파일'].actions()])
+        self.assertIn('현재 프로필 정보', [a.text() for a in menus['정보'].actions()])
+        w.edit_script(w.profile.rows[0].id)
+        editor = w.script_editor
+        editor.editor.setPlainText('sleep 123')
+        original, profile = w.path, w.profile
+        w.set_value(w.profile.rows[1].id, 'memo', 'latest edit')
+        def accept(dialog):
+            dialog.name.setText('Renamed')
+            return QDialog.DialogCode.Accepted
+        with patch.object(RenameProfileDialog, 'exec', accept):
+            w.rename_profile()
+        self.assertEqual(w.path.name, 'Renamed.json')
+        self.assertFalse(original.exists())
+        self.assertIs(w.profile, profile)
+        self.assertIs(w.script_editor, editor)
+        self.assertEqual(editor.editor.toPlainText(), 'sleep 123')
+        self.assertEqual(read_json(w.path)['macros'][1]['memo'], 'latest edit')
+        self.assertEqual(w.settings.last_profile, 'Renamed.json')
+        self.assertIn('미저장', dict(w.profile_details())['저장 상태'])
+        w.finish_script_editor()
+        w.set_value(w.profile.rows[0].id, 'memo', 'after rename')
+        w.flush_pending_saves()
+        self.assertFalse(original.exists())
+        self.assertEqual(read_json(w.path)['macros'][0]['memo'], 'after rename')
+
+    def test_profile_rename_cancel_and_collision_keep_path(self):
+        from profile_dialogs import RenameProfileDialog
+        w = self.window
+        original = w.path
+        with patch.object(RenameProfileDialog, 'exec', return_value=QDialog.DialogCode.Rejected):
+            w.rename_profile()
+        self.assertEqual(w.path, original)
+        destination = original.with_name('existing.json')
+        destination.write_text('keep', encoding='utf-8')
+        def accept(dialog):
+            dialog.name.setText('existing')
+            return QDialog.DialogCode.Accepted
+        with patch.object(RenameProfileDialog, 'exec', accept):
+            w.rename_profile()
+        self.assertEqual(w.path, original)
+        self.assertIn('이름 변경 실패', w.statusBar().currentMessage())
+        self.assertEqual(destination.read_text(encoding='utf-8'), 'keep')
+
+    def test_profile_rename_partial_settings_failure_follows_moved_file(self):
+        from profile_dialogs import RenameProfileDialog
+        w = self.window
+        original = w.path
+        def accept(dialog):
+            dialog.name.setText('renamed')
+            return QDialog.DialogCode.Accepted
+        with patch.object(RenameProfileDialog, 'exec', accept), patch.object(w.store, '_settings', side_effect=OSError('locked')):
+            w.rename_profile()
+        self.assertEqual(w.path.name, 'renamed.json')
+        self.assertTrue(w.path.exists())
+        self.assertFalse(original.exists())
+        self.assertEqual(w.settings_error, 'locked')
+        self.assertIn('최근 프로필 정보 저장 실패', w.statusBar().currentMessage())
+
+    def test_profile_info_distinguishes_saved_app_and_current_app(self):
+        from profile_dialogs import ProfileInfoDialog
+        from domain import WindowSizeUnavailable
+        w = self.window
+        w.profile.target_program = {'title': '<Game>', 'exe': 'Game.exe', 'class': 'Unity'}
+        w.profile.resolution = (1920, 1080)
+        w.target = 123
+        w.session.start(ExecutionPlan(123, (1920,1080), (1280,720), automatic=True))
+        plan = w.session.plan
+        before = w.profile.export()
+        with patch.object(w.native, 'size', return_value=(1280,720)):
+            details = dict(w.profile_details())
+            self.assertEqual(details['기준 크기'], '1920 × 1080')
+            self.assertEqual(details['현재 크기'], '1280 × 720')
+            self.assertIn('<Game>', details['지정 앱'])
+            self.assertIn('1920 × 1080 → 1280 × 720', details['자동 변환'])
+            with patch.object(ProfileInfoDialog, 'exec', return_value=QDialog.DialogCode.Rejected), patch.object(w, 'save') as save:
+                w.profile_info_dialog()
+            save.assert_not_called()
+        self.assertIs(w.session.plan, plan)
+        self.assertEqual(w.profile.export(), before)
+        with patch.object(w.native, 'size', side_effect=WindowSizeUnavailable()):
+            self.assertEqual(dict(w.profile_details())['현재 크기'], '최소화')
+        w.target = None
+        with patch.object(w.native, 'size') as size:
+            self.assertEqual(dict(w.profile_details())['현재 크기'], '—')
+        size.assert_not_called()
+        w.stop()
+
     def test_target_matches_filename_case_and_rejects_ambiguous_titles(self):
         native = self.window.native
         saved = {'exe': 'ChatGPT.exe',

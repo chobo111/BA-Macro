@@ -19,6 +19,100 @@ class PersistenceTests(unittest.TestCase):
         self.store.close()
         self.folder.cleanup()
 
+    def test_rename_updates_recent_profile_and_preserves_contents(self):
+        profile = Profile.default().export()
+        self.store.save(self.path, profile, self.settings).result()
+        destination = self.store.rename_path(self.path, '레이드.JSON')
+        result = self.store.rename(self.path, destination, self.settings)
+        self.assertTrue(result.profile_saved)
+        self.assertEqual(result.recent_name, '레이드.json')
+        self.assertFalse(self.path.exists())
+        self.assertEqual(read_json(destination), profile)
+        self.assertEqual(self.store.load().path, destination)
+
+    def test_rename_rejects_invalid_reserved_and_settings_names(self):
+        for name in ('', '..', '../other', 'other/name', 'other\\name', 'bad:name',
+                     'bad?.json', 'NUL', 'con.txt', 'COM1', '.json', 'name..json', 'setting'):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                self.store.rename_path(self.path, name)
+
+    def test_rename_never_overwrites_an_existing_profile(self):
+        self.store.save(self.path, Profile.default().export(), self.settings).result()
+        destination = self.path.with_name('other.json')
+        destination.write_text('keep', encoding='utf-8')
+        result = self.store.rename(self.path, destination, self.settings)
+        self.assertFalse(result.profile_saved)
+        self.assertTrue(self.path.exists())
+        self.assertEqual(destination.read_text(encoding='utf-8'), 'keep')
+
+    def test_rename_failure_preserves_original_and_recent_setting(self):
+        self.store.save(self.path, Profile.default().export(), self.settings).result()
+        destination = self.path.with_name('other.json')
+        with patch.object(Path, 'rename', side_effect=OSError('locked')):
+            result = self.store.rename(self.path, destination, self.settings)
+        self.assertFalse(result.profile_saved)
+        self.assertTrue(self.path.exists())
+        self.assertFalse(destination.exists())
+        self.assertEqual(read_json(self.store.settings_path)['last_profile'], 'macro.json')
+
+    def test_rename_settings_failure_reports_file_already_moved(self):
+        self.store.save(self.path, Profile.default().export(), self.settings).result()
+        destination = self.path.with_name('other.json')
+        with patch('persistence.atomic_json', side_effect=OSError('settings locked')):
+            result = self.store.rename(self.path, destination, self.settings)
+        self.assertTrue(result.profile_saved)
+        self.assertIn('settings locked', result.error)
+        self.assertTrue(destination.exists())
+        self.assertFalse(self.path.exists())
+        self.store.settings(destination, self.settings)
+        self.assertEqual(self.store.load().path, destination)
+
+    def test_rename_external_profile_creates_recent_copy_with_new_name(self):
+        with tempfile.TemporaryDirectory() as external:
+            source = Path(external) / 'external.json'
+            profile = Profile.default().export()
+            self.store.save(source, profile, self.settings).result()
+            destination = source.with_name('new.json')
+            result = self.store.rename(source, destination, self.settings)
+            self.assertTrue(result.profile_saved)
+            self.assertEqual(result.recent_name, 'new.json')
+            self.assertEqual(read_json(self.store.directory / 'new.json'), profile)
+            self.assertEqual(read_json(self.store.directory / 'external.json'), profile)
+            self.assertEqual(self.store.load().path.name, 'new.json')
+
+    def test_rename_waits_for_queued_autosaves(self):
+        entered, release = threading.Event(), threading.Event()
+        def write(path, data):
+            if Path(path) == self.path and not entered.is_set():
+                entered.set()
+                if not release.wait(3):
+                    raise RuntimeError('test timeout')
+            atomic_json(path, data)
+        profile = Profile.default().export()
+        destination = self.path.with_name('new.json')
+        with patch('persistence.atomic_json', side_effect=write):
+            first = self.store.save(self.path, profile, self.settings, coalesce=True)
+            try:
+                self.assertTrue(entered.wait(1))
+                profile['macros'][0]['memo'] = 'latest'
+                last = self.store.save(self.path, profile, self.settings, coalesce=True)
+            finally:
+                release.set()
+            result = self.store.rename(self.path, destination, self.settings)
+        self.assertTrue(first.result().profile_saved)
+        self.assertTrue(last.result().profile_saved)
+        self.assertTrue(result.profile_saved)
+        self.assertFalse(self.path.exists())
+        self.assertEqual(read_json(destination)['macros'][0]['memo'], 'latest')
+
+    def test_case_only_rename_updates_filename_and_recent_setting(self):
+        self.store.save(self.path, Profile.default().export(), self.settings).result()
+        destination = self.path.with_name('Macro.json')
+        result = self.store.rename(self.path, destination, self.settings)
+        self.assertTrue(result.profile_saved)
+        self.assertEqual(result.recent_name, 'Macro.json')
+        self.assertIn('Macro.json', [p.name for p in self.path.parent.iterdir()])
+
     def test_ordered_snapshots_and_unchanged_settings_not_rewritten(self):
         entered, release = threading.Event(), threading.Event()
         writes = []

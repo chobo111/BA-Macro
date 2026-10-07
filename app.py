@@ -24,6 +24,7 @@ from coordinate_transform import aspect_warning
 from script_editor import ScriptEditor
 from persistence import ProfileStore
 from profile_saves import ProfileSaves
+from profile_dialogs import RenameProfileDialog, ProfileInfoDialog
 from conversion_dialog import ConversionDialog
 from version import APP_NAME, VERSION, RELEASES
 from session import ExecutionSession, editing_dialog
@@ -221,13 +222,15 @@ class MainWindow(QMainWindow):
     def build_menu(self):
         file_menu = self.menuBar().addMenu("파일")
         for text, callback in (("새 프로필", self.new_profile), ("불러오기", self.open_profile),
-                               ("저장", self.save), ("다른 이름으로 저장…", self.save_as)):
+                               ("저장", self.save), ("다른 이름으로 저장…", self.save_as),
+                               ("프로필 이름 변경…", self.rename_profile)):
             file_menu.addAction(text, callback)
         tools = self.menuBar().addMenu("설정")
         tools.addAction("환경설정", self.settings_dialog)
         tools.addAction("프로필 해상도 변환…", self.convert_dialog)
         about = self.menuBar().addMenu("정보")
         about.addAction(f"{APP_NAME} · {VERSION}", self.about_dialog)
+        about.addAction("현재 프로필 정보", self.profile_info_dialog)
         history = about.addMenu("변경 기록")
         for release in RELEASES:
             history.addAction(release[0], lambda checked=False, entry=release: self.release_notes_dialog(entry))
@@ -961,6 +964,86 @@ class MainWindow(QMainWindow):
             return True
         self.path = previous
         return False
+
+    @editing_dialog(hooks=False)
+    def rename_profile(self):
+        if self.path is None:
+            self.statusBar().showMessage('프로필을 먼저 저장한 뒤 이름을 변경하세요.')
+            return
+        original, profile = self.path, self.profile
+        with managed_dialog(RenameProfileDialog(original.stem, self)) as dialog:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            name = dialog.name.text()
+        if self.path != original or self.profile is not profile:
+            return
+        try:
+            destination = self.store.rename_path(original, name)
+            if destination.name == original.name:
+                return
+            self.flush_pending_saves()
+            if self.dirty:
+                if not self.save(automatic=True):
+                    return
+                self.flush_pending_saves()
+                if self.dirty:
+                    return
+            result = self.store.rename(original, destination, asdict(self.settings))
+            if not result.profile_saved:
+                raise OSError(result.error)
+            self.path = destination
+            self.settings_error = result.error
+            if result.recent_name:
+                self.settings.last_profile = result.recent_name
+            self.update_labels()
+            message = f'프로필 이름 변경 완료: {destination.stem}'
+            if result.error:
+                message += f' · 최근 프로필 정보 저장 실패: {result.error}'
+            self.statusBar().showMessage(message)
+        except (ValueError, OSError, RuntimeError) as error:
+            self.statusBar().showMessage(f'이름 변경 실패: {error}')
+
+    def profile_details(self):
+        def size_text(size):
+            return f'{size[0]} × {size[1]}' if size else '알 수 없음'
+
+        identity = self.profile.target_program
+        app_name = identity.get('title') or identity.get('exe') or identity.get('class') or '지정된 앱 없음'
+        if identity.get('exe') and identity['exe'] != app_name:
+            app_name += f" ({identity['exe']})"
+        current_size = '—'
+        if self.target is not None:
+            try:
+                current_size = size_text(self.native.size(self.target))
+            except WindowSizeUnavailable:
+                current_size = '최소화'
+            except OSError:
+                current_size = '확인할 수 없음'
+        counts = ', '.join(f'{label} {sum(row.action_mode == mode for row in self.profile.rows)}개'
+                           for mode, label in MODES.items())
+        transform = self.coordinate_transform
+        conversion = '사용 안 함'
+        if transform is not None:
+            conversion = f'사용 중 · {size_text(transform[0])} → {size_text(transform[1])}'
+        state = '저장 중' if self.profile_saves.pending() else ('저장되지 않은 변경 있음' if self.dirty or self.path is None else '저장됨')
+        if self.script_editor is not None and self.script_editor.editor.toPlainText() != self.script_editor.source:
+            state += ' · 스크립트 편집 중(미저장)'
+        return [
+            ('프로필 이름', self.path.stem if self.path else '새 프로필'),
+            ('파일 위치', str(self.path.resolve()) if self.path else '저장되지 않음'),
+            ('지정 앱', app_name),
+            ('기준 크기', size_text(self.profile.resolution)),
+            ('현재 선택', self.targets.currentText()),
+            ('현재 크기', current_size),
+            ('동작 수', f'총 {len(self.profile.rows)}개 · {counts}'),
+            ('자동 변환', conversion),
+            ('저장 상태', state),
+        ]
+
+    @editing_dialog(hooks=False, pause=False)
+    def profile_info_dialog(self):
+        with managed_dialog(ProfileInfoDialog(self.profile_details(), self)) as dialog:
+            dialog.exec()
 
     def persist_settings(self, *, recover=False):
         self.commit_settings(self.settings, recover=recover)

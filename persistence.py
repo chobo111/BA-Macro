@@ -3,7 +3,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Lock
 from copy import deepcopy
 from dataclasses import asdict, dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from hashlib import sha256
 from domain import Profile, Settings, atomic_json, read_json
 
@@ -102,6 +102,47 @@ class ProfileStore:
     def validate_profile_path(self, path):
         if self._is_settings_path(path):
             raise ValueError('환경설정 파일에는 프로필을 저장할 수 없습니다. 다른 파일명을 선택하세요.')
+
+    def rename_path(self, path, name):
+        name = name.strip()
+        if name.lower().endswith('.json'):
+            name = name[:-5]
+        if (not name or name.endswith(('.', ' '))
+                or any(ord(char) < 32 or char in '<>:"/\\|?*' for char in name)
+                or PureWindowsPath(name + '.json').is_reserved()):
+            raise ValueError('사용할 수 없는 파일명입니다. 다른 이름을 입력하세요.')
+        destination = Path(path).with_name(name + '.json')
+        self.validate_profile_path(destination)
+        return destination
+
+    def rename(self, source, destination, settings):
+        """Rename after queued writes, then update the startup profile reference."""
+        with self.queue_lock:
+            if self.closed:
+                raise RuntimeError('Profile store is closed')
+            self.queued_save = None
+            future = self.executor.submit(self._rename, Path(source), Path(destination), deepcopy(settings))
+        return future.result()
+
+    def _rename(self, source, destination, settings):
+        try:
+            self.validate_profile_path(source)
+            self.validate_profile_path(destination)
+            if source.parent.resolve() != destination.parent.resolve():
+                raise ValueError('프로필 이름은 같은 폴더 안에서만 변경할 수 있습니다.')
+            if destination.exists() and destination != source:
+                raise FileExistsError('같은 이름의 파일이 있습니다. 다른 이름을 입력하세요.')
+            # Windows rename fails if another file occupies the destination.
+            source.rename(destination)
+        except Exception as error:
+            return SaveResult(False, error=str(error))
+        self._release_recent_copy(source)
+        self.recent_copies.pop(source.resolve(), None)
+        try:
+            return SaveResult(True, self._settings(destination, settings))
+        except Exception as error:
+            # The file has moved; callers must follow it even if settings failed.
+            return SaveResult(True, error=str(error))
 
     def _backup_invalid_settings(self):
         if not self.settings_path.exists():
