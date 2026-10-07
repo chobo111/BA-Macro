@@ -40,13 +40,13 @@ def make_icon():
     return QIcon(pixmap)
 
 
-def make_run_icon(running, color="#e6eff8"):
+def make_run_icon(running):
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(color))
+    painter.setBrush(QColor('#102b1a' if running else '#ffffff'))
     if running:
         painter.drawRoundedRect(7, 7, 18, 18, 2, 2)
     else:
