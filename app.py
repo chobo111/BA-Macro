@@ -178,6 +178,12 @@ class MainWindow(QMainWindow):
         self.pin_button.setToolTip("다른 창보다 항상 위에 표시")
         self.pin_button.toggled.connect(self.pin)
         toolbar.addWidget(self.pin_button)
+        self.run_indicator = QLabel()
+        self.run_indicator.setObjectName("runIndicator")
+        self.run_indicator.setAccessibleName("매크로 활성화 상태")
+        self.run_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.run_indicator.setFixedSize(100, 30)
+        toolbar.addWidget(self.run_indicator)
         self.pause_button = self.button("시작", self.toggle, True)
         self.pause_button.setFixedSize(106, 30)
         self.run_icons = (make_run_icon(False), make_run_icon(True))
@@ -273,8 +279,9 @@ class MainWindow(QMainWindow):
             QPushButton:hover {{border-color: #47b8ed; background: {alt};}}
             QPushButton:pressed {{background: {border};}}
             QPushButton:checked {{background: #285275; color: #ffffff; border-color: #47b8ed;}}
-            QPushButton#primary {{background: #cf4452; color: #ffffff; border: none; font-weight: 700;}}
-            QPushButton#primary[running="true"] {{background: #39b86a; color: #102b1a;}}
+            QPushButton#primary {{font-weight: 700;}}
+            QLabel#runIndicator {{background: #cf4452; color: #ffffff; border-radius: 5px; font-weight: 700;}}
+            QLabel#runIndicator[running="true"] {{background: #39b86a; color: #102b1a;}}
             QTableWidget {{background: {panel}; alternate-background-color: {alt}; border: 1px solid {border}; border-radius: 8px; selection-background-color: #285275;}}
             QTableWidget::item {{padding: 4px;}}
             QHeaderView {{background: {bg};}}
@@ -286,16 +293,19 @@ class MainWindow(QMainWindow):
             QMenu::item:selected {{background: {border};}}
             QToolTip {{background: {panel}; color: {text}; border: 1px solid {border};}}
         """)
+        self.run_icons = (make_run_icon(False, text), make_run_icon(True, text))
+        self.pause_button.setIcon(self.run_icons[bool(self.armed)])
 
     def update_labels(self):
         name = self.path.stem if self.path else "새 프로필"
         self.pause_button.setText("정지" if self.armed else "시작")
-        if self.pause_button.property("running") != self.armed:
-            self.pause_button.setProperty("running", self.armed)
+        self.run_indicator.setText("활성화됨" if self.armed else "비활성화됨")
+        if self.run_indicator.property("running") != self.armed:
+            self.run_indicator.setProperty("running", self.armed)
             self.pause_button.setIcon(self.run_icons[bool(self.armed)])
-            self.pause_button.style().unpolish(self.pause_button)
-            self.pause_button.style().polish(self.pause_button)
-            self.pause_button.update()
+            self.run_indicator.style().unpolish(self.run_indicator)
+            self.run_indicator.style().polish(self.run_indicator)
+            self.run_indicator.update()
         self.setWindowTitle(f"{'● ' if self.dirty else ''}{name} — {APP_NAME}")
         if hasattr(self, "tray"):
             self.tray.setToolTip(APP_NAME + " · " + ("작동 중" if self.armed else "일시정지"))
