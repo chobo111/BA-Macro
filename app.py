@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
+from copy import deepcopy
 import os
 from pathlib import Path
 import sys
@@ -438,8 +439,10 @@ class MainWindow(QMainWindow):
         if self.modal or (self.session.editor_open and self.settings.auto_pause):
             return
         if self.target is None:
-            self.statusBar().showMessage('앱 또는 전체화면을 선택하세요.')
-            return
+            self.refresh_windows(restore_saved=True)
+            if self.target is None:
+                self.statusBar().showMessage('프로필에 지정된 앱을 찾을 수 없거나 구분할 수 없습니다. 앱을 선택하세요.')
+                return
         if self.target and not self.native.exists(self.target):
             self.statusBar().showMessage("먼저 대상 창을 선택하세요.")
             return
@@ -502,13 +505,35 @@ class MainWindow(QMainWindow):
         remember_automatic = False
         saved = dict(self.profile.target_program)
         current = self.native.window_identity(target) if target else {}
-        if saved and not same_program(saved, current) and self.settings.warn_app_mismatch:
+        if saved and not same_program(saved, current):
             with managed_dialog(AppMismatchDialog(saved, current, self)) as dialog:
                 dialog.exec()
-                if not dialog.confirmed():
+                choice = dialog.choice()
+            if choice not in ('new', 'copy', 'change') or not selection_valid():
+                return None
+            if choice in ('new', 'copy'):
+                if not self.confirm_changes() or not selection_valid():
                     return None
-                if dialog.skip_warning.isChecked():
-                    self.commit_settings(replace(self.settings, warn_app_mismatch=False))
+                latest = self.native.window_identity(target) if target else {}
+                if latest != current and not same_program(current, latest):
+                    self.statusBar().showMessage('선택한 앱이 변경되었습니다. 다시 선택하세요.')
+                    return None
+                candidate = deepcopy(self.profile) if choice == 'copy' else Profile.default()
+                candidate.target_program = latest
+                candidate.validate((self.settings.capture_hk, self.settings.pause_hk))
+                self.stop()
+                self.finish_script_editor()
+                new_path = self.next_profile_path()
+                self.commit_start_profile(candidate, new_path)
+                self.profile = candidate
+                self.rebuild()
+                self.rebind()
+                self.update_labels()
+                message = f'새 프로필 생성: {new_path.name} · 내용을 확인한 뒤 시작하세요.'
+                if self.settings_error:
+                    message += f' · 최근 프로필 정보 저장 실패: {self.settings_error}'
+                self.statusBar().showMessage(message)
+                return None
         if not selection_valid():
             return None
         current_size = tuple(self.native.size(target)) if target or self.native.display_id else None
@@ -550,9 +575,24 @@ class MainWindow(QMainWindow):
         if remember_automatic:
             self.commit_settings(replace(self.settings, auto_convert_on_start=True))
         if current != self.profile.target_program:
-            self.profile.target_program = current
-            self.changed()
+            candidate = replace(self.profile, target_program=dict(current))
+            self.commit_start_profile(candidate, self.path or self.next_profile_path())
+            self.profile.target_program = dict(current)
         return plan
+
+    def commit_start_profile(self, candidate, path):
+        """Save the approved candidate before changing the current profile/app."""
+        self.flush_pending_saves()
+        candidate.validate((self.settings.capture_hk, self.settings.pause_hk))
+        result = self.store.save(path, candidate.export(), asdict(self.settings)).result()
+        if not result.profile_saved:
+            raise OSError(f'프로필 저장 실패: {result.error}')
+        self.path, self.dirty = path, False
+        self.settings_error = result.error
+        if result.recent_name:
+            self.settings.last_profile = result.recent_name
+        if result.error:
+            self.statusBar().showMessage(f'프로필 저장 완료 · 최근 프로필 정보 저장 실패: {result.error}')
 
     def dispatch(self, action, rid):
         if not self.eligible(action):

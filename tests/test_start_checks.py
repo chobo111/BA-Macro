@@ -63,54 +63,63 @@ class StartChecks(unittest.TestCase):
         self.identity.return_value = OTHER
         with patch('app.AppMismatchDialog') as factory:
             dialog = factory.return_value
-            dialog.confirmed.return_value = False
-            dialog.skip_warning.isChecked.return_value = True
+            dialog.choice.return_value = 'cancel'
             self.window.toggle()
         self.assertFalse(self.window.armed)
         self.assertEqual(self.window.profile.target_program, GAME)
         self.assertTrue(self.window.settings.warn_app_mismatch)
 
-    def test_confirmed_app_and_opt_out_persist(self):
+    def test_current_profile_change_saves_identity_and_preserves_actions(self):
+        w = self.window
+        w.profile.rows[0].x = 321
+        w.save()
+        old_path = w.path
         self.identity.return_value = OTHER
         with patch('app.AppMismatchDialog') as factory:
-            dialog = factory.return_value
-            dialog.confirmed.return_value = True
-            dialog.skip_warning.isChecked.return_value = True
-            self.window.toggle()
-        self.assertTrue(self.window.armed)
-        self.assertFalse(self.window.settings.warn_app_mismatch)
-        self.window.flush_pending_saves()
-        self.assertFalse(Settings.read(read_json(self.window.settings_path)).warn_app_mismatch)
-        self.assertEqual(Profile.read(read_json(self.window.path)).target_program, OTHER)
+            factory.return_value.choice.return_value = 'change'
+            w.toggle()
+        self.assertTrue(w.armed)
+        self.assertEqual(w.path, old_path)
+        saved = Profile.read(read_json(w.path))
+        self.assertEqual(saved.target_program, OTHER)
+        self.assertEqual(saved.rows[0].x, 321)
+        self.assertEqual(saved.resolution, (1280,720))
 
-    def test_opt_out_failure_does_not_start_or_replace_profile(self):
+    def test_profile_change_save_failure_preserves_original_identity(self):
+        from concurrent.futures import Future
+        from persistence import SaveResult
+        w = self.window
+        w.save()
+        old_path, old_bytes = w.path, w.path.read_bytes()
         self.identity.return_value = OTHER
-        with patch('app.AppMismatchDialog') as factory, \
-             patch.object(self.window.store, 'settings', side_effect=OSError('save failed')), \
-             patch.object(self.window, 'error') as error:
-            factory.return_value.confirmed.return_value = True
-            factory.return_value.skip_warning.isChecked.return_value = True
-            self.window.toggle()
-        error.assert_called_once_with('save failed')
-        self.assertFalse(self.window.armed)
-        self.assertTrue(self.window.settings.warn_app_mismatch)
-        self.assertEqual(self.window.profile.target_program, GAME)
+        future = Future()
+        future.set_result(SaveResult(False, error='disk full'))
+        with patch('app.AppMismatchDialog') as factory, patch.object(w.store, 'save', return_value=future), patch.object(w, 'error') as error:
+            factory.return_value.choice.return_value = 'change'
+            w.toggle()
+        self.assertIn('disk full', error.call_args.args[0])
+        self.assertFalse(w.armed)
+        self.assertEqual(w.profile.target_program, GAME)
+        self.assertEqual(w.path, old_path)
+        self.assertEqual(w.path.read_bytes(), old_bytes)
 
-    def test_opt_out_does_not_skip_resolution_warning(self):
+    def test_old_warning_opt_out_cannot_skip_profile_decision_or_size_check(self):
         self.identity.return_value = OTHER
-        self.size.return_value = (1920, 1080)
+        self.size.return_value = (1920,1080)
         self.window.settings.warn_app_mismatch = False
         with patch('app.AppMismatchDialog') as app, patch('app.SizeMismatchDialog') as size:
+            app.return_value.choice.return_value = 'change'
             size.return_value.choice.return_value = 'cancel'
             self.window.toggle()
-        app.assert_not_called()
+        app.assert_called_once()
         size.assert_called_once()
         self.assertFalse(self.window.armed)
+        self.assertEqual(self.window.profile.target_program, GAME)
 
     def test_no_app_selection_warns_against_saved_app(self):
         self.window.target = 0
         with patch('app.AppMismatchDialog') as factory:
-            factory.return_value.confirmed.return_value = False
+            factory.return_value.choice.return_value = 'cancel'
             self.window.toggle()
         self.assertEqual(factory.call_args.args[:2], (GAME, {}))
         self.assertFalse(self.window.armed)
@@ -132,7 +141,7 @@ class StartChecks(unittest.TestCase):
         self.window.settings.auto_pause = False
         with patch('app.AppMismatchDialog') as factory:
             factory.return_value.exec.side_effect = self.window.toggle
-            factory.return_value.confirmed.return_value = False
+            factory.return_value.choice.return_value = 'cancel'
             self.window.toggle()
         factory.assert_called_once()
         self.assertFalse(self.window.modal)
@@ -144,8 +153,7 @@ class StartChecks(unittest.TestCase):
             def close_window():
                 self.exists.return_value = False
             factory.return_value.exec.side_effect = close_window
-            factory.return_value.confirmed.return_value = True
-            factory.return_value.skip_warning.isChecked.return_value = False
+            factory.return_value.choice.return_value = 'change'
             self.window.toggle()
         self.assertFalse(self.window.armed)
         self.assertEqual(self.window.profile.target_program, GAME)
@@ -197,13 +205,15 @@ class StartChecks(unittest.TestCase):
 
     def test_warning_dialog_buttons_and_cancel_defaults(self):
         dialog = AppMismatchDialog(GAME, OTHER, self.window)
-        self.assertIs(dialog.defaultButton(), dialog.cancel_button)
-        self.assertEqual(dialog.skip_warning.text(), '다음부터 알리지 않음')
-        self.assertFalse(dialog.skip_warning.isChecked())
-        dialog.skip_warning.setChecked(True)
-        QTimer.singleShot(0, dialog.start_button.click)
+        self.assertTrue(dialog.cancel_button.isDefault())
+        self.assertFalse(dialog.apply_button.isEnabled())
+        self.assertEqual(dialog.choice(), 'cancel')
+        self.assertEqual(set(dialog.options), {'new', 'copy', 'change'})
+        dialog.options['copy'].setChecked(True)
+        self.assertTrue(dialog.apply_button.isEnabled())
+        QTimer.singleShot(0, dialog.apply_button.click)
         dialog.exec()
-        self.assertTrue(dialog.confirmed())
+        self.assertEqual(dialog.choice(), 'copy')
         dialog.deleteLater()
         for can_resize in (True, False):
             dialog = SizeMismatchDialog((1280,720), (1920,1080), self.window, can_resize=can_resize)
@@ -223,15 +233,14 @@ class StartChecks(unittest.TestCase):
         settings = Settings(warn_app_mismatch=False)
         self.assertEqual(Settings.read(asdict(settings)), settings)
         dialog = SettingsDialog(settings, self.window)
-        dialog.checks['warn_app_mismatch'].setChecked(True)
-        self.assertTrue(dialog.value().warn_app_mismatch)
+        self.assertNotIn('warn_app_mismatch', dialog.checks)
+        self.assertFalse(dialog.value().warn_app_mismatch)
         dialog.deleteLater()
 
     def test_app_replaced_during_confirmation_cannot_start_under_old_approval(self):
         self.identity.side_effect = [OTHER, {**OTHER, 'exe': 'New.exe'}]
         with patch('app.AppMismatchDialog') as factory:
-            factory.return_value.confirmed.return_value = True
-            factory.return_value.skip_warning.isChecked.return_value = False
+            factory.return_value.choice.return_value = 'change'
             self.window.toggle()
         self.assertFalse(self.window.armed)
         self.assertEqual(self.window.profile.target_program, GAME)
@@ -532,8 +541,7 @@ class StartChecks(unittest.TestCase):
                     w.settings.auto_pause = pause
                     self.identity.return_value = current
                     with patch('app.AppMismatchDialog') as app_prompt, patch('app.SizeMismatchDialog') as size_prompt:
-                        app_prompt.return_value.confirmed.return_value = True
-                        app_prompt.return_value.skip_warning.isChecked.return_value = False
+                        app_prompt.return_value.choice.return_value = 'change'
                         size_prompt.return_value.choice.return_value = 'auto'
                         w.toggle()
                     self.assertTrue(w.armed)
@@ -724,7 +732,7 @@ class StartChecks(unittest.TestCase):
         self.size.return_value = (1920,1080)
         self.identity.return_value = OTHER
         with patch('app.AppMismatchDialog') as app_prompt, patch('app.SizeMismatchDialog') as size_prompt:
-            app_prompt.return_value.confirmed.return_value = False
+            app_prompt.return_value.choice.return_value = 'cancel'
             w.toggle()
         app_prompt.assert_called_once()
         size_prompt.assert_not_called()
@@ -865,3 +873,117 @@ class StartChecks(unittest.TestCase):
             editor.pick_coordinate((960,540))
         self.assertEqual(editor.editor.toPlainText(),'click 50,50')
         self.assertIsNone(editor.capture_resolution)
+
+    def test_unselected_start_finds_saved_app_and_checks_size(self):
+        w = self.window
+        w.target = None
+        with patch.object(w.native, 'windows', return_value=[(123,'Game')]), patch('app.AppMismatchDialog') as mismatch:
+            w.dispatch('pause', '')
+        self.assertTrue(w.armed)
+        self.assertEqual(w.target, 123)
+        self.assertEqual(w.targets.currentData(), 123)
+        mismatch.assert_not_called()
+        w.stop()
+        w.target = None
+        self.size.return_value = (1920,1080)
+        with patch.object(w.native, 'windows', return_value=[(123,'Game')]), patch('app.SizeMismatchDialog') as size:
+            size.return_value.choice.return_value = 'cancel'
+            w.toggle()
+        size.assert_called_once()
+        self.assertFalse(w.armed)
+
+    def test_unselected_missing_or_ambiguous_app_does_not_start(self):
+        w = self.window
+        for windows in ([], [(123,'Game'),(456,'Game')]):
+            w.target = None
+            with patch.object(w.native, 'windows', return_value=windows):
+                w.toggle()
+            self.assertIsNone(w.target)
+            self.assertFalse(w.armed)
+            self.assertEqual(w.profile.target_program, GAME)
+            self.assertIn('앱을 선택', w.statusBar().currentMessage())
+
+    def test_explicit_fullscreen_does_not_auto_select_profile_app(self):
+        w = self.window
+        w.target = 0
+        with patch.object(w.native, 'windows') as windows, patch('app.AppMismatchDialog') as prompt:
+            prompt.return_value.choice.return_value = 'cancel'
+            w.toggle()
+        windows.assert_not_called()
+        self.assertEqual(w.target, 0)
+        self.assertFalse(w.armed)
+
+    def test_new_and_copied_profiles_keep_original_file_and_stay_stopped(self):
+        w = self.window
+        w.profile.rows[0].x = 321
+        w.profile.rows[0].memo = 'keep memo'
+        w.profile.rows[1].action_mode = 'script'
+        w.profile.rows[1].script = 'click 100,200'
+        w.save()
+        original, old_path, old_bytes = w.profile, w.path, w.path.read_bytes()
+        self.identity.return_value = OTHER
+        for choice in ('new', 'copy'):
+            w.profile, w.path = original, old_path
+            with patch('app.AppMismatchDialog') as prompt:
+                prompt.return_value.choice.return_value = choice
+                w.toggle()
+            self.assertFalse(w.armed)
+            self.assertIsNone(w.session.plan)
+            self.assertNotEqual(w.path, old_path)
+            self.assertEqual(old_path.read_bytes(), old_bytes)
+            saved = Profile.read(read_json(w.path))
+            self.assertEqual(saved.target_program, OTHER)
+            self.assertEqual(w.settings.last_profile, w.path.name)
+            if choice == 'new':
+                self.assertEqual([r.move_hk for r in saved.rows], ['q','w','e'])
+                self.assertTrue(all(r.x == 0 and r.y == 0 and not r.memo and not r.script for r in saved.rows))
+                self.assertIsNone(saved.resolution)
+            else:
+                self.assertEqual(saved.resolution, (1280,720))
+                self.assertEqual(saved.rows[0].x, 321)
+                self.assertEqual(saved.rows[0].memo, 'keep memo')
+                self.assertEqual(saved.rows[1].script, 'click 100,200')
+                saved.rows[0].x = 999
+                self.assertEqual(original.rows[0].x, 321)
+
+    def test_new_profile_save_failure_keeps_original_state_and_file(self):
+        from concurrent.futures import Future
+        from persistence import SaveResult
+        w = self.window
+        w.save()
+        original, old_path, old_bytes = w.profile, w.path, w.path.read_bytes()
+        self.identity.return_value = OTHER
+        result = Future()
+        result.set_result(SaveResult(False, error='disk full'))
+        with patch('app.AppMismatchDialog') as prompt, patch.object(w.store, 'save', return_value=result), patch.object(w, 'error') as error:
+            prompt.return_value.choice.return_value = 'copy'
+            w.toggle()
+        self.assertIs(w.profile, original)
+        self.assertEqual(w.path, old_path)
+        self.assertEqual(old_path.read_bytes(), old_bytes)
+        self.assertFalse(w.armed)
+        self.assertIn('disk full', error.call_args.args[0])
+
+    def test_new_profile_selection_change_during_prompt_cannot_write(self):
+        w = self.window
+        self.identity.return_value = OTHER
+        before = w.profile.export()
+        with patch('app.AppMismatchDialog') as prompt, patch.object(w.store, 'save') as save:
+            prompt.return_value.choice.return_value = 'new'
+            prompt.return_value.exec.side_effect = lambda: setattr(w, 'target', None)
+            w.toggle()
+        save.assert_not_called()
+        self.assertEqual(w.profile.export(), before)
+        self.assertFalse(w.armed)
+
+    def test_new_profile_cancel_unsaved_changes_preserves_current_profile(self):
+        w = self.window
+        self.identity.return_value = OTHER
+        original = w.profile
+        with patch('app.AppMismatchDialog') as prompt, patch.object(w, 'confirm_changes', return_value=False), patch.object(w.store, 'save') as save:
+            prompt.return_value.choice.return_value = 'new'
+            w.toggle()
+        self.assertIs(w.profile, original)
+        self.assertEqual(w.profile.target_program, GAME)
+        self.assertFalse(w.armed)
+        save.assert_not_called()

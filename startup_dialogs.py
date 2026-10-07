@@ -1,7 +1,8 @@
 """Explicit start decisions; input stays stopped while these dialogs are open."""
 from coordinate_transform import aspect_warning
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox, QCheckBox
+from PySide6.QtWidgets import (QMessageBox, QCheckBox, QDialog, QVBoxLayout, QLabel,
+                               QRadioButton, QButtonGroup, QDialogButtonBox)
 
 
 def app_label(identity):
@@ -11,23 +12,47 @@ def app_label(identity):
     return f'{title} ({exe})' if title and exe else title or exe or identity.get('class', '알 수 없음')
 
 
-class AppMismatchDialog(QMessageBox):
+class AppMismatchDialog(QDialog):
     def __init__(self, saved, current, parent=None):
         super().__init__(parent)
         self.setWindowTitle('프로필 앱 확인')
-        self.setIcon(QMessageBox.Icon.Warning)
-        self.setTextFormat(Qt.TextFormat.PlainText)
-        self.setText('프로필에 지정된 앱과 현재 선택한 앱이 다릅니다.')
-        self.setInformativeText(f'프로필 앱: {app_label(saved)}\n현재 선택: {app_label(current)}\n\n계속 시작하면 현재 선택을 프로필에 기억합니다.')
-        self.skip_warning = QCheckBox('다음부터 알리지 않음')
-        self.setCheckBox(self.skip_warning)
-        self.start_button = self.addButton('이 선택으로 시작', QMessageBox.ButtonRole.AcceptRole)
-        self.cancel_button = self.addButton('취소', QMessageBox.ButtonRole.RejectRole)
-        self.setDefaultButton(self.cancel_button)
-        self.setEscapeButton(self.cancel_button)
+        self.setMinimumWidth(410)
+        layout = QVBoxLayout(self)
+        for text in ('프로필에 지정된 앱과 현재 선택한 앱이 다릅니다.',
+                     f'프로필 앱: {app_label(saved)}\n현재 선택: {app_label(current)}'):
+            label = QLabel(text)
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            label.setWordWrap(True)
+            layout.addWidget(label)
+        self.options = {}
+        self.group = QButtonGroup(self)
+        for name, text in (
+                ('new', '새 프로필 만들기 · 기본 Q/W/E 3행'),
+                ('copy', '새 프로필 만들기 · 현재 내용 복사'),
+                ('change', '현재 프로필의 지정 앱 변경')):
+            option = QRadioButton(text)
+            self.group.addButton(option)
+            self.options[name] = option
+            layout.addWidget(option)
+        hint = QLabel('새 프로필은 별도 파일로 만들고 정지 상태로 엽니다.\n현재 프로필 변경은 좌표와 스크립트를 유지하며 시작을 계속합니다.')
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.apply_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.apply_button.setText('적용')
+        self.apply_button.setEnabled(False)
+        self.cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        self.cancel_button.setText('취소')
+        self.cancel_button.setDefault(True)
+        self.group.buttonToggled.connect(lambda *_: self.apply_button.setEnabled(self.group.checkedButton() is not None))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
-    def confirmed(self):
-        return self.clickedButton() is self.start_button
+    def choice(self):
+        if self.result() == QDialog.DialogCode.Accepted:
+            return next((name for name, option in self.options.items() if option.isChecked()), 'cancel')
+        return 'cancel'
 
 
 class SizeMismatchDialog(QMessageBox):
