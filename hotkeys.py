@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 import threading
 import keyboard
-from shortcuts import hotkey, validate_hotkeys
+from shortcuts import hotkey, validate_hotkeys, ShortcutError
 
 
 # Navigation, keypad and special keys share scan codes. The virtual key describes
@@ -38,6 +38,12 @@ class KeyGroup:
     def matches(self, key):
         return (key.scan_code in self.scan_codes
                 and (not self.virtual_keys or key.virtual_key in self.virtual_keys))
+
+    def overlaps(self, other):
+        """Whether one physical event can satisfy both matchers."""
+        return (bool(self.scan_codes & other.scan_codes)
+                and (not self.virtual_keys or not other.virtual_keys
+                     or bool(self.virtual_keys & other.virtual_keys)))
 
     @classmethod
     def compile(cls, name, scan_codes, modifiers=()):
@@ -93,15 +99,33 @@ class Hotkeys:
                        for name in names)
         return Binding(normalized, action, row_id, groups)
 
-    def configure(self, values, exclusive=False):
+    @classmethod
+    def validated_bindings(cls, values):
+        """Compile and check before replacing any live input state."""
         values = tuple(values)
         validate_hotkeys(value[0] for value in values)
         bindings = []
         for value in values:
-            binding = self.compile(*value)
+            binding = cls.compile(*value)
             if binding is None:
                 continue
+            for previous in bindings:
+                # Canonical modifiers are ordered. Different modifier counts
+                # cannot match together because runtime matching is exact.
+                if (len(binding.groups) == len(previous.groups)
+                        and all(first.overlaps(second)
+                                for first, second in zip(binding.groups, previous.groups))):
+                    raise ShortcutError(
+                        f'실제 입력이 중복된 단축키: {previous.key.upper()} / {binding.key.upper()}')
             bindings.append(binding)
+        return bindings
+
+    @classmethod
+    def validate(cls, keys):
+        cls.validated_bindings((key, '', '') for key in keys)
+
+    def configure(self, values, exclusive=False):
+        bindings = self.validated_bindings(values)
         with self.lock:
             self.bindings = bindings
             self.exclusive = exclusive

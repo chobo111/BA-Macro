@@ -2014,3 +2014,97 @@ class UiTests(unittest.TestCase):
                 other.close()
                 other.deleteLater()
                 self.qt.processEvents()
+
+    def test_physical_alias_edit_keeps_previous_shortcut_disk_and_bindings(self):
+        w = self.window
+        w.profile.rows[0].move_hk = 'shift+-'
+        self.assertTrue(w.save())
+        w.rebind()
+        before, bindings = w.path.read_bytes(), list(w.hooks.bindings)
+        row = w.profile.rows[1]
+        with patch('app.KeyDialog') as factory, patch.object(QMessageBox, 'warning') as warning:
+            factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            factory.return_value.value.return_value = 'shift+_'
+            w.edit_key(row.id)
+            warning.assert_not_called()
+        w.flush_pending_saves()
+        self.assertEqual(row.move_hk, 'w')
+        self.assertEqual(w.path.read_bytes(), before)
+        self.assertEqual(w.hooks.bindings, bindings)
+        self.assertIn('실제 입력이 중복', w.statusBar().currentMessage())
+
+    def test_physical_settings_conflicts_keep_settings_and_use_log(self):
+        from dataclasses import replace
+        w = self.window
+        w.profile.rows[0].move_hk = 'shift+-'
+        self.assertTrue(w.save())
+        w.rebind()
+        original = w.settings
+        before = w.settings_path.read_bytes()
+        for changes in ({'pause_hk': 'shift+_'}, {'capture_hk': 'shift+_'},
+                        {'pause_hk': 'shift+/', 'capture_hk': 'shift+?'}):
+            with self.subTest(changes=changes), patch('app.SettingsDialog') as factory, \
+                 patch.object(w, 'error') as error, patch.object(w, 'commit_settings') as commit:
+                factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+                factory.return_value.value.return_value = replace(original, **changes)
+                w.settings_dialog()
+                commit.assert_not_called()
+                error.assert_not_called()
+            self.assertIs(w.settings, original)
+            self.assertEqual(w.settings_path.read_bytes(), before)
+            self.assertIn('실제 입력이 중복', w.statusBar().currentMessage())
+
+    def test_physical_conflict_profile_open_preserves_current_profile_and_draft(self):
+        from domain import atomic_json
+        w = self.window
+        original, path = w.profile, w.path
+        invalid = path.with_name('conflicting.json')
+        profile = Profile.default()
+        profile.rows[0].move_hk, profile.rows[1].move_hk = 'shift+-', 'shift+_'
+        atomic_json(invalid, profile.export())
+        before, settings = invalid.read_bytes(), w.settings_path.read_bytes()
+        w.edit_script(w.profile.rows[0].id)
+        editor = w.script_editor
+        with patch.object(w, 'confirm_changes', return_value=True), \
+             patch.object(QFileDialog, 'getOpenFileName', return_value=(str(invalid), '')), \
+             patch.object(w, 'error') as error:
+            w.open_profile()
+        self.assertIs(w.profile, original)
+        self.assertEqual(w.path, path)
+        self.assertIs(w.script_editor, editor)
+        self.assertIn('실제 입력이 중복', error.call_args.args[0])
+        self.assertEqual(invalid.read_bytes(), before)
+        self.assertEqual(w.settings_path.read_bytes(), settings)
+
+    def test_physical_conflict_startup_does_not_bind_or_rewrite_profile(self):
+        from domain import atomic_json
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'macro.json'
+            profile = Profile.default()
+            profile.rows[0].move_hk, profile.rows[1].move_hk = 'shift+-', 'shift+_'
+            atomic_json(path, profile.export())
+            before = path.read_bytes()
+            other = MainWindow(data_dir=folder, hook_enabled=False)
+            try:
+                self.assertFalse(other.armed)
+                self.assertEqual(other.hooks.bindings, [])
+                self.assertIn('실제 입력이 중복', other.load_error)
+                self.assertEqual(other.profile.rows[0].move_hk, 'shift+-')
+                self.assertEqual(path.read_bytes(), before)
+            finally:
+                other.shutdown()
+                other.close()
+                other.deleteLater()
+                self.qt.processEvents()
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_physical_conflict_is_rejected_before_profile_save(self):
+        w = self.window
+        w.flush_pending_saves()
+        before = w.path.read_bytes()
+        w.profile.rows[0].move_hk, w.profile.rows[1].move_hk = 'shift+-', 'shift+_'
+        with patch.object(w, 'error'), patch.object(w.store, 'save') as save:
+            self.assertFalse(w.save())
+            save.assert_not_called()
+        self.assertEqual(w.path.read_bytes(), before)
+        w.profile.rows[0].move_hk, w.profile.rows[1].move_hk = 'q', 'w'

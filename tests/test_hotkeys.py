@@ -369,3 +369,46 @@ class HotkeyTests(unittest.TestCase):
         self.assertEqual(self.actions, [('move', 'multiply')])
         self.assertFalse(self.physical_event(9, 0x38, kind='up'))
         self.assertFalse(self.hooks.held('shift+*'))
+
+    def test_physical_alias_conflicts_preserve_live_bindings_and_held_state(self):
+        from shortcuts import ShortcutError
+        pairs = (('shift+-', 'shift+_'), ('shift+/', 'shift+?'),
+                 ('shift+=', 'shift++'), ('shift+8', 'shift+*'),
+                 ('ctrl+shift+-', 'ctrl+shift+_'))
+        self.event('q')
+        previous = (list(self.hooks.bindings), dict(self.hooks.pressed),
+                    set(self.hooks.fired), set(self.hooks.suppressed), self.hooks.exclusive)
+        for first, second in pairs:
+            for keys in ((first, second), (second, first)):
+                for exclusive in (False, True):
+                    with self.subTest(keys=keys, exclusive=exclusive):
+                        with self.assertRaisesRegex(ShortcutError, '실제 입력이 중복'):
+                            self.hooks.configure([(keys[0], 'pause', ''),
+                                                  (keys[1], 'move', 'row')], exclusive)
+                        self.assertEqual((self.hooks.bindings, self.hooks.pressed,
+                                          self.hooks.fired, self.hooks.suppressed,
+                                          self.hooks.exclusive), previous)
+        self.assertFalse(self.event('q'))
+        self.assertEqual(self.actions, [('move', '1')])
+        self.assertFalse(self.event('q', 'up'))
+
+    def test_physical_validation_allows_distinct_virtual_keys_and_modifiers(self):
+        keys = ('.', 'delete', '4', 'left', '*', '8', 'print screen',
+                'pause', 'num lock', 'q', 'shift+q', 'ctrl+q', 'alt+q',
+                'shift+-', 'ctrl+shift+_')
+        Hotkeys.validate(iter(keys))
+        self.hooks.configure([(key, 'move', str(index)) for index, key in enumerate(keys)])
+        self.assertEqual(len(self.hooks.bindings), len(keys))
+
+    def test_shift_symbol_works_after_rejecting_conflicting_registration(self):
+        from shortcuts import ShortcutError
+        self.hooks.configure([('shift+_', 'move', 'underscore')], True)
+        with self.assertRaises(ShortcutError):
+            Hotkeys.validate(('shift+-', 'shift+_'))
+        self.physical_event(42, 0xA0)
+        self.assertFalse(self.physical_event(12, 0xBD))
+        self.assertTrue(self.hooks.held('shift+_'))
+        self.assertFalse(self.physical_event(12, 0xBD))
+        self.assertEqual(self.actions, [('move', 'underscore')])
+        self.assertFalse(self.physical_event(12, 0xBD, kind='up'))
+        self.assertFalse(self.hooks.held('shift+_'))

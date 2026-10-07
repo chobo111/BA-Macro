@@ -421,8 +421,12 @@ class MainWindow(QMainWindow):
     def eligible(self, action):
         return self.session.eligible(action, self.settings.auto_pause)
 
+    def validate_profile_shortcuts(self, profile, settings=None):
+        settings = self.settings if settings is None else settings
+        Hotkeys.validate((settings.capture_hk, settings.pause_hk,
+                          *(row.move_hk for row in profile.rows)))
+
     def rebind(self):
-        self.profile.validate((self.settings.capture_hk, self.settings.pause_hk))
         values = [(self.settings.pause_hk, "pause", ""), (self.settings.capture_hk, "capture_selected", "")]
         for row in self.profile.rows:
             values.append((row.move_hk, "move", row.id))
@@ -526,7 +530,7 @@ class MainWindow(QMainWindow):
                     return None
                 candidate = deepcopy(self.profile) if choice == 'copy' else Profile.default()
                 candidate.target_program = latest
-                candidate.validate((self.settings.capture_hk, self.settings.pause_hk))
+                self.validate_profile_shortcuts(candidate)
                 self.stop()
                 self.finish_script_editor()
                 new_path = self.next_profile_path()
@@ -589,7 +593,7 @@ class MainWindow(QMainWindow):
     def commit_start_profile(self, candidate, path):
         """Save the approved candidate before changing the current profile/app."""
         self.flush_pending_saves()
-        candidate.validate((self.settings.capture_hk, self.settings.pause_hk))
+        self.validate_profile_shortcuts(candidate)
         result = self.store.save(path, candidate.export(), asdict(self.settings)).result()
         if not result.profile_saved:
             raise OSError(f'프로필 저장 실패: {result.error}')
@@ -784,7 +788,6 @@ class MainWindow(QMainWindow):
             with managed_dialog(KeyDialog(row.move_hk, self)) as dialog:
                 if dialog.exec() == QDialog.DialogCode.Accepted:
                     value = dialog.value()
-                    Hotkeys.compile(value)
                     old = row.move_hk
                     row.move_hk = value
                     try:
@@ -903,9 +906,7 @@ class MainWindow(QMainWindow):
             if not path:
                 return
             profile = Profile.read(read_json(path))
-            profile.validate((self.settings.capture_hk, self.settings.pause_hk))
-            for row in profile.rows:
-                Hotkeys.compile(row.move_hk)
+            self.validate_profile_shortcuts(profile)
             self.finish_script_editor()
             self.profile, self.path, self.dirty = profile, Path(path), False
             self.stop()
@@ -931,7 +932,7 @@ class MainWindow(QMainWindow):
             else:
                 return self.save_as()
         try:
-            self.profile.validate((self.settings.capture_hk, self.settings.pause_hk))
+            self.validate_profile_shortcuts(self.profile)
             revision = self.profile_saves.begin()
             future = self.store.save(self.path, self.profile.export(), asdict(self.settings), coalesce=automatic)
             self.profile_saves.register(revision, self.path, future)
@@ -1092,9 +1093,7 @@ class MainWindow(QMainWindow):
             while dialog.exec() == QDialog.DialogCode.Accepted:
                 try:
                     settings = dialog.value()
-                    self.profile.validate((settings.capture_hk, settings.pause_hk))
-                    Hotkeys.compile(settings.capture_hk)
-                    Hotkeys.compile(settings.pause_hk)
+                    self.validate_profile_shortcuts(self.profile, settings)
                     self.commit_settings(settings, recover=True)
                     self.apply_theme()
                     self.update_labels()
@@ -1179,7 +1178,7 @@ class MainWindow(QMainWindow):
                 path = path.with_suffix('.json')
             if self.path and path.resolve() == self.path.resolve():
                 raise ValueError('원본을 보존하려면 다른 파일명을 지정하세요. 덮어쓰려면 현재 프로필에 적용을 사용하세요.')
-        profile.validate((self.settings.capture_hk, self.settings.pause_hk))
+        self.validate_profile_shortcuts(profile)
         result = self.store.save(path, profile.export(), asdict(self.settings)).result()
         if not result.profile_saved:
             raise ValueError(result.error)
