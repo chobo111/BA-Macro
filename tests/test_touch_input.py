@@ -314,7 +314,7 @@ class TouchTests(unittest.TestCase):
         try:
             engine.submit(replace(self.command, hwnd=0, script='click 10,20'))
             self.assertTrue(reported.wait(1))
-            self.assertEqual(errors, ['스크립트를 실행하려면 앱을 선택하세요.'])
+            self.assertEqual(errors, ['실행할 앱을 선택하세요.'])
             self.assertEqual(self.device.events, [])
             self.assertEqual(self.native.events, [])
         finally:

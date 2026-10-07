@@ -265,7 +265,7 @@ class KeyDialog(QDialog):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, settings, parent, displays=()):
+    def __init__(self, settings, parent):
         super().__init__(parent)
         self.setWindowTitle("환경설정")
         self.setMinimumWidth(470)
@@ -281,16 +281,6 @@ class SettingsDialog(QDialog):
             forms[label] = form_layout
             self.tabs.addTab(page, label)
         form = forms["일반"]
-        self.displays = QComboBox()
-        self.displays.addItem("전체 디스플레이", '')
-        for index, display in enumerate(displays, 1):
-            self.displays.addItem(f'{index}번 · {display.name} · {display.width}×{display.height}', display.id)
-        selected = self.displays.findData(settings.display_id)
-        if selected < 0:
-            self.displays.addItem('연결되지 않은 디스플레이 · 다시 선택하세요', settings.display_id)
-            selected = self.displays.count()-1
-        self.displays.setCurrentIndex(selected)
-        form.addRow("작동 디스플레이", self.displays)
         self.keys = {}
         for name, label in (("pause_hk", "작동 / 정지"), ("capture_hk", "선택한 행 좌표 캡처")):
             editor = ClickToCaptureEdit(QKeySequence(qt_hotkey(getattr(settings, name)), QKeySequence.SequenceFormat.PortableText))
@@ -357,7 +347,6 @@ class SettingsDialog(QDialog):
         data.update({name: spin.value() for name, spin in self.times.items()})
         data.update({name: checkbox.isChecked() for name, checkbox in self.checks.items()})
         data["theme"] = self.theme.currentText()
-        data["display_id"] = self.displays.currentData()
         return Settings.read(data)
 
 

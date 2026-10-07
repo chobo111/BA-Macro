@@ -23,7 +23,7 @@ class ExecutionSession:
         return self.plan.coordinate_transform if self.plan is not None else None
 
     def start(self, plan):
-        if plan.target != self.target:
+        if not self.target or plan.target != self.target:
             raise ValueError('선택한 앱이 변경되었습니다. 다시 시작하세요.')
         self.plan = plan
         self.armed = True
@@ -43,8 +43,8 @@ class ExecutionSession:
         if action in ('pause', 'capture_selected'):
             return True
         if action == 'move':
-            return self.armed and (not self.target or self.native.active(self.target))
-        return not self.target or self.native.active(self.target)
+            return self.armed and bool(self.target) and self.native.active(self.target)
+        return bool(self.target) and self.native.active(self.target)
 
     @contextmanager
     def editing(self, pause, stop, close_hooks=None, restore_hooks=None):

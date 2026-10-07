@@ -176,18 +176,18 @@ class EngineTests(unittest.TestCase):
         self.wait_idle()
         self.assertEqual(sum(e == ("button", True) for e in self.native.events), 1)
 
-    def test_fullscreen_accepts_negative_coordinates_without_active_window(self):
-        self.native.active_value = False
-        self.engine.execute(replace(self.command, hwnd=0, x=-500, y=-300))
-        self.assertEqual(self.native.events[0], ("move", -500, -300))
-        self.assertEqual(sum(e == ("button", True) for e in self.native.events), 1)
+    def test_coordinate_execution_requires_selected_app(self):
+        for mode in ('move_only', 'move_and_click'):
+            with self.assertRaisesRegex(ValueError, '앱을 선택'):
+                self.engine.execute(replace(self.command, hwnd=0, mode=mode))
+        self.assertEqual(self.native.events, [])
 
-    def test_fullscreen_rejects_off_desktop_and_still_cancels(self):
-        with self.assertRaises(ValueError):
-            self.engine.execute(replace(self.command, hwnd=0, x=-2000))
-        self.engine.stop()
-        with self.assertRaises(Cancelled):
-            self.engine.execute(replace(self.command, hwnd=0))
+    def test_worker_rejects_unselected_app_before_input(self):
+        for mode in ('move_only', 'move_and_click', 'script'):
+            self.engine.submit(replace(self.command, hwnd=0, mode=mode, script='click 10,20'))
+            self.wait_idle()
+        self.assertEqual(self.errors, ['실행할 앱을 선택하세요.'] * 3)
+        self.assertEqual(self.native.events, [])
 
     def test_resize_during_click_releases_button_and_restores_cursor(self):
         from unittest.mock import patch

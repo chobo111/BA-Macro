@@ -74,23 +74,16 @@ class DisplayTests(TestCase):
         with self.assertRaises(ValueError):
             Settings.read({'display_id':123})
 
-    def test_coordinate_action_uses_monitor_origin_but_script_requires_target(self):
+    def test_display_setting_cannot_enable_execution_without_app(self):
         from engine import Engine, Command
         command = Command(0, 120, 300, 'move_and_click', 'q', 0, 1)
-        info = SimpleNamespace(device=LEFT.device, monitor=W.RECT(-1920,-200,0,880))
-        with patch('native.monitor_info', return_value=info), \
-             patch.object(self.native, 'cursor', return_value=(120,300)), \
-             patch.object(self.native, 'cursor_screen', return_value=(-2300,50)), \
-             patch.object(self.native, 'move') as move, \
-             patch.object(self.native, 'button') as button:
+        with patch.object(self.native, 'move') as move, patch.object(self.native, 'button') as button:
             engine = Engine(self.native, lambda key: False)
             try:
-                engine.execute(command)
-                self.assertEqual(move.call_args_list[0].args, (-1800,100))
-                move.assert_called_with(-2300,50)
-                self.assertEqual(button.call_args_list[0].args, (True,))
-                with self.assertRaises(ValueError):
-                    engine.runtime.native.begin(0)
+                with self.assertRaisesRegex(ValueError, '앱을 선택'):
+                    engine.execute(command)
+                move.assert_not_called()
+                button.assert_not_called()
             finally:
                 engine.shutdown()
 

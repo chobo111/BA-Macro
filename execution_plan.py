@@ -14,10 +14,11 @@ class ExecutionPlan:
     source_resolution: tuple[int, int] | None
     expected_size: tuple[int, int] | None
     automatic: bool = False
-    display_id: str = ''
 
     def __post_init__(self):
-        if self.automatic and (not self.target or self.source_resolution is None or self.expected_size is None):
+        if not self.target:
+            raise ValueError('실행할 앱을 선택하세요.')
+        if self.automatic and (self.source_resolution is None or self.expected_size is None):
             raise ValueError('자동 변환에는 앱과 기준·실행 해상도가 필요합니다.')
         if self.automatic:
             validate_sizes(self.source_resolution, self.expected_size)
@@ -29,8 +30,8 @@ class ExecutionPlan:
         return None
 
     def check_context(self, native, target, resolution, *, size=None):
-        if target != self.target or (not target and native.display_id != self.display_id):
-            raise ValueError('선택한 앱 또는 디스플레이가 변경되었습니다. 다시 시작하세요.')
+        if target != self.target or not native.exists(target):
+            raise ValueError('선택한 앱이 변경되거나 닫혔습니다. 다시 시작하세요.')
         if resolution != self.source_resolution:
             raise ValueError('프로필 기준 해상도가 변경되었습니다. 다시 시작하세요.')
         if self.expected_size is not None:
@@ -43,8 +44,6 @@ class ExecutionPlan:
         x, y = row.x, row.y
         transform = self.coordinate_transform
         if row.action_mode == 'script':
-            if not self.target:
-                raise ValueError('스크립트를 실행하려면 앱을 선택하세요.')
             program = scaled_program(row.script, *transform) if transform else compile_script(row.script)
         elif transform:
             x, y = scaled_point((x, y), *transform)

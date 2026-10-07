@@ -80,6 +80,8 @@ class Engine:
                 raise WindowSizeChanged(WINDOW_SIZE_CHANGED)
 
     def guard(self, command):
+        if not command.hwnd:
+            raise ValueError('실행할 앱을 선택하세요.')
         if hasattr(self.native, "validate_context"):
             self.native.validate_context(command.hwnd)
         if self.cancel.is_set() or (command.hwnd and not self.native.active(command.hwnd)):
@@ -162,6 +164,7 @@ class Engine:
                         self.check_size(self.input_context)
                     self.runtime.native.keep_alive()
                     continue
+                self.guard(c)
                 if c.mode == 'script':
                     program = c.program if c.program is not None else compile_script(c.script)
                     self.check_size(c)
