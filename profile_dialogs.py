@@ -11,7 +11,7 @@ class RenameProfileDialog(QDialog):
         self.setWindowTitle('프로필 이름 변경')
         self.setMinimumWidth(340)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel('새 이름 (.json 확장자는 자동으로 붙습니다.)'))
+        layout.addWidget(QLabel('새 이름'))
         self.name = QLineEdit(name)
         self.name.selectAll()
         layout.addWidget(self.name)

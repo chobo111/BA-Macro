@@ -150,7 +150,12 @@ class UiTests(unittest.TestCase):
         menus = {action.text(): action.menu() for action in w.menuBar().actions()}
         self.assertIn('정보', menus)
         self.assertNotIn('도움말', menus)
-        self.assertIn(VERSION, menus['정보'].actions()[0].text())
+        self.assertEqual(menus['정보'].actions()[0].text(), '프로그램 정보')
+        self.assertNotIn('변경 기록', [action.text() for action in menus['정보'].actions()])
+        with patch.object(QMessageBox, 'information') as about:
+            w.about_dialog()
+        self.assertEqual(about.call_args.args[1], '프로그램 정보')
+        self.assertIn(VERSION, about.call_args.args[2])
         editor = ScriptEditor('', w.native, 0, w)
         editor.show()
         for width, height in ((500, 430), (700, 520)):
@@ -837,15 +842,65 @@ class UiTests(unittest.TestCase):
         w.delete_rows()
         self.assertEqual(len(Profile.read(self.saved(w.path)).rows),3)
         old_path,old_bytes=w.path,w.path.read_bytes()
-        with patch.object(QFileDialog,'getSaveFileName') as save_dialog:
+        destination = old_path.with_name('사용자 지정.json')
+        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(QFileDialog, 'selectedFiles', return_value=[str(destination)]):
             w.new_profile()
-            save_dialog.assert_not_called()
+        self.assertEqual(w.path, destination)
         self.assertNotEqual(w.path,old_path)
         self.assertEqual(old_path.read_bytes(),old_bytes)
         self.assertTrue(w.path.exists())
         self.assertEqual(self.saved(w.settings_path)['last_profile'],w.path.name)
         w.flush_pending_saves()
         self.assertFalse(w.dirty)
+
+    def test_new_profile_dialog_cancel_preserves_file_and_script_draft(self):
+        w = self.window
+        old_profile, old_path, old_bytes = w.profile, w.path, w.path.read_bytes()
+        w.edit_script(w.profile.rows[0].id)
+        editor = w.script_editor
+        editor.editor.setPlainText('sleep 42')
+        def cancel(dialog):
+            self.assertEqual(dialog.acceptMode(), QFileDialog.AcceptMode.AcceptSave)
+            self.assertEqual(dialog.defaultSuffix(), 'json')
+            self.assertFalse(dialog.testOption(QFileDialog.Option.DontConfirmOverwrite))
+            return QDialog.DialogCode.Rejected
+        with patch.object(QFileDialog, 'exec', cancel), patch.object(w, 'confirm_changes') as confirm:
+            w.new_profile()
+        confirm.assert_not_called()
+        self.assertIs(w.profile, old_profile)
+        self.assertEqual(w.path, old_path)
+        self.assertEqual(w.path.read_bytes(), old_bytes)
+        self.assertIs(w.script_editor, editor)
+        self.assertEqual(editor.editor.toPlainText(), 'sleep 42')
+
+    def test_new_profile_write_failure_preserves_current_profile(self):
+        from concurrent.futures import Future
+        from persistence import SaveResult
+        w = self.window
+        old_profile, old_path, old_bytes = w.profile, w.path, w.path.read_bytes()
+        result = Future()
+        result.set_result(SaveResult(False, error='disk full'))
+        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(QFileDialog, 'selectedFiles', return_value=[str(w.path.with_name('new.json'))]), \
+             patch.object(w.store, 'save', return_value=result):
+            w.new_profile()
+        self.assertIs(w.profile, old_profile)
+        self.assertEqual(w.path, old_path)
+        self.assertEqual(w.path.read_bytes(), old_bytes)
+        self.assertIn('disk full', w.statusBar().currentMessage())
+
+    def test_new_profile_cannot_overwrite_settings_file(self):
+        w = self.window
+        old_profile, old_path = w.profile, w.path
+        settings_before = w.settings_path.read_bytes()
+        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(QFileDialog, 'selectedFiles', return_value=[str(w.settings_path)]):
+            w.new_profile()
+        self.assertIs(w.profile, old_profile)
+        self.assertEqual(w.path, old_path)
+        self.assertEqual(w.settings_path.read_bytes(), settings_before)
+        self.assertIn('환경설정 파일', w.statusBar().currentMessage())
 
     def test_live_memo_is_saved_before_editor_closes(self):
         from PySide6.QtWidgets import QLineEdit
@@ -1212,11 +1267,15 @@ class UiTests(unittest.TestCase):
         w.edit_script(previous.rows[0].id)
         editor=w.script_editor
         editor.editor.setPlainText('sleep 42')
-        with patch.object(QMessageBox,'exec',return_value=QMessageBox.StandardButton.Cancel):
+        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(QFileDialog, 'selectedFiles', return_value=[str(w.path.with_name('new.json'))]), \
+             patch.object(QMessageBox,'exec',return_value=QMessageBox.StandardButton.Cancel):
             w.new_profile()
         self.assertIs(w.profile,previous)
         self.assertIs(w.script_editor,editor)
-        with patch.object(QMessageBox,'exec',return_value=QMessageBox.StandardButton.Discard):
+        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(QFileDialog, 'selectedFiles', return_value=[str(w.path.with_name('new.json'))]), \
+             patch.object(QMessageBox,'exec',return_value=QMessageBox.StandardButton.Discard):
             w.new_profile()
         self.assertIsNot(w.profile,previous)
         self.assertIsNone(w.script_editor)

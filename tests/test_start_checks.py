@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QFileDialog
 from app import MainWindow
 from domain import Profile, Settings, read_json, same_program
 from startup_dialogs import AppMismatchDialog, SizeMismatchDialog
@@ -266,7 +266,9 @@ class StartChecks(unittest.TestCase):
         w = self.window
         w.settings.auto_pause = False
         w.armed = True
-        with patch.object(w.native, 'windows', return_value=[]), \
+        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(QFileDialog, 'selectedFiles', return_value=[str(w.path.with_name('new.json'))]), \
+             patch.object(w.native, 'windows', return_value=[]), \
              patch.object(w.engine, 'stop', wraps=w.engine.stop) as stop:
             w.new_profile()
         self.assertFalse(w.armed)
@@ -277,7 +279,9 @@ class StartChecks(unittest.TestCase):
     def test_cancel_new_profile_preserves_existing_profile(self):
         w = self.window
         before = w.profile
-        with patch.object(w, 'confirm_changes', return_value=False):
+        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(QFileDialog, 'selectedFiles', return_value=[str(w.path.with_name('new.json'))]), \
+             patch.object(w, 'confirm_changes', return_value=False):
             w.new_profile()
         self.assertIs(w.profile, before)
         self.assertEqual(w.target, 123)

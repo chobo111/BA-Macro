@@ -26,7 +26,7 @@ from persistence import ProfileStore
 from profile_saves import ProfileSaves
 from profile_dialogs import RenameProfileDialog, ProfileInfoDialog
 from conversion_dialog import ConversionDialog
-from version import APP_NAME, VERSION, RELEASES
+from version import APP_NAME, VERSION
 from session import ExecutionSession, editing_dialog
 from shortcuts import ShortcutError
 from single_instance import SingleInstance
@@ -229,11 +229,8 @@ class MainWindow(QMainWindow):
         tools.addAction("환경설정", self.settings_dialog)
         tools.addAction("프로필 해상도 변환…", self.convert_dialog)
         about = self.menuBar().addMenu("정보")
-        about.addAction(f"{APP_NAME} · {VERSION}", self.about_dialog)
+        about.addAction("프로그램 정보", self.about_dialog)
         about.addAction("현재 프로필 정보", self.profile_info_dialog)
-        history = about.addMenu("변경 기록")
-        for release in RELEASES:
-            history.addAction(release[0], lambda checked=False, entry=release: self.release_notes_dialog(entry))
         self.cursor_label = QLabel("— , —")
         self.cursor_label.setObjectName("cursor")
         self.cursor_label.setFixedWidth(152)
@@ -861,16 +858,35 @@ class MainWindow(QMainWindow):
         self.finish_script_editor()
         return True
 
+    @editing_dialog(hooks=False)
     def new_profile(self):
-        if self.confirm_changes():
+        with managed_dialog(QFileDialog(self, '새 프로필 생성', str(self.next_profile_path()),
+                                        '매크로 프로필 (*.json)')) as dialog:
+            dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+            dialog.setFileMode(QFileDialog.FileMode.AnyFile)
+            dialog.setDefaultSuffix('json')
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            path = Path(dialog.selectedFiles()[0])
+        try:
+            self.store.validate_profile_path(path)
+            if not self.confirm_changes():
+                return
+            candidate = Profile.default()
             self.stop()
+            self.commit_start_profile(candidate, path)
             self.finish_script_editor()
-            self.profile, self.path, self.dirty = Profile.default(), self.next_profile_path(), False
+            self.profile = candidate
             self.target = None
             self.refresh_windows()
-            self.changed()
             self.rebuild()
             self.restart_hooks()
+            message = f'새 프로필 생성: {path.name}'
+            if self.settings_error:
+                message += f' · 최근 프로필 정보 저장 실패: {self.settings_error}'
+            self.statusBar().showMessage(message)
+        except (ValueError, OSError, RuntimeError) as error:
+            self.statusBar().showMessage(f'새 프로필 생성 실패: {error}')
 
     @editing_dialog(hooks=False)
     def open_profile(self):
@@ -1216,13 +1232,7 @@ class MainWindow(QMainWindow):
 
     @editing_dialog(hooks=False)
     def about_dialog(self):
-        QMessageBox.information(self, '정보', f'{APP_NAME}\n버전: {VERSION}')
-
-    @editing_dialog(hooks=False)
-    def release_notes_dialog(self, entry):
-        version, date, changes = entry
-        QMessageBox.information(self, f"변경 기록 · {version}",
-                                f"{version} · {date}\n\n" + "\n".join(f"• {change}" for change in changes))
+        QMessageBox.information(self, '프로그램 정보', f'{APP_NAME}\n버전: {VERSION}')
 
     def shutdown(self):
         if self.closing:
