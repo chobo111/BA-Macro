@@ -324,3 +324,48 @@ class HotkeyTests(unittest.TestCase):
                 self.assertTrue(self.hooks.held(modifier+'+q'))
                 self.event('q','up')
                 self.assertFalse(self.hooks.held(modifier+'+q'))
+
+    def test_period_rejects_delete_but_accepts_both_decimal_keys(self):
+        from unittest.mock import patch
+        with patch('keyboard_hook.character_key', return_value=(0xBE, frozenset())):
+            self.hooks.configure([('.', 'move', 'dot')], True)
+        for extended in (False, True):
+            self.assertTrue(self.physical_event(83, 0x2E, extended))
+            self.assertTrue(self.physical_event(83, 0x2E, extended, 'up'))
+        self.assertEqual(self.actions, [])
+        for scan, vk in ((52, 0xBE), (83, 0x6E)):
+            self.assertFalse(self.physical_event(scan, vk))
+            self.assertFalse(self.physical_event(scan, vk))
+            self.assertTrue(self.hooks.held('.'))
+            self.assertFalse(self.physical_event(scan, vk, kind='up'))
+            self.assertFalse(self.hooks.held('.'))
+        self.assertEqual(self.actions, [('move', 'dot'), ('move', 'dot')])
+
+    def test_multiply_does_not_fire_on_unshifted_eight(self):
+        from unittest.mock import patch
+        for shortcut in ('*', 'ctrl+*'):
+            self.hooks.close()
+            self.actions.clear()
+            with patch('keyboard_hook.character_key', return_value=(0x38, frozenset(('shift',)))):
+                self.hooks.configure([(shortcut, 'move', 'multiply')], True)
+            if shortcut.startswith('ctrl'):
+                self.physical_event(29, 0xA2)
+            self.assertTrue(self.physical_event(9, 0x38))
+            self.assertTrue(self.physical_event(9, 0x38, kind='up'))
+            self.assertTrue(self.physical_event(55, 0x2C, True))
+            self.assertTrue(self.physical_event(55, 0x2C, True, 'up'))
+            self.assertEqual(self.actions, [])
+            self.assertFalse(self.physical_event(55, 0x6A))
+            self.assertFalse(self.physical_event(55, 0x6A, kind='up'))
+            self.assertEqual(self.actions, [('move', 'multiply')])
+
+    def test_shifted_main_keyboard_multiply_and_repeat(self):
+        from unittest.mock import patch
+        with patch('keyboard_hook.character_key', return_value=(0x38, frozenset(('shift',)))):
+            self.hooks.configure([('shift+*', 'move', 'multiply')], True)
+        self.physical_event(42, 0xA0)
+        self.assertFalse(self.physical_event(9, 0x38))
+        self.assertFalse(self.physical_event(9, 0x38))
+        self.assertEqual(self.actions, [('move', 'multiply')])
+        self.assertFalse(self.physical_event(9, 0x38, kind='up'))
+        self.assertFalse(self.hooks.held('shift+*'))

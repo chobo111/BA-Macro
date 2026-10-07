@@ -192,7 +192,7 @@ class StartChecks(unittest.TestCase):
         before = self.window.profile.export()
         preference = self.window.settings.resize_convert_profile
         with patch.object(self.window.native, 'resize', side_effect=resized) as resize, \
-             patch('interactive_resize.refresh',return_value=''), \
+             patch('native.valid_window',return_value=True), patch('interactive_resize.is_hung',return_value=False), patch('interactive_resize.refresh',return_value=''), \
              patch.object(self.window, 'convert_dialog') as convert:
             self.window.resize_dialog(profile_size=(1280, 720))
         resize.assert_called_once_with(123, 1280, 720)
@@ -677,7 +677,7 @@ class StartChecks(unittest.TestCase):
         def resized(hwnd,width,height):
             self.size.return_value = (width,height)
         with patch('app.SizeMismatchDialog') as prompt, patch.object(w.native,'resize',side_effect=resized) as resize, \
-             patch('interactive_resize.refresh',return_value=''):
+             patch('native.valid_window',return_value=True), patch('interactive_resize.is_hung',return_value=False), patch('interactive_resize.refresh',return_value=''):
             prompt.return_value.choice.return_value = 'resize'
             w.toggle()
         resize.assert_called_once_with(123,1280,720)

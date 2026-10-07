@@ -16,6 +16,8 @@ LOGICAL_KEYS = {
     'scroll lock': 0x91, 'caps lock': 0x14,
 }
 
+KEYPAD_SYMBOLS = {'+': 0x6B, '*': 0x6A, '.': 0x6E, '/': 0x6F, '-': 0x6D}
+
 
 @dataclass(frozen=True)
 class PressedKey:
@@ -42,18 +44,15 @@ class KeyGroup:
         name = keyboard.normalize_name(name)
         if len(name) == 1 and name in '0123456789':
             virtual_keys = frozenset((ord(name), 0x60 + int(name)))
-        elif name == '+':
+        elif name in KEYPAD_SYMBOLS:
             from keyboard_hook import character_key
-            # Keypad + is independent of Shift. A main-keyboard + may require
-            # Shift (layout dependent); bare "=" must not trigger this binding.
-            keys = {0x6B}
-            mapped = character_key('+')
+            # Keypad symbols have independent virtual keys. Main-keyboard
+            # symbols also require their layout-specific modifiers.
+            keys = {KEYPAD_SYMBOLS[name]}
+            mapped = character_key(name)
             if mapped and mapped[1].issubset(modifiers):
                 keys.add(mapped[0])
             virtual_keys = frozenset(keys)
-        elif name == '*':
-            # Top-row Shift+8 and keypad multiply; exclude PrintScreen's scan 55.
-            virtual_keys = frozenset((0x38, 0x6A))
         elif name in LOGICAL_KEYS:
             virtual_keys = frozenset((LOGICAL_KEYS[name],))
         else:

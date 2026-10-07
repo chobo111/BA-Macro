@@ -1,8 +1,9 @@
 """Embedded script editor that leaves the main title bar and menus accessible."""
 import re
+from threading import Event
 from PySide6.QtCore import Qt, QEvent, Signal, QTimer
 from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QPlainTextEdit, QComboBox, QSizeGrip, QApplication
+from PySide6.QtWidgets import QWidget, QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QPlainTextEdit, QComboBox, QSizeGrip, QApplication
 from mouse_hook import CoordinateHook
 from script_language import compile_script, ScriptError
 from script_help import ScriptHelpDialog
@@ -33,6 +34,8 @@ class ScriptEditor(QDialog):
         self.setObjectName('scriptOverlay')
         self.setWindowModality(Qt.WindowModality.NonModal)
         self.coordinate_hook = None
+        self.capture_enabled = Event()
+        self.capture_blockers = set()
         self.coordinate_clicked.connect(self.capture_screen_point, Qt.ConnectionType.QueuedConnection)
         self.capture_resolution = None
         self.capture_size = None
@@ -123,10 +126,11 @@ class ScriptEditor(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self.parentWidget().installEventFilter(self)
+        QApplication.instance().installEventFilter(self)
         self.sync_to_parent()
+        self.update_capture_enabled()
         if self.target is not None and self.parentWidget().hook_enabled and self.coordinate_hook is None:
-            hook = CoordinateHook(self.coordinate_clicked.emit)
+            hook = CoordinateHook(self.coordinate_clicked.emit, self.capture_enabled.is_set)
             try:
                 hook.start()
                 self.coordinate_hook = hook
@@ -135,11 +139,22 @@ class ScriptEditor(QDialog):
                 self.log(f'좌표 입력 초기화 실패: {error}', error=True)
 
     def hideEvent(self, event):
-        self.parentWidget().removeEventFilter(self)
+        self.capture_enabled.clear()
+        self.capture_blockers.clear()
+        QApplication.instance().removeEventFilter(self)
         if self.coordinate_hook is not None:
             self.coordinate_hook.close()
             self.coordinate_hook = None
         super().hideEvent(event)
+
+    def update_capture_enabled(self):
+        # Only the GUI thread reads Qt state. The hook reads an Event snapshot.
+        allowed = (self.isVisible() and self.target is not None and not self.capture_blockers
+                   and not QApplication.activeModalWidget() and not QApplication.activePopupWidget())
+        if allowed:
+            self.capture_enabled.set()
+        else:
+            self.capture_enabled.clear()
 
     def capture_screen_point(self, x, y):
         if not self.isVisible() or QApplication.activeModalWidget() or QApplication.activePopupWidget():
@@ -227,6 +242,18 @@ class ScriptEditor(QDialog):
             self.sync_to_parent()
 
     def eventFilter(self, watched, event):
+        kind = event.type()
+        if isinstance(watched, QWidget):
+            if ((kind == QEvent.Type.Show and watched.isWindow()
+                 and (watched.windowModality() != Qt.WindowModality.NonModal
+                      or watched.windowType() == Qt.WindowType.Popup))
+                    or (kind == QEvent.Type.WindowBlocked and watched in (self, self.parentWidget()))):
+                self.capture_blockers.add(watched)
+                self.capture_enabled.clear()
+            elif kind in (QEvent.Type.Hide, QEvent.Type.WindowUnblocked) and watched in self.capture_blockers:
+                self.capture_blockers.discard(watched)
+                # Qt clears activeModalWidget/activePopupWidget after Hide.
+                QTimer.singleShot(0, self, self.update_capture_enabled)
         if watched is self.parentWidget() and event.type() in (QEvent.Type.Resize, QEvent.Type.Move):
             if not self.syncing_geometry:
                 self.sync_to_parent()

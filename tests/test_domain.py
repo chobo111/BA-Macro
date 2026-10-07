@@ -15,6 +15,22 @@ class DomainTests(unittest.TestCase):
         self.assertEqual(target_identity({'exe': 'Game.exe'})['exe'], 'Game.exe')
         self.assertEqual(target_identity({}), {})
 
+    def test_invalid_resolution_is_rejected_instead_of_erasing_the_basis(self):
+        for size in ('1920X1080', '1920×1080', 'bad', '', '0x1080', '1920x',
+                     '1920x1080x2', '100001x1080', None, 123, True, [1920,1080]):
+            data = Profile.default().export()
+            data['target_resolution'] = size
+            with self.subTest(size=size), self.assertRaises(ValueError):
+                Profile.read(data)
+
+    def test_explicit_unknown_and_valid_resolution_are_preserved(self):
+        for size, expected in (('알 수 없음', None), ('1920x1080', (1920,1080)), ('1x1', (1,1))):
+            data = Profile.default().export()
+            data['target_resolution'] = size
+            profile = Profile.read(data)
+            self.assertEqual(profile.resolution, expected)
+            self.assertEqual(profile.export()['target_resolution'], size)
+
     def test_current_profile_roundtrip(self):
         profile = Profile([Row(move_hk='q', x=123, y=456, memo='스킬', action_mode='move_and_click')], (1920, 1080))
         with tempfile.TemporaryDirectory() as directory:

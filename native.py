@@ -7,6 +7,7 @@ from displays import enumerate_displays, monitor_info
 
 U = C.WinDLL("user32", use_last_error=True)
 ULONG_PTR = C.c_size_t
+SWP_ASYNCWINDOWPOS = 0x4000
 
 
 class MouseInput(C.Structure):
@@ -305,4 +306,4 @@ class Windows:
         else:
             check(adjust(*args))
         check(set_position(hwnd, None, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
-                           0x0002 | 0x0004 | 0x0010))
+                           0x0002 | 0x0004 | 0x0010 | SWP_ASYNCWINDOWPOS))

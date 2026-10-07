@@ -87,6 +87,8 @@ def corner(rect):
 
 def resize(window, hwnd, width, height):
     """Apply the client size, then refresh rendering through system sizing."""
+    if not win.valid_window(hwnd) or is_hung(hwnd):
+        raise OSError('앱이 닫혔거나 응답하지 않아 창 크기를 변경할 수 없습니다.')
     window.resize(hwnd, width, height)
     return refresh(window, hwnd, (width, height))
 
@@ -155,7 +157,7 @@ def refresh(window, hwnd, expected_size):
             try:
                 if tuple(window.size(hwnd)) != expected_size:
                     left,top,right,bottom = original_frame
-                    win.check(win.set_position(hwnd,None,left,top,right-left,bottom-top,0x0004|0x0010))
+                    win.check(win.set_position(hwnd,None,left,top,right-left,bottom-top,0x0004|0x0010|win.SWP_ASYNCWINDOWPOS))
                     wait_for_size(window, hwnd, expected_size)
                     if size_mismatch:
                         issue = '크기 차이를 요청한 %d × %d로 복원했습니다.' % expected_size

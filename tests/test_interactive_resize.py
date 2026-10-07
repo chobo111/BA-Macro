@@ -109,7 +109,7 @@ class InteractiveResizeTests(unittest.TestCase):
         self.assertEqual(self.focus,77)
         self.assertFalse(self.active)
         self.assertEqual(self.point,(50,50))
-        self.restore.assert_called_once_with(123,None,100,100,800,500,0x14)
+        self.restore.assert_called_once_with(123,None,100,100,800,500,0x4014)
 
     def test_cannot_exit_loop_does_not_warp_cursor_across_screen(self):
         def post(*args):
@@ -202,3 +202,25 @@ class InteractiveResizeTests(unittest.TestCase):
         notice=self.refresh()
         self.assertIn('요청 784 × 461 / 실제 783 × 461',notice)
         self.assertIn('복원하지 못했습니다',notice)
+
+    def test_async_resize_waits_for_client_size_before_dragging(self):
+        original_size = self.window.size
+        pending = []
+        def request(hwnd, width, height):
+            pending.extend([(640,360), (700,400)])
+        self.window.resize = request
+        self.window.size = lambda hwnd: pending.pop(0) if pending else original_size(hwnd)
+        def post(*args):
+            self.assertEqual(pending, [])
+            return self.post_message(*args)
+        self.post.side_effect = post
+        self.assertEqual(r.resize(self.window,123,784,461), '')
+        self.assertTrue(self.posts)
+
+    def test_async_request_without_completion_times_out_without_moving_cursor(self):
+        self.window.resize = lambda *args: None
+        notice = r.resize(self.window,123,1920,1080)
+        self.assertIn('요청 1920 × 1080', notice)
+        self.cursor.assert_not_called()
+        self.foreground.assert_not_called()
+        self.post.assert_not_called()

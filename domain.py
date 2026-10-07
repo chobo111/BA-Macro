@@ -117,10 +117,10 @@ class Profile:
             raise ValueError("중복된 행 ID가 있습니다.")
         resolution = data.get("target_resolution", "알 수 없음")
         size = None
-        if isinstance(resolution, str) and "x" in resolution:
-            values = resolution.lower().split("x")
-            if len(values) != 2:
-                raise ValueError("해상도 형식이 올바르지 않습니다.")
+        if resolution != "알 수 없음":
+            if not isinstance(resolution, str) or len(resolution.split("x")) != 2:
+                raise ValueError("해상도는 1920x1080 형식 또는 '알 수 없음'이어야 합니다.")
+            values = resolution.split("x")
             size = tuple(bounded_int(v.strip(), 1, 100000, "해상도") for v in values)
         obj = cls(rows, size, target_identity(data.get('target_program')))
         obj.validate()

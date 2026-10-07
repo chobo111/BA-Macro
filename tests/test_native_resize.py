@@ -11,6 +11,8 @@ class NativeResizeTests(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self.native=native.Windows.__new__(native.Windows)
         self.events=[]
+        self.valid = self.stack.enter_context(patch('native.valid_window', return_value=True))
+        self.hung = self.stack.enter_context(patch('interactive_resize.is_hung', return_value=False))
         def adjust(rect,*args):
             rect._obj.left=-8
             rect._obj.top=-31
@@ -27,7 +29,7 @@ class NativeResizeTests(unittest.TestCase):
     def test_resize_precedes_interactive_refresh_with_dpi_and_position_preserved(self):
         self.assertEqual(resize(self.native,123,1920,1080),'')
         self.assertEqual(self.events,['resize','refresh'])
-        self.position.assert_called_once_with(123,None,0,0,1936,1119,0x0002|0x0004|0x0010)
+        self.position.assert_called_once_with(123,None,0,0,1936,1119,0x0002|0x0004|0x0010|0x4000)
         self.assertEqual(self.adjust.call_args.args[-1],144)
         self.refresh.assert_called_once_with(self.native,123,(1920,1080))
 
@@ -55,5 +57,14 @@ class NativeResizeTests(unittest.TestCase):
         with patch('native.adjust_dpi',None),patch('native.adjust',return_value=1) as adjust:
             resize(self.native,123,1280,720)
         adjust.assert_called_once()
-        self.position.assert_called_once_with(123,None,0,0,1280,720,0x0002|0x0004|0x0010)
+        self.position.assert_called_once_with(123,None,0,0,1280,720,0x0002|0x0004|0x0010|0x4000)
         self.refresh.assert_called_once_with(self.native,123,(1280,720))
+
+    def test_hung_or_closed_target_does_not_receive_resize_request(self):
+        for closed in (False, True):
+            self.valid.return_value = not closed
+            self.hung.return_value = not closed
+            with self.assertRaisesRegex(OSError, '응답하지'):
+                resize(self.native,123,1280,720)
+            self.position.assert_not_called()
+            self.refresh.assert_not_called()

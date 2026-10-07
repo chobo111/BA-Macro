@@ -12,6 +12,10 @@ U.WindowFromPoint.argtypes, U.WindowFromPoint.restype = [W.POINT], W.HWND
 U.GetWindowThreadProcessId.argtypes, U.GetWindowThreadProcessId.restype = [W.HWND, C.POINTER(W.DWORD)], W.DWORD
 
 class CoordinateHook(PhysicalHook):
+    def __init__(self, handler, can_capture=lambda: True):
+        super().__init__(handler)
+        self.can_capture = can_capture
+
     def run(self):
         handle = None
         suppressed = False
@@ -24,7 +28,7 @@ class CoordinateHook(PhysicalHook):
                     if message == 0x205 and suppressed:
                         suppressed = False
                         return 1
-                    if message == 0x204:
+                    if message == 0x204 and self.can_capture():
                         pid = W.DWORD()
                         U.GetWindowThreadProcessId(U.WindowFromPoint(event.point), C.byref(pid))
                         if pid.value != os.getpid():

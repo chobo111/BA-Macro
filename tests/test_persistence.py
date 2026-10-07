@@ -166,6 +166,16 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(loaded.profile.rows[0].memo, 'keep this')
         self.assertIn('settings unavailable', loaded.warning)
 
+    def test_invalid_resolution_load_keeps_original_file(self):
+        data = Profile.default().export()
+        data['target_resolution'] = '1920X1080'
+        atomic_json(self.path, data)
+        before = self.path.read_bytes()
+        loaded = self.store.load()
+        self.assertIsNone(loaded.path)
+        self.assertIn('해상도', loaded.warning)
+        self.assertEqual(self.path.read_bytes(), before)
+
     def test_close_drains_pending_writes(self):
         profile = Profile.default().export()
         future = self.store.save(self.path, profile, self.settings)

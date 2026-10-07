@@ -108,6 +108,55 @@ class UiTests(unittest.TestCase):
         size.assert_not_called()
         w.stop()
 
+    def test_script_coordinate_capture_pauses_for_modal_and_popup_then_resumes(self):
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QMenu
+        w = self.window
+        w.timer.stop()
+        w.target = 123
+        w.edit_script(w.profile.rows[0].id)
+        editor = w.script_editor
+        self.qt.processEvents()
+        self.assertTrue(editor.capture_enabled.is_set())
+        states = []
+        dialog = QDialog(w)
+        def inspect_modal():
+            states.append(editor.capture_enabled.is_set())
+            dialog.reject()
+        QTimer.singleShot(0, inspect_modal)
+        dialog.exec()
+        self.qt.processEvents()
+        self.assertEqual(states, [False])
+        self.assertTrue(editor.capture_enabled.is_set())
+        dialog.deleteLater()
+        menu = QMenu(w)
+        menu.addAction('Test')
+        menu.popup(w.mapToGlobal(QPoint(20,20)))
+        self.qt.processEvents()
+        self.assertFalse(editor.capture_enabled.is_set())
+        menu.close()
+        self.qt.processEvents()
+        self.assertTrue(editor.capture_enabled.is_set())
+        menu.deleteLater()
+        w.finish_script_editor()
+        self.assertFalse(editor.capture_enabled.is_set())
+
+    def test_invalid_resolution_open_does_not_replace_current_profile(self):
+        from domain import atomic_json
+        w = self.window
+        original, path = w.profile, w.path
+        invalid = path.with_name('invalid.json')
+        data = Profile.default().export()
+        data['target_resolution'] = '1920×1080'
+        atomic_json(invalid, data)
+        before = invalid.read_bytes()
+        with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(invalid), '')), patch.object(w, 'error') as error:
+            w.open_profile()
+        self.assertIs(w.profile, original)
+        self.assertEqual(w.path, path)
+        self.assertIn('해상도', error.call_args.args[0])
+        self.assertEqual(invalid.read_bytes(), before)
+
     def test_target_matches_filename_case_and_rejects_ambiguous_titles(self):
         native = self.window.native
         saved = {'exe': 'ChatGPT.exe',
@@ -1864,7 +1913,7 @@ class UiTests(unittest.TestCase):
         w = self.window
         with patch('native.get_long',return_value=0), patch('native.get_menu',return_value=0), \
              patch('native.adjust_dpi',return_value=1), patch('native.window_dpi',return_value=96), \
-             patch('native.set_position',return_value=1), patch('interactive_resize.refresh',return_value='갱신 확인 필요'):
+             patch('native.set_position',return_value=1), patch('native.valid_window',return_value=True), patch('interactive_resize.is_hung',return_value=False), patch('interactive_resize.refresh',return_value='갱신 확인 필요'):
             dialog = ResizeDialog((1280,720),w,
                                   request_resize=lambda size:resize_window(w.native,123,*size),
                                   read_size=lambda:(1920,1080))
@@ -1884,7 +1933,7 @@ class UiTests(unittest.TestCase):
              patch.object(w.native,'exists',return_value=True), \
              patch.object(w.native,'size',return_value=(1280,720)), \
              patch.object(w.native,'resize') as resize, \
-             patch('interactive_resize.refresh',return_value='화면 갱신 자동 드래그: 마우스 버튼을 놓고 다시 적용해 주세요.'):
+             patch('native.valid_window',return_value=True), patch('interactive_resize.is_hung',return_value=False), patch('interactive_resize.refresh',return_value='화면 갱신 자동 드래그: 마우스 버튼을 놓고 다시 적용해 주세요.'):
             dialog=factory.return_value
             dialog.current_size=(1920,1080)
             dialog.convert_profile.isChecked.return_value=False
