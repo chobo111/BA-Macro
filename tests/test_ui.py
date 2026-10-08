@@ -2190,3 +2190,124 @@ class UiTests(unittest.TestCase):
                 other.close()
                 other.deleteLater()
                 self.qt.processEvents()
+
+    def test_settings_resolution_saves_pending_rows_and_preserves_them_on_failure(self):
+        from dataclasses import asdict, replace
+        from domain import Row, Settings, atomic_json
+        for fail_profile_save in (False, True):
+            with self.subTest(fail_profile_save=fail_profile_save), tempfile.TemporaryDirectory() as folder:
+                path = Path(folder) / 'macro.json'
+                atomic_json(path, Profile([Row(move_hk=k) for k in
+                                         ('shift+-', 'shift+/', 'shift+?')]).export())
+                atomic_json(Path(folder) / 'setting.json', asdict(Settings(pause_hk='shift+_')))
+                before = path.read_bytes()
+                other = MainWindow(data_dir=folder, hook_enabled=False)
+                try:
+                    with patch('app.KeyDialog') as factory:
+                        factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+                        factory.return_value.value.return_value = 'f1'
+                        other.edit_key(other.profile.rows[2].id)
+                    self.assertTrue(other.dirty)
+                    self.assertEqual(path.read_bytes(), before)
+                    def write(destination, data):
+                        if fail_profile_save and Path(destination) == path:
+                            raise OSError('profile write unavailable')
+                        return atomic_json(destination, data)
+                    with patch('app.SettingsDialog') as factory, patch('persistence.atomic_json', side_effect=write):
+                        factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+                        factory.return_value.value.return_value = replace(other.settings, pause_hk='f2')
+                        other.settings_dialog()
+                        other.flush_pending_saves()
+                    self.assertEqual(other.settings.pause_hk, 'f2')
+                    self.assertEqual(read_json(other.settings_path)['pause_hk'], 'f2')
+                    self.assertEqual(other.profile.rows[2].move_hk, 'f1')
+                    self.assertEqual(other.dirty, fail_profile_save)
+                    if fail_profile_save:
+                        self.assertEqual(path.read_bytes(), before)
+                        self.assertIn('profile write unavailable', other.statusBar().currentMessage())
+                        self.assertTrue(other.save())
+                    self.assertEqual(read_json(path)['macros'][2]['move_hk'], 'f1')
+                    self.assertFalse(other.dirty)
+                finally:
+                    other.shutdown()
+                    other.dirty = False
+                    other.close()
+                    other.deleteLater()
+                    self.qt.processEvents()
+
+    def test_deleting_conflicting_rows_stays_blocked_until_final_repair(self):
+        from domain import Row, atomic_json
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'macro.json'
+            atomic_json(path, Profile([Row(move_hk=k) for k in
+                                     ('shift+-', 'shift+_', 'shift+/', 'shift+?')]).export())
+            before = path.read_bytes()
+            other = MainWindow(data_dir=folder, hook_enabled=False)
+            try:
+                with patch.object(other.hooks, 'start') as start:
+                    other.hook_enabled = True
+                    other.table.selectRow(1)
+                    other.delete_rows()
+                    self.assertEqual(other.table.currentRow(), 0)
+                    self.assertFalse(other.armed)
+                    self.assertEqual(other.hooks.bindings, [])
+                    self.assertTrue(other.dirty)
+                    self.assertIn('남은 충돌', other.statusBar().currentMessage())
+                    start.assert_not_called()
+                    self.assertEqual(path.read_bytes(), before)
+                    other.table.selectRow(2)
+                    other.delete_rows()
+                    other.flush_pending_saves()
+                    self.assertEqual(other.table.currentRow(), 1)
+                    start.assert_called_once()
+                    self.assertFalse(other.dirty)
+                    self.assertEqual([r['move_hk'] for r in read_json(path)['macros']], ['shift+-', 'shift+/'])
+            finally:
+                other.hook_enabled = False
+                other.shutdown()
+                other.close()
+                other.deleteLater()
+                self.qt.processEvents()
+
+    def test_failed_validation_makes_older_save_completion_stale(self):
+        from concurrent.futures import Future
+        from persistence import SaveResult
+        from shortcuts import ShortcutError
+        w = self.window
+        w.flush_pending_saves()
+        pending = Future()
+        with patch.object(w.store, 'save', return_value=pending):
+            w.profile.rows[0].memo = 'old snapshot'
+            self.assertTrue(w.save(automatic=True))
+        w.profile.rows[0].memo = 'new unsaved edit'
+        with patch.object(w, 'validate_profile_shortcuts', side_effect=ShortcutError('conflict')):
+            self.assertFalse(w.save(automatic=True))
+        pending.set_result(SaveResult(True))
+        w.flush_pending_saves()
+        self.qt.processEvents()
+        self.assertTrue(w.dirty)
+        self.assertEqual(w.profile.rows[0].memo, 'new unsaved edit')
+        self.assertNotEqual(read_json(w.path)['macros'][0]['memo'], 'new unsaved edit')
+        self.assertTrue(w.save())
+        self.assertEqual(read_json(w.path)['macros'][0]['memo'], 'new unsaved edit')
+
+    def test_wheel_over_script_examples_does_not_replace_draft(self):
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QWheelEvent
+        w = self.window
+        w.edit_script(w.profile.rows[0].id)
+        editor = w.script_editor
+        editor.editor.setPlainText('sleep 123')
+        combo = editor.templates
+        combo.setFocus()
+        event = QWheelEvent(QPointF(8,8), QPointF(combo.mapToGlobal(QPoint(8,8))),
+                            QPoint(), QPoint(0,-120), Qt.MouseButton.NoButton,
+                            Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+        QApplication.sendEvent(combo, event)
+        self.assertEqual(combo.currentIndex(), 0)
+        self.assertEqual(editor.editor.toPlainText(), 'sleep 123')
+        combo.setCurrentIndex(1)
+        combo.activated.emit(1)
+        self.assertIn('curve X,Y mouse', editor.editor.toPlainText())
+        self.assertNotIn('sleep 123', editor.editor.toPlainText())
+        w.finish_script_editor()

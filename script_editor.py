@@ -3,8 +3,9 @@ import re
 from threading import Event
 from PySide6.QtCore import Qt, QEvent, Signal, QTimer
 from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QWidget, QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QPlainTextEdit, QComboBox, QSizeGrip, QApplication
+from PySide6.QtWidgets import QWidget, QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QPlainTextEdit, QSizeGrip, QApplication
 from mouse_hook import CoordinateHook
+from widgets import NoWheelCombo
 from script_language import compile_script, ScriptError
 from script_help import ScriptHelpDialog
 from domain import same_program
@@ -53,7 +54,7 @@ class ScriptEditor(QDialog):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 12, 12, 12)
         toolbar = QHBoxLayout()
-        self.templates = QComboBox()
+        self.templates = NoWheelCombo()
         self.templates.addItems(['예제 선택', '스킬 카드 → 마우스 슬라이드', '마우스 → 스킬 카드 슬라이드', '좌표 → 좌표 슬라이드'])
         self.templates.activated.connect(self.insert_template)
         toolbar.addWidget(self.templates)

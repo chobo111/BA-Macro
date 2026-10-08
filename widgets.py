@@ -243,7 +243,6 @@ class KeyDialog(QDialog):
         self.setFixedWidth(280)
         layout = QVBoxLayout(self)
         self.editor = ClickToCaptureEdit(QKeySequence(qt_hotkey(value), QKeySequence.SequenceFormat.PortableText), self)
-        self.editor.setMaximumSequenceLength(1)
         line_edit = self.editor.findChild(QLineEdit)
         if line_edit is not None:
             line_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -255,6 +254,8 @@ class KeyDialog(QDialog):
         clear.clicked.connect(self.editor.clear)
         layout.addWidget(clear)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText('확인')
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('취소')
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -294,7 +295,6 @@ class SettingsDialog(QDialog):
         self.keys = {}
         for name, label in (("pause_hk", "작동 / 정지"), ("capture_hk", "선택한 행 좌표 캡처")):
             editor = ClickToCaptureEdit(QKeySequence(qt_hotkey(getattr(settings, name)), QKeySequence.SequenceFormat.PortableText))
-            editor.setMaximumSequenceLength(1)
             self.keys[name] = editor
             form.addRow(label, editor)
         guide = QLabel(SHORTCUT_GUIDE)

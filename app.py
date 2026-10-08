@@ -36,7 +36,6 @@ from widgets import (managed_dialog, make_icon, make_run_icon, make_pin_icon, ma
                      BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog, NoWheelCombo, NoWheelSpinBox)
 
 BASE = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
-MODE_LABELS = MODES
 
 
 class Bridge(QObject):
@@ -348,7 +347,7 @@ class MainWindow(QMainWindow):
             mode.setMinimumContentsLength(1)
             mode.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             for value, label in MODES.items():
-                mode.addItem(MODE_LABELS[value], value)
+                mode.addItem(label, value)
                 mode.setItemData(mode.count() - 1, label, Qt.ItemDataRole.ToolTipRole)
             mode.setCurrentIndex(list(MODES).index(row.action_mode))
             mode.setToolTip(MODES[row.action_mode])
@@ -807,6 +806,7 @@ class MainWindow(QMainWindow):
                         if not repairing:
                             row.move_hk = old
                             raise
+                        self.profile_saves.begin()
                         self.dirty = True
                         self.block_conflicting_shortcuts(error)
                         self.rebuild(rid)
@@ -854,7 +854,7 @@ class MainWindow(QMainWindow):
         focus_row = self.profile.rows[max(0, min(selected) - 1)]
         self.changed()
         self.rebuild(focus_row.id)
-        self.rebind()
+        self.restart_hooks()
 
     def move_row(self, origin, target):
         if origin == target or not 0 <= target < len(self.profile.rows):
@@ -958,9 +958,9 @@ class MainWindow(QMainWindow):
                 self.path = self.next_profile_path()
             else:
                 return self.save_as()
+        revision = self.profile_saves.begin()
         try:
             self.validate_profile_shortcuts(self.profile)
-            revision = self.profile_saves.begin()
             future = self.store.save(self.path, self.profile.export(), asdict(self.settings), coalesce=automatic)
             self.profile_saves.register(revision, self.path, future)
             self.dirty = True
@@ -1122,6 +1122,10 @@ class MainWindow(QMainWindow):
                     settings = dialog.value()
                     self.validate_profile_shortcuts(self.profile, settings)
                     self.commit_settings(settings, recover=True)
+                    # A global shortcut can resolve the last outstanding row
+                    # conflict; persist the edits that were waiting for it.
+                    if self.dirty:
+                        self.save(automatic=True)
                     self.apply_theme()
                     self.update_labels()
                     break
@@ -1244,13 +1248,6 @@ class MainWindow(QMainWindow):
             self.pin_button.setChecked(not enabled)
             self.pin_button.blockSignals(False)
             self.statusBar().showMessage(str(error))
-
-    def hide_to_tray(self):
-        if QSystemTrayIcon.isSystemTrayAvailable():
-            self.hide()
-            self.tray.showMessage(APP_NAME, "트레이 아이콘을 두 번 클릭하면 창을 다시 엽니다.")
-        else:
-            self.showMinimized()
 
     def restore(self):
         self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
