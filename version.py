@@ -1,6 +1,11 @@
 """Application releases; independent of the profile JSON schema version."""
 APP_NAME = 'BA Macro'
 RELEASES = (
+    ('0.2.46-experimental', '2026-10-09', (
+        '스크립트 명령 뒤에 이어 쓴 // 주석도 줄 끝까지 테마별 주석 색상 적용',
+        '주석의 이모지 등 UTF-16 문자 길이를 반영해 끝부분 색상 누락 방지',
+        '자동 테스트 397개 통과, Light·Dark에서 주석 입력·삭제·테마 변경 강조 확인; 실행 로직 변경 없음',
+    )),
     ('0.2.45-experimental', '2026-10-09', (
         '메인·스크립트 편집기·도움말의 색상을 공통 테마로 통합하고 Light 테마의 어두운 고정 배경 제거',
         'Light 테마의 좌표·핀·삭제 아이콘 대비 강화, 선택·체크 상태를 연한 파란색으로 통일',

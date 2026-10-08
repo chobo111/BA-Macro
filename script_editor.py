@@ -28,8 +28,12 @@ class Highlighter(QSyntaxHighlighter):
         match = re.match(r'\s*([a-z_]+)', text)
         if match:
             self.setFormat(match.start(1), len(match.group(1)), self.command)
-        if text.lstrip().startswith('//'):
-            self.setFormat(0, len(text), self.comment)
+        comment_start = text.find('//')
+        if comment_start >= 0:
+            # Qt format ranges use UTF-16 units, including emoji in comments.
+            start = len(text[:comment_start].encode('utf-16-le')) // 2
+            length = len(text[comment_start:].encode('utf-16-le')) // 2
+            self.setFormat(start, length, self.comment)
 
 
 class ScriptEditor(QDialog):
