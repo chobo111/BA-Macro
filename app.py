@@ -788,10 +788,29 @@ class MainWindow(QMainWindow):
             with managed_dialog(KeyDialog(row.move_hk, self)) as dialog:
                 if dialog.exec() == QDialog.DialogCode.Accepted:
                     value = dialog.value()
+                    repairing = False
+                    try:
+                        self.validate_profile_shortcuts(self.profile)
+                    except ShortcutError:
+                        repairing = True
+                        # Allow existing conflicts elsewhere to remain temporarily,
+                        # but never introduce a conflict involving this new value.
+                        others = (self.settings.capture_hk, self.settings.pause_hk,
+                                  *(r.move_hk for r in self.profile.rows if r.id != rid))
+                        for other in others:
+                            Hotkeys.validate((value, other))
                     old = row.move_hk
                     row.move_hk = value
                     try:
                         self.rebind()
+                    except ShortcutError as error:
+                        if not repairing:
+                            row.move_hk = old
+                            raise
+                        self.dirty = True
+                        self.block_conflicting_shortcuts(error)
+                        self.rebuild(rid)
+                        return
                     except Exception:
                         row.move_hk = old
                         raise
@@ -800,11 +819,19 @@ class MainWindow(QMainWindow):
         except Exception as error:
             self.statusBar().showMessage(str(error))
 
+    def block_conflicting_shortcuts(self, error):
+        self.stop()
+        self.hooks.close()
+        self.hooks.configure([], self.settings.exclusive_hook)
+        self.statusBar().showMessage(f'{error} · 남은 충돌을 수정하세요. 모두 해결하면 자동저장됩니다.')
+
     def restart_hooks(self):
         try:
             self.rebind()
             if self.hook_enabled:
                 self.hooks.start()
+        except ShortcutError as error:
+            self.block_conflicting_shortcuts(error)
         except Exception as error:
             self.on_engine_error(str(error))
 

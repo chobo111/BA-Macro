@@ -34,13 +34,20 @@ class PressedKey:
 class KeyGroup:
     scan_codes: frozenset
     virtual_keys: frozenset = frozenset()
+    key_codes: frozenset | None = None
 
     def matches(self, key):
+        if self.key_codes is not None:
+            return (key.scan_code, key.virtual_key) in self.key_codes
         return (key.scan_code in self.scan_codes
                 and (not self.virtual_keys or key.virtual_key in self.virtual_keys))
 
     def overlaps(self, other):
         """Whether one physical event can satisfy both matchers."""
+        if self.key_codes is not None:
+            return any(other.matches(PressedKey(scan, vk, False)) for scan, vk in self.key_codes)
+        if other.key_codes is not None:
+            return other.overlaps(self)
         return (bool(self.scan_codes & other.scan_codes)
                 and (not self.virtual_keys or not other.virtual_keys
                      or bool(self.virtual_keys & other.virtual_keys)))
@@ -48,10 +55,11 @@ class KeyGroup:
     @classmethod
     def compile(cls, name, scan_codes, modifiers=()):
         name = keyboard.normalize_name(name)
+        key_codes = None
         if len(name) == 1 and name in '0123456789':
             virtual_keys = frozenset((ord(name), 0x60 + int(name)))
         elif name in KEYPAD_SYMBOLS:
-            from keyboard_hook import character_key
+            from keyboard_hook import character_key, key_scan_code
             # Keypad symbols have independent virtual keys. Main-keyboard
             # symbols also require their layout-specific modifiers.
             keys = {KEYPAD_SYMBOLS[name]}
@@ -59,11 +67,12 @@ class KeyGroup:
             if mapped and mapped[1].issubset(modifiers):
                 keys.add(mapped[0])
             virtual_keys = frozenset(keys)
+            key_codes = frozenset((key_scan_code(vk), vk) for vk in keys)
         elif name in LOGICAL_KEYS:
             virtual_keys = frozenset((LOGICAL_KEYS[name],))
         else:
             virtual_keys = frozenset()
-        return cls(frozenset(scan_codes), virtual_keys)
+        return cls(frozenset(scan_codes), virtual_keys, key_codes)
 
 
 @dataclass(frozen=True)

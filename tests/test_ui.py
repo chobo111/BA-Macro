@@ -2108,3 +2108,85 @@ class UiTests(unittest.TestCase):
             save.assert_not_called()
         self.assertEqual(w.path.read_bytes(), before)
         w.profile.rows[0].move_hk, w.profile.rows[1].move_hk = 'q', 'w'
+
+    def test_keypad_plus_and_equals_can_be_registered_and_saved(self):
+        w = self.window
+        w.profile.rows[0].move_hk = 'plus'
+        w.save()
+        w.rebind()
+        row = w.profile.rows[1]
+        with patch('app.KeyDialog') as factory:
+            factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            factory.return_value.value.return_value = '='
+            w.edit_key(row.id)
+        w.flush_pending_saves()
+        self.assertEqual(row.move_hk, '=')
+        self.assertEqual(read_json(w.path)['macros'][1]['move_hk'], '=')
+        self.assertIn('plus', [b.key for b in w.hooks.bindings])
+        self.assertIn('=', [b.key for b in w.hooks.bindings])
+
+    def test_multiple_conflicts_can_be_repaired_one_at_a_time(self):
+        from domain import Row, atomic_json
+        for auto_pause in (False, True):
+            with self.subTest(auto_pause=auto_pause), tempfile.TemporaryDirectory() as folder:
+                path = Path(folder) / 'macro.json'
+                profile = Profile([Row(move_hk=k) for k in ('shift+-', 'shift+_', 'shift+/', 'shift+?')])
+                atomic_json(path, profile.export())
+                before = path.read_bytes()
+                other = MainWindow(data_dir=folder, hook_enabled=False)
+                other.settings.auto_pause = auto_pause
+                try:
+                    with patch('app.KeyDialog') as factory:
+                        factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+                        factory.return_value.value.return_value = ''
+                        other.edit_key(other.profile.rows[1].id)
+                        self.assertEqual(other.profile.rows[1].move_hk, '')
+                        self.assertTrue(other.dirty)
+                        self.assertFalse(other.armed)
+                        self.assertEqual(other.hooks.bindings, [])
+                        self.assertIn('남은 충돌', other.statusBar().currentMessage())
+                        self.assertFalse(other.save())
+                        other.flush_pending_saves()
+                        self.assertEqual(path.read_bytes(), before)
+                        # Recovery must not allow introducing another conflict.
+                        factory.return_value.value.return_value = 'shift+?'
+                        other.edit_key(other.profile.rows[1].id)
+                        self.assertEqual(other.profile.rows[1].move_hk, '')
+                        factory.return_value.value.return_value = ''
+                        other.edit_key(other.profile.rows[3].id)
+                    other.flush_pending_saves()
+                    self.assertFalse(other.dirty)
+                    self.assertFalse(other.armed)
+                    expected = ['shift+-', '', 'shift+/', '']
+                    self.assertEqual([r.move_hk for r in other.profile.rows], expected)
+                    self.assertEqual([r.move_hk for r in Profile.read(read_json(path)).rows], expected)
+                    self.assertEqual(len(other.hooks.bindings), 4)
+                finally:
+                    other.shutdown()
+                    other.close()
+                    other.deleteLater()
+                    self.qt.processEvents()
+
+    def test_discarding_partial_shortcut_repair_keeps_original_file(self):
+        from domain import Row, atomic_json
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'macro.json'
+            atomic_json(path, Profile([Row(move_hk=k) for k in
+                                     ('shift+-', 'shift+_', 'shift+/', 'shift+?')]).export())
+            before = path.read_bytes()
+            other = MainWindow(data_dir=folder, hook_enabled=False)
+            try:
+                with patch('app.KeyDialog') as factory:
+                    factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+                    factory.return_value.value.return_value = 'f1'
+                    other.edit_key(other.profile.rows[1].id)
+                self.assertEqual(other.profile.rows[1].move_hk, 'f1')
+                self.assertTrue(other.dirty)
+                with patch.object(QMessageBox, 'exec', return_value=QMessageBox.StandardButton.Discard):
+                    self.assertTrue(other.confirm_changes())
+                self.assertEqual(path.read_bytes(), before)
+            finally:
+                other.shutdown()
+                other.close()
+                other.deleteLater()
+                self.qt.processEvents()

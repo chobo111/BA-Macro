@@ -34,3 +34,13 @@ class KeyboardHookEventTests(unittest.TestCase):
                                   (-1, None)):
             with self.subTest(encoded=encoded), patch('keyboard_hook.U.VkKeyScanW', return_value=encoded):
                 self.assertEqual(character_key('+'), expected)
+
+    def test_virtual_key_scan_mapping_rejects_unmapped_keys(self):
+        from unittest.mock import patch
+        from keyboard_hook import key_scan_code
+        with patch('keyboard_hook.U.MapVirtualKeyW', return_value=78) as mapped:
+            self.assertEqual(key_scan_code(0x6B), 78)
+            mapped.assert_called_once_with(0x6B, 0)
+        with patch('keyboard_hook.U.MapVirtualKeyW', return_value=0):
+            with self.assertRaisesRegex(ValueError, '키 위치'):
+                key_scan_code(0x6B)

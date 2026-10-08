@@ -33,6 +33,15 @@ K.GetCurrentThreadId.argtypes, K.GetCurrentThreadId.restype = [], W.DWORD
 
 
 U.VkKeyScanW.argtypes, U.VkKeyScanW.restype = [W.WCHAR], C.c_short
+U.MapVirtualKeyW.argtypes, U.MapVirtualKeyW.restype = [W.UINT, W.UINT], W.UINT
+
+
+def key_scan_code(virtual_key):
+    """Resolve one virtual key without combining unrelated scan/VK values."""
+    scan = U.MapVirtualKeyW(virtual_key, 0)  # MAPVK_VK_TO_VSC
+    if not scan:
+        raise ValueError('현재 키보드 배열에서 키 위치를 확인할 수 없습니다.')
+    return scan
 
 
 def character_key(character):

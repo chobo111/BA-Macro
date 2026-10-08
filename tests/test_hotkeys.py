@@ -412,3 +412,42 @@ class HotkeyTests(unittest.TestCase):
         self.assertEqual(self.actions, [('move', 'underscore')])
         self.assertFalse(self.physical_event(12, 0xBD, kind='up'))
         self.assertFalse(self.hooks.held('shift+_'))
+
+    def test_keypad_plus_and_equals_register_and_dispatch_independently(self):
+        for prefix in ('', 'ctrl+'):
+            for exclusive in (False, True):
+                with self.subTest(prefix=prefix, exclusive=exclusive):
+                    self.hooks.close()
+                    self.actions.clear()
+                    plus, equals = prefix+'plus', prefix+'='
+                    self.hooks.configure([(plus, 'move', 'plus'), (equals, 'move', 'equals')], exclusive)
+                    if prefix:
+                        self.physical_event(29, 0xA2)
+                    self.assertEqual(self.physical_event(78, 0x6B), not exclusive)
+                    self.assertEqual(self.physical_event(13, 0xBB), not exclusive)
+                    self.assertEqual(self.actions, [('move', 'plus'), ('move', 'equals')])
+                    self.assertTrue(self.hooks.held(plus))
+                    self.assertTrue(self.hooks.held(equals))
+                    self.physical_event(78, 0x6B, kind='up')
+                    self.assertFalse(self.hooks.held(plus))
+                    self.assertTrue(self.hooks.held(equals))
+                    self.physical_event(13, 0xBB, kind='up')
+                    self.assertFalse(self.hooks.held(equals))
+
+    def test_symbol_mapping_keeps_scan_and_virtual_key_paired(self):
+        from hotkeys import PressedKey
+        group = Hotkeys.compile('shift+plus').groups[-1]
+        for scan, vk, expected in ((13, 0xBB, True), (78, 0x6B, True),
+                                   (13, 0x6B, False), (78, 0xBB, False)):
+            with self.subTest(scan=scan, vk=vk):
+                self.assertEqual(group.matches(PressedKey(scan, vk, False)), expected)
+        with self.assertRaisesRegex(ValueError, '중복'):
+            Hotkeys.validate(('shift+plus', 'shift+='))
+
+    def test_unmapped_symbol_keeps_existing_bindings(self):
+        from unittest.mock import patch
+        previous = list(self.hooks.bindings)
+        with patch('keyboard_hook.U.MapVirtualKeyW', return_value=0):
+            with self.assertRaises(ValueError):
+                self.hooks.configure([('plus', 'move', 'plus')])
+        self.assertEqual(self.hooks.bindings, previous)
