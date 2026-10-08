@@ -106,8 +106,11 @@ class RowPreview(QWidget):
             y = round(self.positions[table.drag_origin])
             gap = QRect(2, y+2, self.width()-4, table.rowHeight(table.drag_origin)-4)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setPen(QPen(QColor('#47b8ed'), 1, Qt.PenStyle.DashLine))
-            painter.setBrush(QColor(71, 184, 237, 24))
+            accent = table.palette().link().color()
+            painter.setPen(QPen(accent, 1, Qt.PenStyle.DashLine))
+            fill = QColor(accent)
+            fill.setAlpha(24)
+            painter.setBrush(fill)
             painter.drawRoundedRect(gap, 5, 5)
 
 

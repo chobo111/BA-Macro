@@ -65,7 +65,7 @@ class ScriptHelpDialog(QDialog):
         self.resize(min(620, area.width()), min(600, area.height()))
         layout = QVBoxLayout(self)
         browser = QTextBrowser()
-        browser.setStyleSheet('QTextBrowser { background: #0e1822; color: #e8f1fa; border: 1px solid #33495d; padding: 10px; }')
+        browser.setObjectName('scriptHelp')
         browser.setHtml(help_html())
         layout.addWidget(browser)
         close = QPushButton('닫기')

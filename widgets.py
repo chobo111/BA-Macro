@@ -55,9 +55,9 @@ def make_run_icon(running):
     return QIcon(pixmap)
 
 
-def make_pin_icon():
+def make_pin_icon(muted, accent):
     icon = QIcon()
-    for state, color in ((QIcon.State.Off, "#91a6ba"), (QIcon.State.On, "#47b8ed")):
+    for state, color in ((QIcon.State.Off, muted), (QIcon.State.On, accent)):
         pixmap = QPixmap(48, 48)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
@@ -74,12 +74,12 @@ def make_pin_icon():
     return icon
 
 
-def make_trash_icon():
+def make_trash_icon(color):
     pixmap = QPixmap(24, 24)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(QColor('#91a6ba'), 2))
+    painter.setPen(QPen(QColor(color), 2))
     painter.drawLine(5, 6, 19, 6)
     painter.drawLine(9, 3, 15, 3)
     painter.drawLine(7, 9, 8, 21)

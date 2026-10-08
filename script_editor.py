@@ -13,16 +13,23 @@ from coordinate_cache import scaled_point
 from coordinate_transform import aspect_warning
 
 class Highlighter(QSyntaxHighlighter):
+    def __init__(self, document, colors):
+        super().__init__(document)
+        self.apply_theme(colors)
+
+    def apply_theme(self, colors):
+        self.command = QTextCharFormat()
+        self.command.setForeground(QColor(colors.command))
+        self.comment = QTextCharFormat()
+        self.comment.setForeground(QColor(colors.comment))
+        self.rehighlight()
+
     def highlightBlock(self, text):
-        command = QTextCharFormat()
-        command.setForeground(QColor('#66cfff'))
         match = re.match(r'\s*([a-z_]+)', text)
         if match:
-            self.setFormat(match.start(1), len(match.group(1)), command)
-        comment = QTextCharFormat()
-        comment.setForeground(QColor('#8fa0b2'))
+            self.setFormat(match.start(1), len(match.group(1)), self.command)
         if text.lstrip().startswith('//'):
-            self.setFormat(0, len(text), comment)
+            self.setFormat(0, len(text), self.comment)
 
 
 class ScriptEditor(QDialog):
@@ -72,7 +79,7 @@ class ScriptEditor(QDialog):
         self.editor.setObjectName('codeEditor')
         self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.editor.setPlaceholderText('프로그램 밖에서 우클릭하면\n현재 입력 위치에 좌표(x,y)가 추가됩니다.' if target is not None else '앱 또는 전체화면을 선택한 뒤\n편집기를 다시 열어 주세요.')
-        self.highlighter = Highlighter(self.editor.document())
+        self.highlighter = Highlighter(self.editor.document(), parent.theme_colors)
         body.addWidget(self.editor, 1)
         layout.addLayout(body, 1)
         self.validation = QLabel('')
@@ -98,18 +105,6 @@ class ScriptEditor(QDialog):
         footer.addSpacing(self.size_grip.width())
         layout.addLayout(footer)
         layout.addWidget(self.validation)
-        self.setStyleSheet('''
-            #editorPanel { background: #182634; border: 1px solid #3a5269; border-radius: 0px; }
-            QWidget { color: #e8f1fa; font-size: 13px; }
-            QLabel { background: transparent; border: none; }
-            #scriptLog { background: #0e1822; color: #a8bdd0; border: 1px solid #33495d; border-radius: 4px; padding: 6px 8px; }
-            #scriptLog[error="true"] { color: #ffb0a6; border-color: #a55450; }
-            QPlainTextEdit { background: #0e1822; border: 1px solid #33495d; padding: 10px; }
-            #codeEditor { font-family: Consolas, 'Malgun Gothic'; font-size: 15px; }
-            QPushButton, QComboBox { background: #263c50; border: 1px solid #4a6780; padding: 7px 12px; border-radius: 5px; }
-            QPushButton:hover { background: #315779; }
-            QPushButton#scriptHelpButton { padding: 0; border-radius: 16px; font-weight: 700; }
-        ''')
         self.editor.setFocus()
         self.position_size_grip()
 

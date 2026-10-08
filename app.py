@@ -28,6 +28,7 @@ from profile_saves import ProfileSaves
 from profile_dialogs import RenameProfileDialog, ProfileInfoDialog
 from conversion_dialog import ConversionDialog
 from version import APP_NAME, VERSION
+from theme import DARK, LIGHT, palette, stylesheet
 from session import ExecutionSession, editing_dialog
 from shortcuts import ShortcutError, qt_hotkey
 from single_instance import SingleInstance
@@ -159,7 +160,6 @@ class MainWindow(QMainWindow):
             button.setAccessibleName(name)
             button.setToolTip(name)
             if not text:
-                button.setIcon(make_trash_icon())
                 button.setIconSize(QSize(18, 18))
             setattr(self, attribute, button)
             toolbar.addWidget(button)
@@ -170,7 +170,6 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(separator)
         toolbar.addStretch()
         self.pin_button = QPushButton()
-        self.pin_button.setIcon(make_pin_icon())
         self.pin_button.setIconSize(QSize(20, 20))
         self.pin_button.setFixedSize(32, 30)
         self.pin_button.setAccessibleName("항상 위에 표시")
@@ -255,37 +254,13 @@ class MainWindow(QMainWindow):
     def apply_theme(self):
         dark = self.settings.theme == "Dark" or (self.settings.theme == "System" and
                 QApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark)
-        bg, panel, text, muted, border, alt = (("#101923", "#192634", "#e6eff8", "#91a6ba", "#304456", "#1d2d3e") if dark
-                else ("#f0f5fa", "#ffffff", "#172b40", "#526d85", "#cddbe7", "#f5f8fc"))
-        self.setStyleSheet(f"""
-            QMainWindow, QDialog {{background: {bg}; color: {text};}}
-            QWidget {{font-family: 'Segoe UI', 'Malgun Gothic'; font-size: 13px; color: {text};}}
-            QLabel {{background: transparent;}}
-            QLabel#muted {{color: {muted};}}
-            QFrame#toolbarSeparator {{background: {border}; border: none;}}
-            QLabel#cursor {{color: #47b8ed; font-family: Consolas; font-weight: 600;}}
-            QTabWidget::pane {{border: 1px solid {border}; border-radius: 4px;}}
-            QTabBar::tab {{background: {panel}; color: {muted}; padding: 7px 18px; border: 1px solid {border};}}
-            QTabBar::tab:selected {{color: {text}; border-bottom: 2px solid #47b8ed;}}
-            QGroupBox {{background: {panel}; border: 1px solid {border}; border-radius: 6px; margin-top: 8px; padding: 4px 2px 2px;}}
-            QGroupBox::title {{subcontrol-origin: margin; left: 15px; padding: 0 5px; color: {muted};}}
-            QPushButton {{background: {panel}; border: 1px solid {border}; border-radius: 5px; padding: 4px 7px;}}
-            QPushButton:hover {{border-color: #47b8ed; background: {alt};}}
-            QPushButton:pressed {{background: {border};}}
-            QPushButton:checked {{background: #285275; color: #ffffff; border-color: #47b8ed;}}
-            QPushButton#primary {{background: #cf4452; color: #ffffff; border: none; font-weight: 700;}}
-            QPushButton#primary[running="true"] {{background: #39b86a; color: #102b1a;}}
-            QTableWidget {{background: {panel}; alternate-background-color: {alt}; border: 1px solid {border}; border-radius: 8px; selection-background-color: #285275;}}
-            QTableWidget::item {{padding: 4px;}}
-            QHeaderView {{background: {bg};}}
-            QHeaderView::section {{background: {bg}; color: {muted}; padding: 6px 3px; border: none;}}
-            QTableCornerButton::section {{background: {bg}; border: none;}}
-            QLineEdit, QSpinBox, QComboBox, QKeySequenceEdit {{background: {panel}; border: 1px solid {border}; border-radius: 4px; padding: 3px; selection-background-color: #28638a;}}
-            QComboBox QAbstractItemView {{background: {panel}; selection-background-color: #285275;}}
-            QMenuBar, QMenu, QStatusBar {{background: {bg}; color: {muted};}}
-            QMenu::item:selected {{background: {border};}}
-            QToolTip {{background: {panel}; color: {text}; border: 1px solid {border};}}
-        """)
+        self.theme_colors = colors = DARK if dark else LIGHT
+        self.setPalette(palette(colors))
+        self.setStyleSheet(stylesheet(colors))
+        self.pin_button.setIcon(make_pin_icon(colors.muted, colors.accent))
+        self.delete_button.setIcon(make_trash_icon(colors.muted))
+        if self.script_editor is not None:
+            self.script_editor.highlighter.apply_theme(colors)
 
     def update_labels(self):
         name = self.path.stem if self.path else "새 프로필"
