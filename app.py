@@ -22,6 +22,7 @@ from interactive_resize import resize as resize_window
 from hotkeys import Hotkeys
 from execution_plan import ExecutionPlan
 from coordinate_transform import aspect_warning
+from coordinate_cache import scaled_point
 from script_editor import ScriptEditor
 from persistence import ProfileStore
 from profile_saves import ProfileSaves
@@ -650,6 +651,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage('대상 창이 닫혔습니다. 창을 다시 선택하세요.')
             return
         try:
+            profile, path = self.profile, self.path
+            basis = profile.resolution
             x, y = self.native.cursor(target)
             w, h = self.native.size(target)
             left, top, right, bottom = self.native.bounds(target)
@@ -657,22 +660,33 @@ class MainWindow(QMainWindow):
                 raise ValueError("커서를 대상 영역 안으로 옮겨 주세요.")
             if abs(x) > 99999 or abs(y) > 99999:
                 raise ValueError('좌표는 부호를 제외하고 최대 5자리까지 저장할 수 있습니다.')
-            has_coordinates = any(r.x or r.y or r.script.strip() for r in self.profile.rows)
-            if ((self.profile.resolution and self.profile.resolution != (w, h)) or
-                    (not self.profile.resolution and has_coordinates)):
+            has_coordinates = any(r.x or r.y or r.script.strip() for r in profile.rows)
+            if ((basis and basis != (w, h) and not target) or
+                    (not basis and has_coordinates)):
                 self.convert_dialog(reason="저장 좌표와 현재 화면의 해상도 기준을 먼저 맞춰 주세요. 변환 후 좌표를 다시 캡처하세요.")
                 return
+            converted = basis is not None and basis != (w, h)
+            warning = ''
+            if converted:
+                # Use the saved basis even after auto-pause clears the execution plan.
+                x, y = scaled_point((x, y), (w, h), basis)
+                warning = aspect_warning(basis, (w, h))
             identity = self.confirm_coordinate_app(target)
             if identity is None:
                 return
+            if (self.profile is not profile or self.path != path or
+                    profile.resolution != basis or self.row(rid) is not row):
+                raise ValueError('캡처 중 프로필이 변경되었습니다. 다시 캡처하세요.')
             if self.native.size(target) != (w, h):
                 raise ValueError('캡처 중 화면 크기가 변경되었습니다. 다시 캡처하세요.')
             row.x, row.y = x, y
-            self.profile.target_program = identity
-            self.profile.resolution = (w, h)
-            self.changed()
+            profile.target_program = identity
+            profile.resolution = basis or (w, h)
+            queued = self.changed()
             self.rebuild(rid)
-            if not self.dirty:
+            if queued and converted:
+                self.statusBar().showMessage(f'기준 좌표로 역변환하여 캡처: {x}, {y}' + (' · ' + warning if warning else ''))
+            elif not self.dirty:
                 self.statusBar().showMessage(f"좌표 캡처 및 자동저장 완료: {x}, {y} · 일시정지됨")
         except Exception as error:
             self.on_engine_error(str(error))

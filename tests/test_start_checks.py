@@ -983,3 +983,139 @@ class StartChecks(unittest.TestCase):
         self.assertEqual(w.profile.target_program, GAME)
         self.assertFalse(w.armed)
         save.assert_not_called()
+
+
+    def test_row_capture_reverse_scales_during_automatic_run_and_after_pause(self):
+        w = self.window
+        w.settings.auto_convert_on_start = True
+        self.size.return_value = (1920,1080)
+        untouched = w.profile.rows[2]
+        untouched.x, untouched.y, untouched.script = 120,240,'click 320,180'
+        original = asdict(untouched)
+        w.toggle()
+        self.assertTrue(w.armed)
+        self.assertEqual(w.coordinate_transform, ((1280,720),(1920,1080)))
+        with patch.object(w.native,'bounds',return_value=(0,0,1920,1080)), \
+             patch.object(w.native,'cursor',side_effect=[(900,600),(300,450)]), \
+             patch.object(w,'convert_dialog') as conversion:
+            for row,mode,expected in zip(w.profile.rows[:2],
+                    ('move_and_click','move_only'), ((600,400),(200,300))):
+                row.action_mode = mode
+                w.capture(row.id)
+                self.assertEqual((row.x,row.y), expected)
+                self.assertEqual(w.profile.resolution, (1280,720))
+                self.assertFalse(w.armed)
+                self.assertIsNone(w.coordinate_transform)
+            conversion.assert_not_called()
+        self.assertEqual(asdict(untouched), original)
+        w.flush_pending_saves()
+        saved = Profile.read(read_json(w.path))
+        self.assertEqual(saved.resolution, (1280,720))
+        self.assertEqual([(row.x,row.y) for row in saved.rows[:2]], [(600,400),(200,300)])
+        self.assertEqual(asdict(saved.rows[2]), original)
+
+    def test_reverse_row_capture_keeps_running_plan_when_auto_pause_is_off(self):
+        w = self.window
+        w.settings.auto_convert_on_start = True
+        w.settings.auto_pause = False
+        self.size.return_value = (1920,1080)
+        w.toggle()
+        plan = w.session.plan
+        row = w.profile.rows[0]
+        with patch.object(w.native,'cursor',return_value=(900,600)), \
+             patch.object(w.native,'bounds',return_value=(0,0,1920,1080)):
+            w.capture(row.id)
+        self.assertTrue(w.armed)
+        self.assertIs(w.session.plan, plan)
+        self.assertEqual(w.profile.resolution, (1280,720))
+        command = plan.command(row,w.settings)
+        self.assertEqual((command.x,command.y), (900,600))
+        w.flush_pending_saves()
+        self.assertEqual(Profile.read(read_json(w.path)).resolution, (1280,720))
+
+    def test_reverse_row_capture_rounds_edges_and_allows_ratio_warning(self):
+        w = self.window
+        row = w.profile.rows[0]
+        for size,point,expected,warning in (
+                ((1835,1032),(1834,1031),(1279,719),False),
+                ((1280,960),(640,480),(640,360),True)):
+            with self.subTest(size=size):
+                self.size.return_value = size
+                with patch.object(w.native,'cursor',return_value=point), \
+                     patch.object(w.native,'bounds',return_value=(0,0,*size)), \
+                     patch.object(w,'convert_dialog') as conversion:
+                    w.capture(row.id)
+                conversion.assert_not_called()
+                self.assertEqual((row.x,row.y), expected)
+                self.assertEqual(w.profile.resolution, (1280,720))
+                self.assertEqual('경고:' in w.statusBar().currentMessage(), warning)
+
+    def test_reverse_row_capture_cancel_preserves_baseline_points_and_file(self):
+        w = self.window
+        w.save()
+        before, before_file = w.profile.export(), w.path.read_bytes()
+        self.size.return_value = (1920,1080)
+        self.identity.return_value = OTHER
+        with patch('app.CoordinateAppDialog') as prompt, \
+             patch.object(w.native,'cursor',return_value=(900,600)), \
+             patch.object(w.native,'bounds',return_value=(0,0,1920,1080)), \
+             patch.object(w,'convert_dialog') as conversion:
+            prompt.return_value.confirmed.return_value = False
+            w.capture(w.profile.rows[0].id)
+        prompt.assert_called_once()
+        conversion.assert_not_called()
+        w.flush_pending_saves()
+        self.assertEqual(w.profile.export(), before)
+        self.assertEqual(w.path.read_bytes(), before_file)
+
+    def test_reverse_row_capture_resize_during_confirmation_does_not_save(self):
+        w = self.window
+        w.save()
+        before, before_file = w.profile.export(), w.path.read_bytes()
+        self.size.side_effect = [(1920,1080),(1600,900)]
+        self.identity.return_value = OTHER
+        with patch('app.CoordinateAppDialog') as prompt, \
+             patch.object(w.native,'cursor',return_value=(900,600)), \
+             patch.object(w.native,'bounds',return_value=(0,0,1920,1080)):
+            prompt.return_value.confirmed.return_value = True
+            w.capture(w.profile.rows[0].id)
+        w.flush_pending_saves()
+        self.assertEqual(w.profile.export(), before)
+        self.assertEqual(w.path.read_bytes(), before_file)
+        self.assertIn('화면 크기가 변경',w.statusBar().currentMessage())
+
+    def test_reverse_row_capture_basis_change_during_confirmation_does_not_write(self):
+        w = self.window
+        w.save()
+        before_file = w.path.read_bytes()
+        self.size.return_value = (1920,1080)
+        self.identity.return_value = OTHER
+        row = w.profile.rows[0]
+        before_point = row.x,row.y
+        with patch('app.CoordinateAppDialog') as prompt, \
+             patch.object(w.native,'cursor',return_value=(900,600)), \
+             patch.object(w.native,'bounds',return_value=(0,0,1920,1080)), \
+             patch.object(w,'changed') as changed:
+            prompt.return_value.confirmed.return_value = True
+            prompt.return_value.exec.side_effect = lambda: setattr(w.profile,'resolution',(800,600))
+            w.capture(row.id)
+        changed.assert_not_called()
+        self.assertEqual((row.x,row.y), before_point)
+        self.assertEqual(w.profile.target_program, GAME)
+        self.assertEqual(w.profile.resolution,(800,600))
+        self.assertEqual(w.path.read_bytes(),before_file)
+        self.assertIn('프로필이 변경',w.statusBar().currentMessage())
+
+    def test_reverse_row_capture_outside_app_does_not_change_profile(self):
+        w = self.window
+        self.size.return_value = (1920,1080)
+        for point in ((1920,500),(-1,500),(300,1080)):
+            with self.subTest(point=point):
+                before = w.profile.export()
+                with patch.object(w.native,'cursor',return_value=point), \
+                     patch.object(w.native,'bounds',return_value=(0,0,1920,1080)), \
+                     patch.object(w,'changed') as changed:
+                    w.capture(w.profile.rows[0].id)
+                changed.assert_not_called()
+                self.assertEqual(w.profile.export(), before)
+                self.assertIn('대상 영역 안',w.statusBar().currentMessage())

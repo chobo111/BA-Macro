@@ -1051,10 +1051,10 @@ class UiTests(unittest.TestCase):
         self.assertEqual(w.profile.export(),original)
         self.assertEqual(w.path.read_bytes(),original_bytes)
 
-    def test_capture_resolution_mismatch_does_not_mix_coordinates(self):
+    def test_capture_unknown_basis_and_fullscreen_mismatch_require_conversion(self):
         w=self.window
-        w.target=99
-        for resolution in ((1920,1080),None):
+        for target,resolution in ((99,None),(0,(1920,1080))):
+            w.target=target
             w.profile.resolution=resolution
             w.profile.rows[0].x=300
             original=w.profile.export()
