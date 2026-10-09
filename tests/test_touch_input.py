@@ -303,7 +303,7 @@ class TouchTests(unittest.TestCase):
         finally:
             engine.shutdown()
 
-    def test_engine_rejects_fullscreen_script_before_sending_touch(self):
+    def test_engine_rejects_empty_target_before_sending_touch(self):
         self.native.create_touch_input = lambda: self.adapter
         reported = threading.Event()
         errors = []
@@ -314,7 +314,7 @@ class TouchTests(unittest.TestCase):
         try:
             engine.submit(replace(self.command, hwnd=0, script='click 10,20'))
             self.assertTrue(reported.wait(1))
-            self.assertEqual(errors, ['스크립트를 실행하려면 앱을 선택하세요.'])
+            self.assertEqual(errors, ['앱을 선택하세요.'])
             self.assertEqual(self.device.events, [])
             self.assertEqual(self.native.events, [])
         finally:

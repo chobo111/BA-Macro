@@ -33,7 +33,6 @@ class Probe(QWidget):
         layout.addWidget(self.status)
         layout.addStretch()
         self.native = Windows()
-        self.native.refresh_displays()
         self.errors = []
         self.frames = []
         owner = self

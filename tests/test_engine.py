@@ -27,7 +27,7 @@ class FakeWindows:
 
     def active(self, hwnd): return self.active_value
     def size(self, hwnd): return (1920, 1080)
-    def bounds(self, hwnd): return (0, 0, 1920, 1080) if hwnd else (-1920, -1080, 1920, 1080)
+    def bounds(self, hwnd): return (0, 0, 1920, 1080)
     def cursor(self, hwnd=None): return self.position
     def cursor_screen(self): return self.position
     def screen(self, hwnd, x, y): return x, y
@@ -176,18 +176,7 @@ class EngineTests(unittest.TestCase):
         self.wait_idle()
         self.assertEqual(sum(e == ("button", True) for e in self.native.events), 1)
 
-    def test_fullscreen_accepts_negative_coordinates_without_active_window(self):
-        self.native.active_value = False
-        self.engine.execute(replace(self.command, hwnd=0, x=-500, y=-300))
-        self.assertEqual(self.native.events[0], ("move", -500, -300))
-        self.assertEqual(sum(e == ("button", True) for e in self.native.events), 1)
 
-    def test_fullscreen_rejects_off_desktop_and_still_cancels(self):
-        with self.assertRaises(ValueError):
-            self.engine.execute(replace(self.command, hwnd=0, x=-2000))
-        self.engine.stop()
-        with self.assertRaises(Cancelled):
-            self.engine.execute(replace(self.command, hwnd=0))
 
     def test_resize_during_click_releases_button_and_restores_cursor(self):
         from unittest.mock import patch
@@ -225,5 +214,5 @@ class EngineTests(unittest.TestCase):
         for mode in ('move_only', 'move_and_click', 'script'):
             self.engine.submit(replace(self.command, hwnd=None, mode=mode, script='click 10,20'))
             self.wait_idle()
-        self.assertEqual(self.errors, ['앱 또는 전체화면을 선택하세요.'] * 3)
+        self.assertEqual(self.errors, ['앱을 선택하세요.'] * 3)
         self.assertEqual(self.native.events, [])

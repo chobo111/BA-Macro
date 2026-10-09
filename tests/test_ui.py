@@ -279,7 +279,7 @@ class UiTests(unittest.TestCase):
         row = w.profile.rows[0]
         row.action_mode, row.script = 'script', 'sleep 1'
         w.target = 123
-        w.session.start(ExecutionPlan(w.target, w.profile.resolution, None, display_id=w.native.display_id))
+        w.session.start(ExecutionPlan(w.target, w.profile.resolution, None))
         with patch('execution_plan.compile_script', wraps=compile_script) as compile_once, patch.object(w.engine, 'submit', return_value=True) as submit, patch.object(w.native, 'active', return_value=True):
             w.dispatch('move', row.id)
         compile_once.assert_called_once_with(row.script)
@@ -410,11 +410,11 @@ class UiTests(unittest.TestCase):
 
     def test_editor_resize_sync_and_live_coordinates(self):
         w = self.window
-        w.target = 0
+        w.target = 99
         w.resize(520, 440)
         self.qt.processEvents()
         self.assertNotEqual(w.minimumWidth(), w.maximumWidth())
-        dialog = ScriptEditor('', w.native, 0, w)
+        dialog = ScriptEditor('', w.native, 99, w)
         dialog.show()
         self.qt.processEvents()
         self.assertEqual(dialog.size(), dialog.parent_area().size())
@@ -425,7 +425,7 @@ class UiTests(unittest.TestCase):
         self.qt.processEvents()
         self.assertEqual(dialog.size(), dialog.parent_area().size())
         self.assertEqual(dialog.panel.size(), dialog.size())
-        with patch.object(w.native, 'cursor', return_value=(123, 456)):
+        with patch.object(w.native, 'cursor', return_value=(123, 456)), patch.object(w.native,'exists',return_value=True), patch.object(w.native,'size',return_value=(1280,720)), patch.object(w.native,'active',return_value=True):
             w.tick()
         self.assertFalse(hasattr(dialog, 'cursor_label'))
         self.assertIs(w.menuBar().cornerWidget(Qt.Corner.TopRightCorner), w.cursor_label)
@@ -505,7 +505,10 @@ class UiTests(unittest.TestCase):
         self.assertFalse(w.armed)
         self.assertEqual(w.table.rowCount(), 3)
         w.armed = True
-        w.table.cellWidget(0, 1).setValue(125)
+        w.target = 99
+        w.profile.resolution = (1280,720)
+        with patch.object(w.native,'exists',return_value=True), patch.object(w.native,'size',return_value=(1280,720)):
+            w.table.cellWidget(0, 1).setValue(125)
         self.assertFalse(w.armed)
         w.flush_pending_saves()
         self.assertFalse(w.dirty)
@@ -604,7 +607,7 @@ class UiTests(unittest.TestCase):
             w.targets.showPopup()
             windows.assert_called_once()
             self.assertEqual(w.targets.currentData(), 10)
-            self.assertEqual(w.targets.count(), 4)
+            self.assertEqual(w.targets.count(), 3)
             w.targets.hidePopup()
 
     def test_memo_width_and_pin(self):
@@ -661,19 +664,9 @@ class UiTests(unittest.TestCase):
             w.dispatch("pause", "")
             self.assertTrue(w.armed)
 
-    def test_fullscreen_start_capture_and_fixed_controls(self):
+    def test_fixed_controls_ignore_window_and_coordinate_width(self):
         w = self.window
         self.assertEqual(w.targets.currentText(), "미선택")
-        w.targets.setCurrentIndex(w.targets.findData(0))
-        self.assertEqual(w.targets.currentText(), "전체화면")
-        w.toggle()
-        self.assertTrue(w.armed)
-        self.assertTrue(w.eligible("move"))
-        with patch.object(w.native, "cursor", return_value=(-300, 150)), \
-             patch.object(w.native, "bounds", return_value=(-1920, 0, 1920, 1080)), \
-             patch.object(w.native, "size", return_value=(3840, 1080)):
-            w.capture(w.profile.rows[0].id)
-        self.assertEqual(w.profile.rows[0].x, -300)
         w.resize(480, 340)
         self.qt.processEvents()
         positions = (w.pin_button.pos(), w.pause_button.pos())
@@ -713,7 +706,9 @@ class UiTests(unittest.TestCase):
 
     def test_editor_follows_main_window_and_captures_external_coordinates(self):
         w = self.window
-        dialog = ScriptEditor('', w.native, 0, w)
+        w.target = 99
+        w.profile.resolution = (1920,1080)
+        dialog = ScriptEditor('', w.native, 99, w)
         dialog.show()
         self.qt.processEvents()
         self.assertEqual(dialog.validation.text(), '')
@@ -728,23 +723,29 @@ class UiTests(unittest.TestCase):
         self.qt.processEvents()
         self.assertEqual(dialog.mapToGlobal(QPoint()) - before, w.pos() - parent_before)
         self.assertEqual(dialog.geometry(), dialog.parent_area())
-        with patch.object(w.native, 'cursor', return_value=(-123, 456)), \
-             patch.object(w.native, 'bounds', return_value=(-1920, 0, 1920, 1080)):
+        with patch.object(w.native, 'cursor', return_value=(123, 456)), \
+             patch.object(w.native, 'bounds', return_value=(0, 0, 1920, 1080)), \
+             patch.object(w.native,'window_identity',return_value={}), \
+             patch.object(w.native,'size',return_value=(1920,1080)):
             self.assertEqual(dialog.editor.toPlainText(), '')
             dialog.pick_coordinate()
-            self.assertEqual(dialog.editor.toPlainText(), '-123,456')
+            self.assertEqual(dialog.editor.toPlainText(), '123,456')
             QTest.mouseClick(dialog, Qt.MouseButton.RightButton, pos=dialog.panel.geometry().center())
-            self.assertEqual(dialog.editor.toPlainText(), '-123,456')
+            self.assertEqual(dialog.editor.toPlainText(), '123,456')
         with patch.object(w.native, 'cursor', return_value=(99999, 456)), \
-             patch.object(w.native, 'bounds', return_value=(0, 0, 1920, 1080)):
+             patch.object(w.native, 'bounds', return_value=(0, 0, 1920, 1080)), \
+             patch.object(w.native,'window_identity',return_value={}), \
+             patch.object(w.native,'size',return_value=(1920,1080)):
             dialog.pick_coordinate()
-            self.assertEqual(dialog.editor.toPlainText(), '-123,456')
+            self.assertEqual(dialog.editor.toPlainText(), '123,456')
         dialog.editor.setPlainText('click ')
         cursor = dialog.editor.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         dialog.editor.setTextCursor(cursor)
         with patch.object(w.native, 'cursor', return_value=(123, 456)), \
-             patch.object(w.native, 'bounds', return_value=(0, 0, 1920, 1080)):
+             patch.object(w.native, 'bounds', return_value=(0, 0, 1920, 1080)), \
+             patch.object(w.native,'window_identity',return_value={}), \
+             patch.object(w.native,'size',return_value=(1920,1080)):
             dialog.pick_coordinate()
             self.assertEqual(dialog.editor.toPlainText(), 'click 123,456')
         dialog.source = dialog.editor.toPlainText()
@@ -838,7 +839,7 @@ class UiTests(unittest.TestCase):
         row.action_mode, row.script = 'script', 'curve 10,20 30,40'
         w.settings.drag_segment_duration_ms = 25
         w.target = 123
-        w.session.start(ExecutionPlan(w.target, w.profile.resolution, None, display_id=w.native.display_id))
+        w.session.start(ExecutionPlan(w.target, w.profile.resolution, None))
         with patch.object(w.engine, 'submit', return_value=True) as submit, patch.object(w.native, 'active', return_value=True):
             w.dispatch('move', row.id)
             self.assertEqual(submit.call_args.args[0].drag_segment_duration_ms, 25)
@@ -1051,9 +1052,9 @@ class UiTests(unittest.TestCase):
         self.assertEqual(w.profile.export(),original)
         self.assertEqual(w.path.read_bytes(),original_bytes)
 
-    def test_capture_unknown_basis_and_fullscreen_mismatch_require_conversion(self):
+    def test_capture_unknown_basis_requires_conversion(self):
         w=self.window
-        for target,resolution in ((99,None),(0,(1920,1080))):
+        for target,resolution in ((99,None),):
             w.target=target
             w.profile.resolution=resolution
             w.profile.rows[0].x=300
@@ -1069,7 +1070,7 @@ class UiTests(unittest.TestCase):
 
     def test_converter_without_target_does_not_use_desktop_resolution(self):
         w=self.window
-        w.target=0
+        w.target=None
         with patch('app.ConversionDialog') as dialog, patch.object(w.native,'size') as size:
             w.convert_dialog()
             self.assertIsNone(dialog.call_args.args[2])
@@ -1084,7 +1085,6 @@ class UiTests(unittest.TestCase):
             editor.pick_coordinate((100,200))
         self.assertEqual(editor.editor.toPlainText(),'150,300')
         self.assertEqual(editor.capture_resolution,(1920,1080))
-        self.assertEqual(editor.capture_size,(1280,720))
         editor.close()
 
     def test_script_capture_new_profile_records_basis_only_on_save(self):
@@ -1117,48 +1117,8 @@ class UiTests(unittest.TestCase):
         self.assertEqual(dialog.value(),'ctrl+k')
         dialog.close()
 
-    def test_display_settings_selection_and_missing_device(self):
-        from displays import Display
-        from domain import Settings
-        monitor=Display('test-monitor','Test display',12,'DISPLAY2',-1920,0,1920,1080,False)
-        dialog=SettingsDialog(Settings(),self.window,[monitor])
-        self.assertEqual(dialog.displays.count(),2)
-        dialog.displays.setCurrentIndex(1)
-        self.assertEqual(dialog.value().display_id,'test-monitor')
-        dialog.close()
-        dialog=SettingsDialog(Settings(display_id='missing'),self.window,[monitor])
-        self.assertIn('연결되지 않은',dialog.displays.currentText())
-        self.assertEqual(dialog.value().display_id,'missing')
-        dialog.close()
 
-    def test_disconnected_display_stops_fullscreen_but_not_target_window(self):
-        w=self.window
-        w.native.display_id='missing'
-        with patch.object(w.native,'refresh_displays',return_value=()):
-            w.native.displays=()
-            w.display_ticks=9
-            w.target=0
-            w.armed=True
-            w.tick()
-            self.assertFalse(w.armed)
-            w.target=99
-            w.armed=True
-            w.display_ticks=9
-            with patch.object(w.native,'exists',return_value=True), \
-                 patch.object(w.native,'size',return_value=(1920,1080)), \
-                 patch.object(w.native,'cursor',return_value=(10,20)), \
-                 patch.object(w.native,'active',return_value=True):
-                w.tick()
-                self.assertTrue(w.armed)
 
-    def test_selected_monitor_used_as_conversion_destination(self):
-        w=self.window
-        w.target=0
-        w.native.display_id='test-monitor'
-        with patch('app.ConversionDialog') as dialog, patch.object(w.native,'size',return_value=(1920,1080)):
-            w.convert_dialog()
-            self.assertEqual(dialog.call_args.args[2],(1920,1080))
-            self.assertEqual(dialog.call_args.kwargs['target_label'],'선택한 디스플레이')
 
     def test_settings_units_are_outside_inputs_and_return_option_controls_delay(self):
         dialog = SettingsDialog(self.window.settings, self.window)
@@ -1447,7 +1407,7 @@ class UiTests(unittest.TestCase):
         bindings = list(w.hooks.bindings)
         disk = w.settings_path.read_bytes()
         candidate = replace(w.settings, click_hold_ms=9876, capture_hk='ctrl+g',
-                            theme='Light', display_id='new-monitor')
+                            theme='Light')
         with patch('app.SettingsDialog') as factory, \
              patch.object(w.store, 'settings', side_effect=OSError('settings unavailable')), \
              patch.object(w, 'error') as error, patch.object(w, 'apply_theme') as theme:
@@ -1459,7 +1419,6 @@ class UiTests(unittest.TestCase):
             theme.assert_not_called()
             dialog.deleteLater.assert_called_once()
         self.assertEqual(asdict(w.settings), before)
-        self.assertEqual(w.native.display_id, before['display_id'])
         self.assertEqual(w.hooks.bindings, bindings)
         self.assertEqual(w.settings_path.read_bytes(), disk)
         self.assertTrue(w.save())
@@ -1711,30 +1670,11 @@ class UiTests(unittest.TestCase):
         self.assertFalse(w.isMinimized())
         self.assertTrue(w.isMaximized())
 
-    def test_fullscreen_script_warns_without_submitting_or_stopping_other_actions(self):
-        w = self.window
-        w.target = 0
-        w.session.start(ExecutionPlan(w.target, w.profile.resolution, None, display_id=w.native.display_id))
-        row = w.profile.rows[0]
-        row.action_mode, row.script = 'script', 'click 10,20'
-        with patch.object(w.engine, 'submit', return_value=True) as submit, \
-             patch('execution_plan.compile_script') as compile_script, \
-             patch.object(QMessageBox, 'warning') as popup:
-            w.dispatch('move', row.id)
-            self.assertEqual(w.statusBar().currentMessage(), '스크립트를 실행하려면 앱을 선택하세요.')
-            self.assertTrue(w.armed)
-            submit.assert_not_called()
-            compile_script.assert_not_called()
-            popup.assert_not_called()
-            row.action_mode = 'move_and_click'
-            w.dispatch('move', row.id)
-            submit.assert_called_once()
-            self.assertEqual(submit.call_args.args[0].hwnd, 0)
 
     def test_selected_app_script_waits_for_focus_then_submits(self):
         w = self.window
         w.target = 123
-        w.session.start(ExecutionPlan(w.target, w.profile.resolution, None, display_id=w.native.display_id))
+        w.session.start(ExecutionPlan(w.target, w.profile.resolution, None))
         row = w.profile.rows[0]
         row.action_mode, row.script = 'script', 'click 10,20'
         with patch.object(w.engine, 'submit', return_value=True) as submit, \
@@ -1963,20 +1903,6 @@ class UiTests(unittest.TestCase):
         self.assertEqual(w.profile.export(), before)
         self.assertEqual(w.cursor_label.text(), '— , —')
 
-    def test_unselecting_fullscreen_stops_and_disables_action_dispatch(self):
-        w = self.window
-        w.targets.setCurrentIndex(w.targets.findData(0))
-        w.toggle()
-        self.assertTrue(w.armed)
-        w.targets.setCurrentIndex(0)
-        self.assertIsNone(w.target)
-        self.assertFalse(w.armed)
-        self.assertIsNone(w.session.plan)
-        with patch.object(w.engine, 'submit') as submit:
-            w.dispatch('move', w.profile.rows[0].id)
-        submit.assert_not_called()
-        with self.assertRaises(ValueError):
-            ExecutionPlan(None, None, None)
 
     def test_unselected_script_editor_does_not_capture_external_clicks(self):
         w = self.window

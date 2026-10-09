@@ -3,13 +3,14 @@ import re
 from threading import Event
 from PySide6.QtCore import Qt, QEvent, Signal, QTimer
 from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QWidget, QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QPlainTextEdit, QSizeGrip, QApplication
+from PySide6.QtWidgets import QWidget, QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizeGrip, QApplication
 from mouse_hook import CoordinateHook
 from widgets import NoWheelCombo
 from script_language import compile_script, ScriptError
 from script_help import ScriptHelpDialog
 from domain import same_program
 from coordinate_cache import scaled_point
+from coordinate_editor import CoordinateTextEdit
 from coordinate_transform import aspect_warning
 
 class Highlighter(QSyntaxHighlighter):
@@ -52,12 +53,11 @@ class ScriptEditor(QDialog):
         self.coordinate_clicked.connect(self.capture_screen_point, Qt.ConnectionType.QueuedConnection)
         self.capture_failed.connect(self.on_capture_failed, Qt.ConnectionType.QueuedConnection)
         self.capture_resolution = None
-        self.capture_size = None
         self.capture_profile = parent.profile
         self.profile_resolution = parent.profile.resolution
         self.capture_program = None
         self.source = source
-        self.native, self.target = native, target
+        self.native, self.target = native, target or None
         self.syncing_geometry = False
 
         panel = self.panel = QFrame(self)
@@ -81,10 +81,10 @@ class ScriptEditor(QDialog):
         toolbar.addWidget(help_button)
         layout.addLayout(toolbar)
         body = QHBoxLayout()
-        self.editor = QPlainTextEdit(source)
+        self.editor = CoordinateTextEdit(source, self.can_edit_coordinates)
         self.editor.setObjectName('codeEditor')
-        self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.editor.setPlaceholderText('프로그램 밖에서 우클릭하면\n현재 입력 위치에 좌표(x,y)가 추가됩니다.' if target is not None else '앱 또는 전체화면을 선택한 뒤\n편집기를 다시 열어 주세요.')
+        self.editor.setLineWrapMode(CoordinateTextEdit.LineWrapMode.NoWrap)
+        self.editor.setPlaceholderText('프로그램 밖에서 우클릭하면\n현재 입력 위치에 좌표(x,y)가 추가됩니다.' if target else '앱을 선택한 뒤\n편집기를 다시 열어 주세요.')
         self.highlighter = Highlighter(self.editor.document(), parent.theme_colors)
         body.addWidget(self.editor, 1)
         layout.addLayout(body, 1)
@@ -131,7 +131,7 @@ class ScriptEditor(QDialog):
         QApplication.instance().installEventFilter(self)
         self.sync_to_parent()
         self.update_capture_enabled()
-        if self.target is not None and self.parentWidget().hook_enabled and self.coordinate_hook is None:
+        if self.target and self.parentWidget().hook_enabled and self.coordinate_hook is None:
             hook = CoordinateHook(self.coordinate_clicked.emit, self.capture_enabled.is_set,
                                   lambda error: self.capture_failed.emit(hook, str(error)))
             try:
@@ -158,7 +158,7 @@ class ScriptEditor(QDialog):
 
     def update_capture_enabled(self):
         # Only the GUI thread reads Qt state. The hook reads an Event snapshot.
-        allowed = (self.isVisible() and self.target is not None and not self.capture_blockers
+        allowed = (self.isVisible() and bool(self.target) and not self.capture_blockers
                    and not QApplication.activeModalWidget() and not QApplication.activePopupWidget())
         if allowed:
             self.capture_enabled.set()
@@ -168,7 +168,7 @@ class ScriptEditor(QDialog):
     def capture_screen_point(self, x, y):
         if not self.isVisible() or QApplication.activeModalWidget() or QApplication.activePopupWidget():
             return
-        if self.target is None:
+        if not self.target:
             return
         try:
             self.pick_coordinate(self.native.local_point(self.target, x, y))
@@ -195,8 +195,7 @@ class ScriptEditor(QDialog):
                     identity = self.parentWidget().confirm_coordinate_app(self.target, expected=self.capture_program)
                     if identity is None:
                         return
-                    if self.native.size(self.target) != self.capture_size:
-                        raise ValueError('캡처 후 화면 크기가 변경되었습니다. 다시 캡처하세요.')
+                    self.validate_capture_profile()
                     self.capture_program = identity
                 except (ValueError, OSError) as error:
                     self.log(str(error), error=True)
@@ -274,9 +273,26 @@ class ScriptEditor(QDialog):
             raise ValueError('프로필 기준 크기가 변경되었습니다. 편집기를 다시 열어 주세요.')
         return profile
 
+    def can_edit_coordinates(self):
+        try:
+            self.validate_capture_profile()
+            if not self.target:
+                raise ValueError('좌표를 직접 입력하려면 앱을 선택한 뒤 편집기를 다시 열어 주세요.')
+            parent = self.parentWidget()
+            if self.target != parent.target:
+                raise ValueError('선택한 앱이 변경되었습니다. 편집기를 다시 열어 주세요.')
+            allowed = parent.ensure_manual_coordinate_basis(basis=self.capture_resolution or self.profile_resolution)
+            if allowed and self.profile_resolution is None and self.capture_resolution is None:
+                # The first manual coordinate establishes an empty profile's basis.
+                self.profile_resolution = parent.profile.resolution
+            return allowed
+        except (ValueError, OSError) as error:
+            self.log(str(error), error=True)
+            return False
+
     def pick_coordinate(self, point=None):
-        if self.target is None:
-            self.log('앱 또는 전체화면을 선택한 뒤 편집기를 다시 열어 주세요.', error=True)
+        if not self.target:
+            self.log('앱을 선택한 뒤 편집기를 다시 열어 주세요.', error=True)
             return
         try:
             x, y = point if point is not None else self.native.cursor(self.target)
@@ -288,10 +304,10 @@ class ScriptEditor(QDialog):
             profile = self.validate_capture_profile()
             basis = self.capture_resolution or profile.resolution
             has_coordinates = any(row.x or row.y or row.script.strip() for row in profile.rows)
-            if (not basis and has_coordinates) or (basis and basis != size and not self.target):
+            if not basis and has_coordinates:
                 self.log('해상도 기준이 다릅니다. 편집기를 닫고 설정 → 프로필 해상도 변환을 먼저 진행하세요.', error=True)
                 return
-            identity = self.native.window_identity(self.target) if self.target else {}
+            identity = self.native.window_identity(self.target)
             if self.capture_program is not None and identity != self.capture_program and not same_program(self.capture_program, identity):
                 self.log('좌표를 가져온 앱이 변경되었습니다. 편집기를 다시 열어 주세요.', error=True)
                 return
@@ -304,7 +320,6 @@ class ScriptEditor(QDialog):
                 raise ValueError('캡처 중 창 크기가 변경되었습니다. 다시 캡처하세요.')
             self.capture_program = identity
             self.capture_resolution = basis or size
-            self.capture_size = size
             self.editor.insertPlainText(f'{x},{y}')
             message = f'기준 좌표로 변환하여 추가: {x}, {y}' if converted else f'좌표 추가: {x}, {y}'
             self.log(message + (' · ' + warning if warning else ''))

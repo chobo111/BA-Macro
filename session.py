@@ -11,7 +11,7 @@ class ExecutionSession:
         self.modal = False
         self.editor_open = False
         self.closing = False
-        self.target = None  # None: unselected; 0: explicitly selected desktop
+        self.target = None
         self.plan = None
 
     @property
@@ -23,7 +23,7 @@ class ExecutionSession:
         return self.plan.coordinate_transform if self.plan is not None else None
 
     def start(self, plan):
-        if self.target is None or plan.target != self.target:
+        if not self.target or plan.target != self.target:
             raise ValueError('선택한 앱이 변경되었습니다. 다시 시작하세요.')
         self.plan = plan
         self.armed = True
@@ -42,11 +42,11 @@ class ExecutionSession:
                 return False
         if action in ('pause', 'capture_selected'):
             return True
-        if self.target is None:
+        if not self.target:
             return False
         if action == 'move':
-            return self.armed and (not self.target or self.native.active(self.target))
-        return not self.target or self.native.active(self.target)
+            return self.armed and self.native.active(self.target)
+        return self.native.active(self.target)
 
     @contextmanager
     def editing(self, pause, stop, close_hooks=None, restore_hooks=None):

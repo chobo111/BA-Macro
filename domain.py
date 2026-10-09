@@ -152,7 +152,6 @@ class Settings:
     auto_convert_on_start: bool = False
     theme: str = "Dark"
     last_profile: str = ""
-    display_id: str = ""
 
     @classmethod
     def read(cls, data):
@@ -178,9 +177,6 @@ class Settings:
         if obj.theme not in ("Dark", "Light", "System"):
             raise ValueError("테마 값이 올바르지 않습니다.")
         obj.last_profile = str(data.get("last_profile", ""))
-        obj.display_id = data.get("display_id", "")
-        if not isinstance(obj.display_id, str) or len(obj.display_id) > 512:
-            raise ValueError("디스플레이 설정이 올바르지 않습니다.")
         return obj
 
 

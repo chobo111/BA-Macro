@@ -3,7 +3,6 @@ import ntpath
 import ctypes as C
 from ctypes import wintypes as W
 from domain import target_identity, same_program, WindowSizeUnavailable
-from displays import enumerate_displays, monitor_info
 
 U = C.WinDLL("user32", use_last_error=True)
 ULONG_PTR = C.c_size_t
@@ -39,7 +38,6 @@ def bind(name, args, result):
 
 
 foreground = bind("GetForegroundWindow", [], W.HWND)
-metrics = bind("GetSystemMetrics", [C.c_int], C.c_int)
 valid_window = bind("IsWindow", [W.HWND], W.BOOL)
 visible = bind("IsWindowVisible", [W.HWND], W.BOOL)
 minimized = bind("IsIconic", [W.HWND], W.BOOL)
@@ -119,47 +117,17 @@ def cursor_position():
     return point.x, point.y
 
 
+def require_target(hwnd):
+    if not hwnd:
+        raise ValueError('앱을 선택하세요.')
+
+
 class Windows:
-    def __init__(self):
-        self.display_id = ''
-        self.displays = ()
-
-    def refresh_displays(self):
-        self.displays = tuple(enumerate_displays())
-        return self.displays
-
-    def selected_display(self):
-        if not self.display_id:
-            return None
-        matches = [d for d in self.displays if d.id == self.display_id]
-        if len(matches) != 1:
-            raise OSError('선택한 디스플레이가 없거나 구분할 수 없습니다. 환경설정에서 다시 선택하세요.')
-        return matches[0]
-
-    def validate_context(self, hwnd):
-        if hwnd or not self.display_id:
-            return
-        display = self.selected_display()
-        info = monitor_info(display.handle)
-        r = info.monitor
-        if (info.device, r.left, r.top, r.right-r.left, r.bottom-r.top) != (
-                display.device, display.left, display.top, display.width, display.height):
-            raise OSError('디스플레이 배치 또는 해상도가 변경되었습니다. 확인 후 다시 시작하세요.')
-
-    def validate_pointer(self, hwnd):
-        if not hwnd and self.display_id:
-            x, y = self.cursor()
-            left, top, right, bottom = self.bounds(0)
-            if not left <= x < right or not top <= y < bottom:
-                raise OSError('커서가 선택한 디스플레이 밖에 있습니다.')
-
     def local_point(self, hwnd, x, y):
+        require_target(hwnd)
         point = W.POINT(x, y)
-        if hwnd:
-            check(to_client(hwnd, C.byref(point)))
-            return point.x, point.y
-        display = self.selected_display()
-        return (x-display.left, y-display.top) if display else (x, y)
+        check(to_client(hwnd, C.byref(point)))
+        return point.x, point.y
 
     def window_identity(self, hwnd):
         check(valid_window(hwnd))
@@ -241,13 +209,12 @@ class Windows:
     def cursor_screen(self):
         return cursor_position()
 
-    def cursor(self, hwnd=None):
+    def cursor(self, hwnd):
+        require_target(hwnd)
         return self.local_point(hwnd, *self.cursor_screen())
 
     def screen(self, hwnd, x, y):
-        if not hwnd:
-            display = self.selected_display()
-            return (x+display.left, y+display.top) if display else (x, y)
+        require_target(hwnd)
         point = W.POINT(x, y)
         check(to_screen(hwnd, C.byref(point)))
         return point.x, point.y
@@ -268,9 +235,7 @@ class Windows:
         check(send_input(1, C.byref(packet), C.sizeof(Input)))
 
     def size(self, hwnd):
-        if not hwnd:
-            display = self.selected_display()
-            return (display.width, display.height) if display else (metrics(78), metrics(79))
+        require_target(hwnd)
         if minimized(hwnd):
             raise WindowSizeUnavailable()
         rect = W.RECT()
@@ -284,12 +249,6 @@ class Windows:
         return rect.right, rect.bottom
 
     def bounds(self, hwnd):
-        if not hwnd:
-            display = self.selected_display()
-            if display:
-                return 0, 0, display.width, display.height
-            x, y = metrics(76), metrics(77)
-            return x, y, x + metrics(78), y + metrics(79)
         w, h = self.size(hwnd)
         return 0, 0, w, h
 

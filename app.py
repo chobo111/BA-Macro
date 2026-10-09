@@ -33,7 +33,7 @@ from theme import DARK, LIGHT, palette, stylesheet
 from session import ExecutionSession, editing_dialog
 from shortcuts import ShortcutError, qt_hotkey
 from single_instance import SingleInstance
-from startup_dialogs import AppMismatchDialog, SizeMismatchDialog, CoordinateAppDialog
+from startup_dialogs import AppMismatchDialog, SizeMismatchDialog, CoordinateAppDialog, ManualCoordinateDialog
 from widgets import (managed_dialog, make_icon, make_run_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
                      BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog, NoWheelCombo, NoWheelSpinBox)
 
@@ -80,12 +80,6 @@ class MainWindow(QMainWindow):
         loaded = self.store.load()
         self.settings, self.profile, self.path = loaded.settings, loaded.profile, loaded.path
         self.load_error = loaded.warning
-        self.native.display_id = self.settings.display_id
-        self.display_ticks = 0
-        try:
-            self.native.refresh_displays()
-        except OSError as error:
-            self.load_error = str(error)
         self.bridge = Bridge()
         self.engine = Engine(self.native, lambda key: self.hooks.held(key), self.bridge.error.emit)
         self.hooks = Hotkeys(self.bridge.action.emit, self.eligible, self.engine.stop, self.bridge.error.emit)
@@ -322,7 +316,7 @@ class MainWindow(QMainWindow):
                     spin.setRange(-99999, 99999)
                     spin.setValue(getattr(row, field))
                     spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-                    spin.valueChanged.connect(lambda value, rid=row.id, f=field: self.set_value(rid, f, value))
+                    spin.valueChanged.connect(lambda value, rid=row.id, f=field: self.edit_coordinate_value(rid, f, value))
                     self.table.setCellWidget(i, column, spin)
             mode = NoWheelCombo()
             mode.setMinimumContentsLength(1)
@@ -360,6 +354,57 @@ class MainWindow(QMainWindow):
             self.changed()
             if field == 'action_mode':
                 QTimer.singleShot(0, lambda: self.rebuild(rid))
+
+    def edit_coordinate_value(self, rid, field, value):
+        row = self.row(rid)
+        if row is None or getattr(row, field) == value:
+            return
+        if self.ensure_manual_coordinate_basis():
+            self.set_value(rid, field, value)
+        else:
+            self.rebuild(rid)
+
+    @editing_dialog(hooks=False, pause=False)
+    def ensure_manual_coordinate_basis(self, *, basis=None):
+        target, profile, path = self.target, self.profile, self.path
+        original_basis = profile.resolution
+        if not target or not self.native.exists(target):
+            self.stop()
+            self.statusBar().showMessage('좌표를 직접 입력하려면 앱을 선택하세요.')
+            return False
+        try:
+            size = tuple(self.native.size(target))
+            basis = basis or profile.resolution
+            has_coordinates = any(row.x or row.y or row.script.strip() for row in profile.rows)
+            if basis == size:
+                return True
+            if basis is None and not has_coordinates:
+                identity = self.confirm_coordinate_app(target)
+                if identity is None:
+                    return False
+                if (self.profile is not profile or self.path != path or self.target != target or
+                        profile.resolution is not None or tuple(self.native.size(target)) != size):
+                    raise ValueError('입력 중 앱 또는 프로필 기준이 변경되었습니다. 다시 입력하세요.')
+                profile.resolution = size
+                profile.target_program = identity
+                self.changed()
+                return True
+            self.stop()
+            with managed_dialog(ManualCoordinateDialog(basis, size, self)) as dialog:
+                dialog.exec()
+                choice = dialog.choice()
+            if (self.profile is not profile or self.path != path or self.target != target or
+                    profile.resolution != original_basis or not self.native.exists(target)):
+                return False
+            if choice == 'resize' and basis:
+                self.resize_dialog(profile_size=basis)
+            elif choice == 'convert':
+                self.convert_dialog(reason='현재 앱 크기에 맞게 프로필 좌표를 변환한 뒤 직접 입력하세요.')
+            # Discard the pending edit: conversion may replace the profile/editor.
+            return False
+        except (OSError, ValueError) as error:
+            self.on_engine_error(str(error))
+            return False
 
     def edit_script(self, rid):
         if self.script_editor is not None:
@@ -428,9 +473,9 @@ class MainWindow(QMainWindow):
             return
         if self.modal or (self.session.editor_open and self.settings.auto_pause):
             return
-        if self.target is None:
+        if not self.target:
             self.refresh_windows(restore_saved=True)
-            if self.target is None:
+            if not self.target:
                 self.statusBar().showMessage('프로필에 지정된 앱을 찾을 수 없거나 구분할 수 없습니다. 앱을 선택하세요.')
                 return
         if self.target and not self.native.exists(self.target):
@@ -441,9 +486,6 @@ class MainWindow(QMainWindow):
             plan = self.confirm_start()
             if plan is None:
                 return
-            if not self.target:
-                self.native.refresh_displays()
-                self.native.validate_context(0)
             plan.check_context(self.native, self.target, self.profile.resolution)
             self.rebind()
             if self.hook_enabled:
@@ -476,17 +518,16 @@ class MainWindow(QMainWindow):
     @editing_dialog(hooks=False, pause=False)
     def confirm_start(self):
         target, profile, path = self.target, self.profile, self.path
-        if target is None:
-            self.statusBar().showMessage('앱 또는 전체화면을 선택하세요.')
+        if not target:
+            self.statusBar().showMessage('앱을 선택하세요.')
             return None
-        display_id = self.native.display_id
 
         def selection_valid():
-            if target != self.target or (target and not self.native.exists(target)):
+            if target != self.target or not self.native.exists(target):
                 self.statusBar().showMessage('선택한 앱이 변경되거나 닫혔습니다. 다시 선택하세요.')
                 return False
-            if self.profile is not profile or self.path != path or (not target and self.native.display_id != display_id):
-                self.statusBar().showMessage('프로필 또는 디스플레이가 변경되었습니다. 다시 시작하세요.')
+            if self.profile is not profile or self.path != path:
+                self.statusBar().showMessage('프로필이 변경되었습니다. 다시 시작하세요.')
                 return False
             return True
 
@@ -494,7 +535,7 @@ class MainWindow(QMainWindow):
         automatic = False
         remember_automatic = False
         saved = dict(self.profile.target_program)
-        current = self.native.window_identity(target) if target else {}
+        current = self.native.window_identity(target)
         if saved and not same_program(saved, current):
             with managed_dialog(AppMismatchDialog(saved, current, self)) as dialog:
                 dialog.exec()
@@ -504,7 +545,7 @@ class MainWindow(QMainWindow):
             if choice in ('new', 'copy'):
                 if not self.confirm_changes() or not selection_valid():
                     return None
-                latest = self.native.window_identity(target) if target else {}
+                latest = self.native.window_identity(target)
                 if latest != current and not same_program(current, latest):
                     self.statusBar().showMessage('선택한 앱이 변경되었습니다. 다시 선택하세요.')
                     return None
@@ -526,31 +567,27 @@ class MainWindow(QMainWindow):
                 return None
         if not selection_valid():
             return None
-        current_size = tuple(self.native.size(target)) if target or self.native.display_id else None
-        if resolution and current_size is not None:
+        current_size = tuple(self.native.size(target))
+        if resolution:
             if current_size != resolution:
-                if target and self.settings.auto_convert_on_start:
+                if self.settings.auto_convert_on_start:
                     choice = 'auto'
                 else:
                     with managed_dialog(SizeMismatchDialog(
-                            resolution, current_size, self, can_resize=bool(target))) as dialog:
+                            resolution, current_size, self)) as dialog:
                         dialog.exec()
                         choice = dialog.choice()
-                        remember_automatic = (choice == 'auto' and bool(target)
-                                              and dialog.skip_warning.isChecked() is True)
+                        remember_automatic = choice == 'auto' and dialog.skip_warning.isChecked() is True
                 if not selection_valid():
                     return None
                 if choice == 'resize':
                     self.resize_dialog(profile_size=resolution)
                     return None
-                elif choice == 'auto' and target:
+                elif choice == 'auto':
                     if tuple(self.native.size(target)) != tuple(current_size):
                         self.statusBar().showMessage('앱 크기가 변경되었습니다. 다시 시작하세요.')
                         return None
                     automatic = True
-                elif choice == 'convert' and not target:
-                    self.convert_dialog(reason='프로필 좌표를 선택한 디스플레이 크기로 변환합니다. 저장 후 다시 시작하세요.')
-                    return None
                 else:
                     return None
         if target:
@@ -559,8 +596,7 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage('선택한 앱이 변경되었습니다. 다시 선택하세요.')
                 return None
             current = latest
-        plan = ExecutionPlan(target, resolution, current_size if target else None,
-                             automatic=automatic, display_id=display_id)
+        plan = ExecutionPlan(target, resolution, current_size, automatic=automatic)
         plan.check_context(self.native, self.target, self.profile.resolution)
         if remember_automatic:
             self.commit_settings(replace(self.settings, auto_convert_on_start=True))
@@ -601,9 +637,6 @@ class MainWindow(QMainWindow):
         if action == "move" and self.eligible("move"):
             if not self.check_running_size():
                 return
-            if row.action_mode == 'script' and not self.target:
-                self.statusBar().showMessage('스크립트를 실행하려면 앱을 선택하세요.')
-                return
             plan = self.session.plan
             if plan is None:
                 return
@@ -617,9 +650,9 @@ class MainWindow(QMainWindow):
 
     @editing_dialog(hooks=False, pause=False)
     def confirm_coordinate_app(self, target, *, expected=None):
-        if target is None or target != self.target or (target and not self.native.exists(target)):
+        if not target or target != self.target or not self.native.exists(target):
             raise ValueError('좌표를 가져온 앱이 변경되거나 닫혔습니다. 다시 캡처하세요.')
-        current = self.native.window_identity(target) if target else {}
+        current = self.native.window_identity(target)
         if expected is not None and current != expected and not same_program(expected, current):
             raise ValueError('좌표를 가져온 앱이 변경되었습니다. 다시 캡처하세요.')
         saved = self.profile.target_program
@@ -629,16 +662,16 @@ class MainWindow(QMainWindow):
                 dialog.exec()
                 if not dialog.confirmed():
                     return None
-        if target is None or target != self.target or (target and not self.native.exists(target)):
+        if not target or target != self.target or not self.native.exists(target):
             raise ValueError('좌표를 가져온 앱이 변경되거나 닫혔습니다. 다시 캡처하세요.')
-        latest = self.native.window_identity(target) if target else {}
+        latest = self.native.window_identity(target)
         if latest != current and not same_program(current, latest):
             raise ValueError('좌표를 가져온 앱이 변경되었습니다. 다시 캡처하세요.')
         return latest
 
     def capture(self, rid):
-        if self.target is None:
-            self.statusBar().showMessage('좌표를 불러오려면 앱 또는 전체화면을 선택하세요.')
+        if not self.target:
+            self.statusBar().showMessage('좌표를 불러오려면 앱을 선택하세요.')
             return
         row = self.row(rid)
         target = self.target
@@ -647,7 +680,7 @@ class MainWindow(QMainWindow):
             return
         if not row:
             return
-        if self.target and not self.native.exists(target):
+        if not self.native.exists(target):
             self.statusBar().showMessage('대상 창이 닫혔습니다. 창을 다시 선택하세요.')
             return
         try:
@@ -661,8 +694,7 @@ class MainWindow(QMainWindow):
             if abs(x) > 99999 or abs(y) > 99999:
                 raise ValueError('좌표는 부호를 제외하고 최대 5자리까지 저장할 수 있습니다.')
             has_coordinates = any(r.x or r.y or r.script.strip() for r in profile.rows)
-            if ((basis and basis != (w, h) and not target) or
-                    (not basis and has_coordinates)):
+            if not basis and has_coordinates:
                 self.convert_dialog(reason="저장 좌표와 현재 화면의 해상도 기준을 먼저 맞춰 주세요. 변환 후 좌표를 다시 캡처하세요.")
                 return
             converted = basis is not None and basis != (w, h)
@@ -695,7 +727,6 @@ class MainWindow(QMainWindow):
         self.targets.blockSignals(True)
         self.targets.clear()
         self.targets.addItem("미선택", None)
-        self.targets.addItem("전체화면", 0)
         try:
             windows = self.native.windows(os.getpid())
             for hwnd, title in windows:
@@ -718,7 +749,7 @@ class MainWindow(QMainWindow):
             self.target = target
         if remember and target is not None:
             try:
-                identity = self.native.window_identity(target) if target else {}
+                identity = self.native.window_identity(target)
                 if identity != self.profile.target_program and (
                         not self.profile.target_program or same_program(self.profile.target_program, identity)):
                     self.profile.target_program = identity
@@ -728,17 +759,6 @@ class MainWindow(QMainWindow):
 
     def tick(self):
         try:
-            self.display_ticks += 1
-            if self.display_ticks % 10 == 0:
-                previous = self.native.displays
-                self.native.refresh_displays()
-                if self.target == 0 and self.native.display_id:
-                    before = [d for d in previous if d.id == self.native.display_id]
-                    after = [d for d in self.native.displays if d.id == self.native.display_id]
-                    if before != after:
-                        self.stop()
-                        self.statusBar().showMessage('디스플레이 연결·배치가 변경되어 중지했습니다. 환경설정에서 확인하세요.')
-                    self.native.validate_context(0)
             if self.target and not self.native.exists(self.target):
                 self.stop()
                 self.target = None
@@ -753,7 +773,7 @@ class MainWindow(QMainWindow):
             else:
                 self.target_info.clear()
             coordinate_target = self.script_editor.target if self.script_editor is not None else self.target
-            if coordinate_target is None:
+            if not coordinate_target:
                 self.cursor_label.setText('— , —')
             else:
                 x, y = self.native.cursor(coordinate_target)
@@ -762,15 +782,9 @@ class MainWindow(QMainWindow):
             known = '%d × %d · ' % self.run_size if self.run_size is not None else ''
             self.target_info.setText(known + '최소화')
             self.cursor_label.setText('— , —')
-        except OSError as error:
-            if self.target == 0 and self.native.display_id:
-                if self.armed:
-                    self.stop()
-                    self.statusBar().showMessage(str(error))
-                self.cursor_label.setText('디스플레이 확인 필요')
-            else:
-                self.target_info.setText("창 상태 확인 중")
-                self.cursor_label.setText("— , —")
+        except OSError:
+            self.target_info.setText("창 상태 확인 중")
+            self.cursor_label.setText("— , —")
 
     @editing_dialog(hooks=True)
     def edit_key(self, rid):
@@ -1097,20 +1111,12 @@ class MainWindow(QMainWindow):
         self.flush_pending_saves()
         candidate = replace(settings)
         candidate.last_profile = self.store.settings(self.path, asdict(candidate), recover=recover)
-        if candidate.display_id != self.settings.display_id:
-            self.stop()
         self.settings = candidate
-        self.native.display_id = candidate.display_id
         self.settings_error = ''
 
     @editing_dialog(hooks=True)
     def settings_dialog(self):
-        try:
-            displays = self.native.refresh_displays()
-        except OSError as error:
-            self.statusBar().showMessage(str(error))
-            displays = self.native.displays
-        with managed_dialog(SettingsDialog(self.settings, self, displays)) as dialog:
+        with managed_dialog(SettingsDialog(self.settings, self)) as dialog:
             while dialog.exec() == QDialog.DialogCode.Accepted:
                 try:
                     settings = dialog.value()
@@ -1176,11 +1182,10 @@ class MainWindow(QMainWindow):
         self.stop()
         self.flush_pending_saves()
         try:
-            current = self.native.size(self.target) if (self.target and self.native.exists(self.target)) or (self.target == 0 and self.native.display_id) else None
+            current = self.native.size(self.target) if self.target and self.native.exists(self.target) else None
             with managed_dialog(ConversionDialog(
                     self.profile, self.path or self.data_dir / "macro.json",
-                    current, self.save_conversion, self, reason,
-                    target_label="선택한 디스플레이" if self.target == 0 and self.native.display_id else "대상 창 내부")) as dialog:
+                    current, self.save_conversion, self, reason)) as dialog:
                 dialog.exec()
         except Exception as error:
             self.error(str(error))

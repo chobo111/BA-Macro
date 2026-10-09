@@ -75,16 +75,14 @@ class Engine:
         self.worker.join(timeout=2)
 
     def check_size(self, command):
-        if command.hwnd and command.expected_size is not None:
+        if command.expected_size is not None:
             if tuple(self.native.size(command.hwnd)) != command.expected_size:
                 raise WindowSizeChanged(WINDOW_SIZE_CHANGED)
 
     def guard(self, command):
-        if command.hwnd is None:
-            raise ValueError('앱 또는 전체화면을 선택하세요.')
-        if hasattr(self.native, "validate_context"):
-            self.native.validate_context(command.hwnd)
-        if self.cancel.is_set() or (command.hwnd and not self.native.active(command.hwnd)):
+        if not command.hwnd:
+            raise ValueError('앱을 선택하세요.')
+        if self.cancel.is_set() or not self.native.active(command.hwnd):
             raise Cancelled()
         self.check_size(command)
         self.runtime.native.keep_alive()
@@ -102,8 +100,6 @@ class Engine:
     def click(self, command):
         self.guard(command)
         try:
-            if hasattr(self.native, "validate_pointer"):
-                self.native.validate_pointer(command.hwnd)
             self.native.button(True)
             self.wait(command.click_hold_ms, command)
         finally:

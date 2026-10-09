@@ -114,14 +114,6 @@ class StartChecks(unittest.TestCase):
         self.assertFalse(self.window.armed)
         self.assertEqual(self.window.profile.target_program, GAME)
 
-    def test_no_app_selection_warns_against_saved_app(self):
-        self.window.target = 0
-        with patch('app.AppMismatchDialog') as factory:
-            factory.return_value.choice.return_value = 'cancel'
-            self.window.toggle()
-        self.assertEqual(factory.call_args.args[:2], (GAME, {}))
-        self.assertFalse(self.window.armed)
-        self.assertEqual(self.window.profile.target_program, GAME)
 
     def test_selection_does_not_overwrite_saved_app_before_confirmation(self):
         self.identity.return_value = OTHER
@@ -213,15 +205,14 @@ class StartChecks(unittest.TestCase):
         dialog.exec()
         self.assertEqual(dialog.choice(), 'copy')
         dialog.deleteLater()
-        for can_resize in (True, False):
-            dialog = SizeMismatchDialog((1280,720), (1920,1080), self.window, can_resize=can_resize)
-            self.assertEqual(dialog.resize_button.isEnabled(), can_resize)
-            self.assertIs(dialog.defaultButton(), dialog.cancel_button)
-            self.assertTrue(dialog.convert_button.isEnabled())
-            QTimer.singleShot(0, dialog.convert_button.click)
-            dialog.exec()
-            self.assertEqual(dialog.choice(), 'auto' if can_resize else 'convert')
-            dialog.deleteLater()
+        dialog = SizeMismatchDialog((1280,720), (1920,1080), self.window)
+        self.assertTrue(dialog.resize_button.isEnabled())
+        self.assertIs(dialog.defaultButton(), dialog.cancel_button)
+        self.assertTrue(dialog.convert_button.isEnabled())
+        QTimer.singleShot(0, dialog.convert_button.click)
+        dialog.exec()
+        self.assertEqual(dialog.choice(), 'auto')
+        dialog.deleteLater()
 
     def test_settings_dialog_roundtrip_preserves_existing_values(self):
         from widgets import SettingsDialog
@@ -238,16 +229,6 @@ class StartChecks(unittest.TestCase):
         self.assertFalse(self.window.armed)
         self.assertEqual(self.window.profile.target_program, GAME)
 
-    def test_selected_display_mismatch_offers_conversion_without_window_resize(self):
-        self.window.target = 0
-        self.window.profile.target_program = {}
-        self.window.native.display_id = 'display-test'
-        self.size.return_value = (1920,1080)
-        with patch('app.SizeMismatchDialog') as factory:
-            factory.return_value.choice.return_value = 'cancel'
-            self.window.toggle()
-        self.assertFalse(factory.call_args.kwargs['can_resize'])
-        self.assertFalse(self.window.armed)
 
     def test_oversized_profile_cannot_be_silently_clamped_by_resize_fields(self):
         dialog = SizeMismatchDialog((20000, 10000), (1920, 960), self.window)
@@ -279,11 +260,11 @@ class StartChecks(unittest.TestCase):
         self.assertIs(w.profile, before)
         self.assertEqual(w.target, 123)
 
-    def test_dropdown_refresh_preserves_explicit_fullscreen_and_other_app(self):
+    def test_dropdown_refresh_preserves_unselected_and_other_app(self):
         w = self.window
         self.identity.side_effect = lambda hwnd: GAME if hwnd == 123 else OTHER
         with patch.object(w.native, 'windows', return_value=[(123,'Game'),(456,'Other')]):
-            for target in (None, 0, 456):
+            for target in (None, 456):
                 w.target = target
                 w.refresh_windows()
                 self.assertEqual(w.target, target)
@@ -552,20 +533,6 @@ class StartChecks(unittest.TestCase):
                     self.assertEqual(saved.resolution, (1280,720))
                     self.assertEqual((saved.rows[0].x, saved.rows[0].y), (640,360))
 
-    def test_display_mismatch_routes_to_file_conversion_without_starting(self):
-        w = self.window
-        w.target = 0
-        w.profile.target_program = {}
-        w.native.display_id = 'display-test'
-        self.size.return_value = (1920,1080)
-        before = w.profile.export()
-        with patch('app.SizeMismatchDialog') as prompt, patch.object(w, 'convert_dialog') as convert:
-            prompt.return_value.choice.return_value = 'convert'
-            w.toggle()
-        convert.assert_called_once()
-        self.assertFalse(w.armed)
-        self.assertIsNone(w.session.plan)
-        self.assertEqual(w.profile.export(), before)
 
     def test_cancel_and_hook_failure_do_not_publish_prepared_plan(self):
         w = self.window
@@ -626,30 +593,14 @@ class StartChecks(unittest.TestCase):
         self.assertIsNone(w.session.plan)
         self.assertIn('프로필', w.statusBar().currentMessage())
 
-    def test_display_change_during_prompt_does_not_convert_new_selection(self):
-        w = self.window
-        w.target = 0
-        w.profile.target_program = {}
-        w.native.display_id = 'first-display'
-        self.size.return_value = (1920,1080)
-        with patch('app.SizeMismatchDialog') as prompt, patch.object(w, 'convert_dialog') as convert:
-            prompt.return_value.choice.return_value = 'convert'
-            prompt.return_value.exec.side_effect = lambda: setattr(w.native, 'display_id', 'second-display')
-            w.toggle()
-        convert.assert_not_called()
-        self.assertFalse(w.armed)
-        self.assertIsNone(w.session.plan)
-        self.assertIn('디스플레이', w.statusBar().currentMessage())
 
     def test_different_ratio_warns_and_keeps_conversion_available(self):
-        for app_selected in (True,False):
-            with self.subTest(app_selected=app_selected):
-                dialog = SizeMismatchDialog((1280,720),(1280,960),self.window,can_resize=app_selected)
-                self.assertTrue(dialog.convert_button.isEnabled())
-                self.assertEqual(dialog.resize_button.isEnabled(),app_selected)
-                self.assertIn('16:9',dialog.informativeText())
-                self.assertIn('4:3',dialog.informativeText())
-                dialog.deleteLater()
+        dialog = SizeMismatchDialog((1280,720),(1280,960),self.window)
+        self.assertTrue(dialog.convert_button.isEnabled())
+        self.assertTrue(dialog.resize_button.isEnabled())
+        self.assertIn('16:9',dialog.informativeText())
+        self.assertIn('4:3',dialog.informativeText())
+        dialog.deleteLater()
 
     def test_different_ratio_starts_after_auto_choice_with_original_coordinates_preserved(self):
         w = self.window
@@ -722,7 +673,7 @@ class StartChecks(unittest.TestCase):
         self.assertIsNone(w.session.plan)
         self.assertFalse(w.settings.auto_convert_on_start)
 
-    def test_auto_preference_keeps_app_warning_and_display_conversion(self):
+    def test_auto_preference_keeps_app_warning_(self):
         w = self.window
         w.settings.auto_convert_on_start = True
         self.size.return_value = (1920,1080)
@@ -732,14 +683,6 @@ class StartChecks(unittest.TestCase):
             w.toggle()
         app_prompt.assert_called_once()
         size_prompt.assert_not_called()
-        self.assertFalse(w.armed)
-        w.target = 0
-        w.profile.target_program = {}
-        w.native.display_id = 'test-display'
-        with patch('app.SizeMismatchDialog') as prompt:
-            prompt.return_value.choice.return_value = 'cancel'
-            w.toggle()
-        prompt.assert_called_once()
         self.assertFalse(w.armed)
 
     def test_automatic_ratio_warning_goes_to_log_and_resize_still_stops(self):
@@ -760,14 +703,10 @@ class StartChecks(unittest.TestCase):
         self.assertFalse(Settings.read({}).auto_convert_on_start)
         with self.assertRaises(ValueError):
             Settings.read({'auto_convert_on_start':'true'})
-        for selected in (True,False):
-            dialog = SizeMismatchDialog((1280,720),(1920,1080),self.window,can_resize=selected)
-            if selected:
-                self.assertEqual(dialog.skip_warning.text(),'다음부터 묻지 않기')
-                self.assertFalse(dialog.skip_warning.isChecked())
-            else:
-                self.assertIsNone(dialog.skip_warning)
-            dialog.deleteLater()
+        dialog = SizeMismatchDialog((1280,720),(1920,1080),self.window)
+        self.assertEqual(dialog.skip_warning.text(),'다음부터 묻지 않기')
+        self.assertFalse(dialog.skip_warning.isChecked())
+        dialog.deleteLater()
         w = self.window
         settings = SettingsDialog(Settings(auto_convert_on_start=True),w)
         self.assertTrue(settings.checks['auto_convert_on_start'].isChecked())
@@ -802,7 +741,6 @@ class StartChecks(unittest.TestCase):
             editor.capture_screen_point(1200,800)
         self.assertEqual(editor.editor.toPlainText(),'click 640,360')
         self.assertEqual(editor.capture_resolution,(1280,720))
-        self.assertEqual(editor.capture_size,(1920,1080))
         editor.save()
         self.assertIsNone(w.script_editor)
         w.flush_pending_saves()
@@ -825,11 +763,10 @@ class StartChecks(unittest.TestCase):
             expected = scaled_point(point,size,(1280,720))
             self.assertEqual(editor.editor.toPlainText(),'%d,%d' % expected)
             self.assertEqual(editor.capture_resolution,(1280,720))
-            self.assertEqual(editor.capture_size,size)
         self.assertIn('경고',editor.validation.text())
         self.assertFalse(editor.validation.property('error'))
 
-    def test_script_capture_rejects_actual_size_change_before_save(self):
+    def test_script_reverse_capture_can_save_after_actual_size_change(self):
         w = self.window
         row = w.profile.rows[0]
         row.action_mode = 'script'
@@ -841,9 +778,12 @@ class StartChecks(unittest.TestCase):
         editor.editor.setPlainText('click 640,360')
         self.size.return_value = (1600,900)
         editor.save()
-        self.assertIs(w.script_editor,editor)
-        self.assertIn('크기가 변경',editor.validation.text())
-        self.assertEqual(row.script,'')
+        self.assertIsNone(w.script_editor)
+        self.assertEqual(row.script,'click 640,360')
+        w.flush_pending_saves()
+        saved = Profile.read(read_json(w.path))
+        self.assertEqual(saved.rows[0].script,'click 640,360')
+        self.assertEqual(saved.resolution,(1280,720))
         self.assertEqual(w.profile.resolution,(1280,720))
 
     def test_script_capture_rejects_changed_profile_basis_and_unknown_nonempty_basis(self):
@@ -899,15 +839,6 @@ class StartChecks(unittest.TestCase):
             self.assertEqual(w.profile.target_program, GAME)
             self.assertIn('앱을 선택', w.statusBar().currentMessage())
 
-    def test_explicit_fullscreen_does_not_auto_select_profile_app(self):
-        w = self.window
-        w.target = 0
-        with patch.object(w.native, 'windows') as windows, patch('app.AppMismatchDialog') as prompt:
-            prompt.return_value.choice.return_value = 'cancel'
-            w.toggle()
-        windows.assert_not_called()
-        self.assertEqual(w.target, 0)
-        self.assertFalse(w.armed)
 
     def test_new_and_copied_profiles_keep_original_file_and_stay_stopped(self):
         w = self.window
