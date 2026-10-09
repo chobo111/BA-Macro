@@ -3,7 +3,7 @@ import ctypes as C
 from ctypes import wintypes as W
 import time
 import threading
-from keyboard_hook import PhysicalHook, PROC, U
+from keyboard_hook import PhysicalHook, U
 from mouse_hook import MouseEvent
 
 PT_TOUCH = 2
@@ -75,7 +75,6 @@ class TouchPromotionFilter(PhysicalHook):
             self.retire_timer.start()
 
     def run(self):
-        @PROC
         def callback(code, message, data):
             if code >= 0:
                 event = C.cast(data, C.POINTER(MouseEvent)).contents
@@ -115,6 +114,10 @@ class TouchDevice:
         if not self.handle:
             raise OSError('터치 입력 장치가 닫혔습니다.')
         if self.promotion_filter:
+            if self.promotion_filter.error is not None:
+                error = self.promotion_filter.error
+                self.close()
+                raise OSError(f'터치 입력 감시 실패: {error}') from error
             self.promotion_filter.expect(position)
         packet = PointerTypeInfo(type=PT_TOUCH)
         pointer = packet.info.touchInfo.pointerInfo

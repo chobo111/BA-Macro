@@ -2,7 +2,7 @@
 import ctypes as C
 from ctypes import wintypes as W
 import os
-from keyboard_hook import PhysicalHook, PROC, U
+from keyboard_hook import PhysicalHook, U
 
 class MouseEvent(C.Structure):
     _fields_ = [('point', W.POINT), ('data', W.DWORD), ('flags', W.DWORD),
@@ -12,13 +12,12 @@ U.WindowFromPoint.argtypes, U.WindowFromPoint.restype = [W.POINT], W.HWND
 U.GetWindowThreadProcessId.argtypes, U.GetWindowThreadProcessId.restype = [W.HWND, C.POINTER(W.DWORD)], W.DWORD
 
 class CoordinateHook(PhysicalHook):
-    def __init__(self, handler, can_capture=lambda: True):
-        super().__init__(handler)
+    def __init__(self, handler, can_capture=lambda: True, on_error=None):
+        super().__init__(handler, on_error)
         self.can_capture = can_capture
 
     def run(self):
         suppressed = False
-        @PROC
         def callback(code, message, data):
             nonlocal suppressed
             if code >= 0 and message in (0x204, 0x205):

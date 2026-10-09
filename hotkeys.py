@@ -84,8 +84,9 @@ class Binding:
 
 
 class Hotkeys:
-    def __init__(self, dispatch, eligible, emergency_stop):
+    def __init__(self, dispatch, eligible, emergency_stop, on_error=None):
         self.dispatch, self.eligible, self.emergency_stop = dispatch, eligible, emergency_stop
+        self.on_error = on_error
         self.lock = threading.RLock()
         self.bindings = []
         self.pressed = {}
@@ -143,7 +144,22 @@ class Hotkeys:
     def start(self):
         if self.unhook is None:
             from keyboard_hook import PhysicalHook
-            self.unhook = PhysicalHook(self.handle).start()
+            hook = PhysicalHook(self.handle, lambda error: self._failed(hook, error))
+            # Keep ownership before start() can raise or the hook can report failure.
+            self.unhook = hook.close
+            try:
+                hook.start()
+            except Exception:
+                self.close()
+                raise
+
+    def _failed(self, hook, error):
+        if self.unhook != hook.close:
+            return
+        self.close()
+        self.emergency_stop()
+        if self.on_error is not None:
+            self.on_error(f'단축키 입력 감시 실패: {error}')
 
     def close(self):
         if self.unhook:

@@ -2311,3 +2311,104 @@ class UiTests(unittest.TestCase):
         self.assertIn('curve X,Y mouse', editor.editor.toPlainText())
         self.assertNotIn('sleep 123', editor.editor.toPlainText())
         w.finish_script_editor()
+
+    def test_system_theme_signal_refreshes_open_editor_without_losing_draft(self):
+        from theme import DARK, LIGHT
+        w = self.window
+        hints = QApplication.styleHints()
+        w.settings.theme = 'System'
+        with patch.object(hints, 'colorScheme', return_value=Qt.ColorScheme.Light):
+            w.apply_theme()
+        self.assertIs(w.theme_colors, LIGHT)
+        w.edit_script(w.profile.rows[0].id)
+        editor = w.script_editor
+        draft = 'CLICK 10,20 // 좌표 설명 😀'
+        editor.editor.setPlainText(draft)
+        editor.editor.document().firstBlock().layout().formats()
+        position = editor.editor.textCursor().position()
+        w.armed = True
+        for scheme, colors in ((Qt.ColorScheme.Dark, DARK), (Qt.ColorScheme.Light, LIGHT)):
+            with self.subTest(scheme=scheme), patch.object(hints, 'colorScheme', return_value=scheme):
+                hints.colorSchemeChanged.emit(scheme)
+                self.qt.processEvents()
+                self.assertIs(w.theme_colors, colors)
+                self.assertIs(w.script_editor, editor)
+                self.assertEqual(editor.editor.toPlainText(), draft)
+                self.assertEqual(editor.editor.textCursor().position(), position)
+                self.assertTrue(w.armed)
+                self.assertEqual(editor.highlighter.command.foreground().color().name(), colors.command)
+                formats = editor.editor.document().firstBlock().layout().formats()
+                self.assertTrue(any(f.format.foreground().color().name() == colors.command for f in formats))
+                self.assertTrue(any(f.format.foreground().color().name() == colors.comment for f in formats))
+
+    def test_system_theme_signal_respects_explicit_theme_and_closed_window(self):
+        w = self.window
+        hints = QApplication.styleHints()
+        for theme in ('Light', 'Dark'):
+            w.settings.theme = theme
+            w.apply_theme()
+            with patch.object(w, 'apply_theme') as refresh:
+                hints.colorSchemeChanged.emit(Qt.ColorScheme.Dark)
+                hints.colorSchemeChanged.emit(Qt.ColorScheme.Light)
+                self.qt.processEvents()
+                refresh.assert_not_called()
+        w.settings.theme = 'System'
+        w.shutdown()
+        with patch.object(w, 'apply_theme') as refresh:
+            hints.colorSchemeChanged.emit(Qt.ColorScheme.Dark)
+            self.qt.processEvents()
+            refresh.assert_not_called()
+
+    def test_uppercase_and_mixed_case_commands_keep_command_and_comment_colors(self):
+        from PySide6.QtWidgets import QPlainTextEdit
+        from script_editor import Highlighter
+        from script_language import compile_script
+        from theme import DARK, LIGHT
+        editor = QPlainTextEdit()
+        try:
+            for colors in (DARK, LIGHT):
+                highlighter = Highlighter(editor.document(), colors)
+                for command in ('click', 'CLICK', 'ClIcK'):
+                    source = f'{command} 10,20 // 주석 😀'
+                    compile_script(source)
+                    editor.setPlainText(source)
+                    highlighter.rehighlight()
+                    self.qt.processEvents()
+                    formats = editor.document().firstBlock().layout().formats()
+                    commands = [f for f in formats if f.format.foreground().color().name() == colors.command]
+                    comments = [f for f in formats if f.format.foreground().color().name() == colors.comment]
+                    self.assertEqual([(f.start, f.length) for f in commands], [(0, 5)])
+                    start = len(source[:source.index('//')].encode('utf-16-le')) // 2
+                    length = len(source[source.index('//'):].encode('utf-16-le')) // 2
+                    self.assertEqual([(f.start, f.length) for f in comments], [(start, length)])
+                highlighter.setDocument(None)
+        finally:
+            editor.deleteLater()
+
+    def test_capture_hook_failure_is_reported_in_editor_log(self):
+        from unittest.mock import Mock
+        w = self.window
+        w.edit_script(w.profile.rows[0].id)
+        editor = w.script_editor
+        editor.coordinate_hook = hook = Mock()
+        editor.editor.setPlainText('sleep 123')
+        editor.capture_failed.emit(hook, 'Windows 오류 5')
+        self.qt.processEvents()
+        hook.close.assert_called_once_with()
+        self.assertIsNone(editor.coordinate_hook)
+        self.assertIn('좌표 입력 감시 실패', editor.validation.text())
+        self.assertIn('Windows 오류 5', editor.validation.text())
+        self.assertEqual(editor.editor.toPlainText(), 'sleep 123')
+
+    def test_stale_capture_hook_error_does_not_close_replacement(self):
+        from unittest.mock import Mock
+        w = self.window
+        w.edit_script(w.profile.rows[0].id)
+        editor = w.script_editor
+        first, second = Mock(), Mock()
+        editor.coordinate_hook = second
+        editor.capture_failed.emit(first, 'old error')
+        self.qt.processEvents()
+        second.close.assert_not_called()
+        self.assertIs(editor.coordinate_hook, second)
+        self.assertNotIn('old error', editor.validation.text())

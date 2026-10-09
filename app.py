@@ -87,7 +87,7 @@ class MainWindow(QMainWindow):
             self.load_error = str(error)
         self.bridge = Bridge()
         self.engine = Engine(self.native, lambda key: self.hooks.held(key), self.bridge.error.emit)
-        self.hooks = Hotkeys(self.bridge.action.emit, self.eligible, self.engine.stop)
+        self.hooks = Hotkeys(self.bridge.action.emit, self.eligible, self.engine.stop, self.bridge.error.emit)
         self.bridge.action.connect(self.dispatch, Qt.ConnectionType.QueuedConnection)
         self.bridge.error.connect(self.on_engine_error, Qt.ConnectionType.QueuedConnection)
         self.bridge.saved.connect(self.save_completed, Qt.ConnectionType.QueuedConnection)
@@ -96,6 +96,7 @@ class MainWindow(QMainWindow):
         self.build_menu()
         self.build_tray()
         self.apply_theme()
+        QApplication.styleHints().colorSchemeChanged.connect(self.system_theme_changed)
         self.rebuild()
         self.refresh_windows(restore_saved=True)
         try:
@@ -250,6 +251,10 @@ class MainWindow(QMainWindow):
         self.tray.activated.connect(lambda reason: self.restore() if reason == QSystemTrayIcon.ActivationReason.DoubleClick else None)
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray.show()
+
+    def system_theme_changed(self, scheme):
+        if not self.closing and self.settings.theme == "System":
+            self.apply_theme()
 
     def apply_theme(self):
         dark = self.settings.theme == "Dark" or (self.settings.theme == "System" and

@@ -368,3 +368,22 @@ class TouchTests(unittest.TestCase):
                         self.assertEqual(errors, [])
                 finally:
                     engine.shutdown()
+
+    def test_failed_promotion_filter_blocks_further_touch_and_releases_device(self):
+        from unittest.mock import Mock
+        from touch_input import TouchPromotionFilter
+        device = TouchDevice.__new__(TouchDevice)
+        device.handle = 123
+        device.destroy = Mock()
+        device.inject = Mock()
+        gate = TouchPromotionFilter()
+        gate.error = OSError('message queue unavailable')
+        device.promotion_filter = gate
+        with patch.object(gate, 'retire') as retire:
+            with self.assertRaisesRegex(OSError, '터치 입력 감시 실패'):
+                device.send((10,20), DOWN | INRANGE | INCONTACT)
+        device.inject.assert_not_called()
+        device.destroy.assert_called_once_with(123)
+        retire.assert_called_once_with()
+        self.assertIsNone(device.handle)
+        self.assertIsNone(device.promotion_filter)

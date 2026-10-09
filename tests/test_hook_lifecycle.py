@@ -74,3 +74,124 @@ class HookLifecycleTests(unittest.TestCase):
                     self.assertTrue(hook.ready.is_set())
                     self.assertIs(hook.error, failure)
                     api['UnhookWindowsHookEx'].assert_called_once_with(123)
+
+    def test_negative_message_result_reports_os_error_and_releases_handle(self):
+        for hook, kind in self.hooks():
+            with self.subTest(hook=type(hook).__name__):
+                stack, api = self.fake_os()
+                with stack, patch('keyboard_hook.C.get_last_error', return_value=5):
+                    api['SetWindowsHookExW'].return_value = 123
+                    api['GetMessageW'].side_effect = [1, -1]
+                    hook.run()
+                    self.assertIsInstance(hook.error, OSError)
+                    self.assertEqual(hook.error.winerror, 5)
+                    self.assertTrue(hook.ready.is_set())
+                    api['UnhookWindowsHookEx'].assert_called_once_with(123)
+
+    def test_timeout_cancels_late_registration_and_passes_input_through(self):
+        from threading import Event
+        for hook, kind in self.hooks():
+            with self.subTest(hook=type(hook).__name__):
+                stack, api = self.fake_os()
+                registering, resume = Event(), Event()
+                callbacks = []
+                join = hook.thread.join
+                def install(actual_kind, callback, module, thread):
+                    callbacks.append(callback)
+                    registering.set()
+                    if not resume.wait(2):
+                        raise RuntimeError('test registration did not resume')
+                    return 123
+                def timeout(seconds):
+                    self.assertTrue(registering.wait(1))
+                    return False
+                with stack, patch.object(U, 'PostThreadMessageW', return_value=True), \
+                        patch.object(hook.ready, 'wait', side_effect=timeout), \
+                        patch.object(hook.thread, 'join', side_effect=lambda timeout=None: join(0)):
+                    api['SetWindowsHookExW'].side_effect = install
+                    api['CallNextHookEx'].return_value = 7
+                    try:
+                        with self.assertRaisesRegex(RuntimeError, '시간이 초과'):
+                            hook.start()
+                        self.assertTrue(hook.stopping.is_set())
+                        # No event data is dereferenced after cancellation.
+                        self.assertEqual(callbacks[0](0, 0x100, 0), 7)
+                    finally:
+                        resume.set()
+                        join(1)
+                    self.assertFalse(hook.thread.is_alive())
+                    api['GetMessageW'].assert_not_called()
+                    api['UnhookWindowsHookEx'].assert_called_once_with(123)
+
+    def test_timeout_before_message_queue_prevents_registration(self):
+        from threading import Event
+        hook = PhysicalHook(lambda event: False)
+        stack, api = self.fake_os()
+        entering, resume = Event(), Event()
+        join = hook.thread.join
+        def thread_id():
+            entering.set()
+            if not resume.wait(2):
+                raise RuntimeError('test queue creation did not resume')
+            return 42
+        def timeout(seconds):
+            self.assertTrue(entering.wait(1))
+            return False
+        with stack, patch.object(K, 'GetCurrentThreadId', side_effect=thread_id), \
+                patch.object(U, 'PostThreadMessageW') as post, \
+                patch.object(hook.ready, 'wait', side_effect=timeout), \
+                patch.object(hook.thread, 'join', side_effect=lambda timeout=None: join(0)):
+            try:
+                with self.assertRaisesRegex(RuntimeError, '시간이 초과'):
+                    hook.start()
+                post.assert_not_called()
+            finally:
+                resume.set()
+                join(1)
+            self.assertFalse(hook.thread.is_alive())
+            api['SetWindowsHookExW'].assert_not_called()
+            api['GetMessageW'].assert_not_called()
+
+    def test_runtime_failure_notifies_after_release_and_can_close_on_hook_thread(self):
+        from threading import Event
+        for hook, kind in self.hooks():
+            with self.subTest(hook=type(hook).__name__):
+                stack, api = self.fake_os()
+                resume, reported = Event(), Event()
+                errors = []
+                def pump(*args):
+                    if not resume.wait(2):
+                        raise RuntimeError('test pump did not resume')
+                    return -1
+                def report(error):
+                    api['UnhookWindowsHookEx'].assert_called_once_with(123)
+                    hook.close()
+                    errors.append(error)
+                    reported.set()
+                hook.on_error = report
+                with stack, patch('keyboard_hook.C.get_last_error', return_value=5):
+                    api['SetWindowsHookExW'].return_value = 123
+                    api['GetMessageW'].side_effect = pump
+                    try:
+                        hook.start()
+                        resume.set()
+                        self.assertTrue(reported.wait(1))
+                    finally:
+                        resume.set()
+                        hook.close()
+                    self.assertFalse(hook.thread.is_alive())
+                    self.assertEqual(errors, [hook.error])
+                    self.assertEqual(hook.error.winerror, 5)
+
+    def test_closed_hook_cannot_start_or_register_again(self):
+        for hook, kind in self.hooks():
+            with self.subTest(hook=type(hook).__name__):
+                stack, api = self.fake_os()
+                with stack:
+                    hook.close()
+                    hook.close()
+                    with self.assertRaisesRegex(RuntimeError, '종료된'):
+                        hook.start()
+                    hook.run()
+                    api['SetWindowsHookExW'].assert_not_called()
+                    api['GetMessageW'].assert_not_called()

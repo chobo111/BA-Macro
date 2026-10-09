@@ -25,7 +25,7 @@ class Highlighter(QSyntaxHighlighter):
         self.rehighlight()
 
     def highlightBlock(self, text):
-        match = re.match(r'\s*([a-z_]+)', text)
+        match = re.match(r'\s*([a-z_]+)', text, re.IGNORECASE)
         if match:
             self.setFormat(match.start(1), len(match.group(1)), self.command)
         comment_start = text.find('//')
@@ -38,6 +38,7 @@ class Highlighter(QSyntaxHighlighter):
 
 class ScriptEditor(QDialog):
     coordinate_clicked = Signal(int, int)
+    capture_failed = Signal(object, str)
 
     def __init__(self, source, native, target, parent):
         super().__init__(parent)
@@ -49,6 +50,7 @@ class ScriptEditor(QDialog):
         self.capture_enabled = Event()
         self.capture_blockers = set()
         self.coordinate_clicked.connect(self.capture_screen_point, Qt.ConnectionType.QueuedConnection)
+        self.capture_failed.connect(self.on_capture_failed, Qt.ConnectionType.QueuedConnection)
         self.capture_resolution = None
         self.capture_size = None
         self.capture_profile = parent.profile
@@ -130,13 +132,20 @@ class ScriptEditor(QDialog):
         self.sync_to_parent()
         self.update_capture_enabled()
         if self.target is not None and self.parentWidget().hook_enabled and self.coordinate_hook is None:
-            hook = CoordinateHook(self.coordinate_clicked.emit, self.capture_enabled.is_set)
+            hook = CoordinateHook(self.coordinate_clicked.emit, self.capture_enabled.is_set,
+                                  lambda error: self.capture_failed.emit(hook, str(error)))
             try:
                 hook.start()
                 self.coordinate_hook = hook
             except Exception as error:
                 hook.close()
                 self.log(f'좌표 입력 초기화 실패: {error}', error=True)
+
+    def on_capture_failed(self, hook, text):
+        if self.isVisible() and self.coordinate_hook is hook:
+            hook.close()
+            self.coordinate_hook = None
+            self.log(f'좌표 입력 감시 실패: {text}', error=True)
 
     def hideEvent(self, event):
         self.capture_enabled.clear()

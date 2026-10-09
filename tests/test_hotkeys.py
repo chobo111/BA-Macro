@@ -451,3 +451,46 @@ class HotkeyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.hooks.configure([('plus', 'move', 'plus')])
         self.assertEqual(self.hooks.bindings, previous)
+
+    def test_failed_start_keeps_ownership_until_cleanup(self):
+        from unittest.mock import Mock, patch
+        hook = Mock()
+        def fail():
+            self.assertEqual(self.hooks.unhook, hook.close)
+            raise RuntimeError('startup timed out')
+        hook.start.side_effect = fail
+        with patch('keyboard_hook.PhysicalHook', return_value=hook):
+            with self.assertRaisesRegex(RuntimeError, 'timed out'):
+                self.hooks.start()
+        hook.close.assert_called_once_with()
+        self.assertIsNone(self.hooks.unhook)
+
+    def test_runtime_hook_failure_stops_input_and_reports_error(self):
+        from unittest.mock import Mock, patch
+        errors = []
+        self.hooks.on_error = errors.append
+        self.event('q')
+        hook = Mock()
+        with patch('keyboard_hook.PhysicalHook', return_value=hook) as factory:
+            self.hooks.start()
+            callback = factory.call_args.args[1]
+            callback(OSError('queue unavailable'))
+        self.assertIsNone(self.hooks.unhook)
+        self.assertFalse(self.hooks.held('q'))
+        self.assertEqual(self.stops, [True])
+        self.assertIn('단축키 입력 감시 실패', errors[0])
+        hook.close.assert_called_once_with()
+
+    def test_old_hook_error_does_not_stop_replacement(self):
+        from unittest.mock import Mock, patch
+        first, second = Mock(), Mock()
+        with patch('keyboard_hook.PhysicalHook', side_effect=[first, second]) as factory:
+            self.hooks.start()
+            old_callback = factory.call_args.args[1]
+            self.hooks.close()
+            self.hooks.start()
+            old_callback(OSError('old error'))
+            self.assertEqual(self.hooks.unhook, second.close)
+            second.close.assert_not_called()
+            self.assertEqual(self.stops, [])
+            self.hooks.close()
