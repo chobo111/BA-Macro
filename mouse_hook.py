@@ -2,7 +2,7 @@
 import ctypes as C
 from ctypes import wintypes as W
 import os
-from keyboard_hook import PhysicalHook, PROC, U, K
+from keyboard_hook import PhysicalHook, PROC, U
 
 class MouseEvent(C.Structure):
     _fields_ = [('point', W.POINT), ('data', W.DWORD), ('flags', W.DWORD),
@@ -17,7 +17,6 @@ class CoordinateHook(PhysicalHook):
         self.can_capture = can_capture
 
     def run(self):
-        handle = None
         suppressed = False
         @PROC
         def callback(code, message, data):
@@ -39,19 +38,4 @@ class CoordinateHook(PhysicalHook):
                             except Exception:
                                 pass
             return U.CallNextHookEx(None, code, message, data)
-        try:
-            self.thread_id = K.GetCurrentThreadId()
-            msg = W.MSG()
-            U.PeekMessageW(C.byref(msg), None, 0, 0, 0)
-            handle = U.SetWindowsHookExW(14, callback, K.GetModuleHandleW(None), 0)
-            if not handle:
-                raise C.WinError(C.get_last_error())
-            self.ready.set()
-            while U.GetMessageW(C.byref(msg), None, 0, 0) > 0:
-                pass
-        except Exception as error:
-            self.error = error
-        finally:
-            self.ready.set()
-            if handle:
-                U.UnhookWindowsHookEx(handle)
+        self._run_hook(14, callback)

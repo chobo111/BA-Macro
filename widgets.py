@@ -173,7 +173,6 @@ class ClickToCaptureEdit(QKeySequenceEdit):
 
     def __init__(self, sequence, parent=None):
         super().__init__(sequence, parent)
-        self.waiting = False
         self.pending_modifier = None
         self.setMaximumSequenceLength(1)
         self.setFinishingKeyCombinations([])
@@ -195,7 +194,6 @@ class ClickToCaptureEdit(QKeySequenceEdit):
             return True
         if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
             self.pending_modifier = None
-            self.waiting = True
             if self.field is not None:
                 self.field.setText('입력 대기중...')
         elif event.type() == QEvent.Type.FocusOut:
@@ -229,7 +227,6 @@ class ClickToCaptureEdit(QKeySequenceEdit):
         self.finish_waiting()
 
     def finish_waiting(self, *_):
-        self.waiting = False
         if self.field is not None:
             # Keep Qt's key identity (standalone Control) intact; normalize display only.
             label = self.keySequence().toString(QKeySequence.SequenceFormat.NativeText)

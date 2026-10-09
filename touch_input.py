@@ -3,7 +3,7 @@ import ctypes as C
 from ctypes import wintypes as W
 import time
 import threading
-from keyboard_hook import PhysicalHook, PROC, U, K
+from keyboard_hook import PhysicalHook, PROC, U
 from mouse_hook import MouseEvent
 
 PT_TOUCH = 2
@@ -75,7 +75,6 @@ class TouchPromotionFilter(PhysicalHook):
             self.retire_timer.start()
 
     def run(self):
-        handle = None
         @PROC
         def callback(code, message, data):
             if code >= 0:
@@ -83,22 +82,7 @@ class TouchPromotionFilter(PhysicalHook):
                 if self.matches(event):
                     return 1
             return U.CallNextHookEx(None, code, message, data)
-        try:
-            self.thread_id = K.GetCurrentThreadId()
-            msg = W.MSG()
-            U.PeekMessageW(C.byref(msg), None, 0, 0, 0)
-            handle = U.SetWindowsHookExW(14, callback, K.GetModuleHandleW(None), 0)
-            if not handle:
-                raise C.WinError(C.get_last_error())
-            self.ready.set()
-            while U.GetMessageW(C.byref(msg), None, 0, 0) > 0:
-                pass
-        except Exception as error:
-            self.error = error
-        finally:
-            self.ready.set()
-            if handle:
-                U.UnhookWindowsHookEx(handle)
+        self._run_hook(14, callback)
 
 
 class TouchDevice:

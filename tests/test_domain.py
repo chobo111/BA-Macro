@@ -83,22 +83,13 @@ class DomainTests(unittest.TestCase):
             with self.subTest(coords=coords), self.assertRaises(ValueError):
                 Profile.read({"version": 3, "macros": [{"coords": coords, "action_mode": "move_only"}]})
 
-    def test_conversion_is_transactional(self):
-        p = Profile([Row(x=100, y=200)])
-        p.convert((1000, 1000), (2000, 2000))
-        self.assertEqual((p.rows[0].x, p.rows[0].y), (200, 400))
-        before = p.export()
-        with self.assertRaises(ValueError):
-            p.convert((0, 1), (1, 1))
-        self.assertEqual(before, p.export())
-
     def test_unknown_mode_rejected(self):
         with self.assertRaises(ValueError):
             Profile.read({"version": 3, "macros": [{"coords": "0, 0", "action_mode": "unknown"}]})
 
     def test_removed_settings_names_are_rejected(self):
         for name in ('click_delay', 'click_duration', 'curve_duration', 'after_action_delay',
-                     'return_delay', 'auto_fire', 'show_realtime'):
+                     'return_delay', 'auto_fire', 'show_realtime', 'warn_app_mismatch'):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, name):
                 Settings.read({name: 10})
         from dataclasses import asdict

@@ -2,7 +2,7 @@ import ctypes as C
 import os
 import unittest
 from unittest.mock import patch
-from mouse_hook import CoordinateHook, MouseEvent, U, K, W
+from mouse_hook import CoordinateHook, MouseEvent, U, W
 
 class MouseHookTests(unittest.TestCase):
     def test_only_external_physical_right_click_is_captured(self):

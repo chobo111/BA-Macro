@@ -136,14 +136,6 @@ class Profile:
                             "coords": f"{r.x}, {r.y}", "memo": r.memo, "action_mode": r.action_mode,
                             "script": r.script} for r in self.rows]}
 
-    def convert(self, source, destination):
-        from conversion import plan_conversion
-        plan = plan_conversion(self, source, destination)
-        if plan.errors:
-            raise ValueError("\n".join(plan.errors))
-        self.rows = plan.profile.rows
-        self.resolution = plan.profile.resolution
-
 
 @dataclass
 class Settings:
@@ -157,7 +149,6 @@ class Settings:
     drag_segment_duration_ms: int = 10
     exclusive_hook: bool = True
     auto_pause: bool = True
-    warn_app_mismatch: bool = True
     auto_convert_on_start: bool = False
     theme: str = "Dark"
     last_profile: str = ""
@@ -178,7 +169,7 @@ class Settings:
         validate_hotkeys((obj.pause_hk, obj.capture_hk))
         for name in ("move_to_click_delay_ms", "click_hold_ms", "cursor_return_delay_ms", "drag_segment_duration_ms"):
             setattr(obj, name, bounded_int(data.get(name, getattr(obj, name)), 1 if name == "click_hold_ms" else 0, 99999, name))
-        for name in ("exclusive_hook", "auto_pause", "return_cursor", "resize_convert_profile", "warn_app_mismatch", "auto_convert_on_start"):
+        for name in ("exclusive_hook", "auto_pause", "return_cursor", "resize_convert_profile", "auto_convert_on_start"):
             value = data.get(name, getattr(obj, name))
             if not isinstance(value, bool):
                 raise ValueError(f"{name}: 참/거짓 값이 필요합니다.")

@@ -59,7 +59,7 @@ class StartChecks(unittest.TestCase):
         self.assertFalse(same_program(GAME, OTHER))
         self.assertFalse(same_program({'class': 'X', 'title': 'A'}, {'class': 'X', 'title': 'B'}))
 
-    def test_different_app_cancel_preserves_profile_and_preference(self):
+    def test_different_app_cancel_preserves_profile(self):
         self.identity.return_value = OTHER
         with patch('app.AppMismatchDialog') as factory:
             dialog = factory.return_value
@@ -67,7 +67,6 @@ class StartChecks(unittest.TestCase):
             self.window.toggle()
         self.assertFalse(self.window.armed)
         self.assertEqual(self.window.profile.target_program, GAME)
-        self.assertTrue(self.window.settings.warn_app_mismatch)
 
     def test_current_profile_change_saves_identity_and_preserves_actions(self):
         w = self.window
@@ -103,10 +102,9 @@ class StartChecks(unittest.TestCase):
         self.assertEqual(w.path, old_path)
         self.assertEqual(w.path.read_bytes(), old_bytes)
 
-    def test_old_warning_opt_out_cannot_skip_profile_decision_or_size_check(self):
+    def test_different_app_and_size_require_both_decisions(self):
         self.identity.return_value = OTHER
         self.size.return_value = (1920,1080)
-        self.window.settings.warn_app_mismatch = False
         with patch('app.AppMismatchDialog') as app, patch('app.SizeMismatchDialog') as size:
             app.return_value.choice.return_value = 'change'
             size.return_value.choice.return_value = 'cancel'
@@ -225,16 +223,11 @@ class StartChecks(unittest.TestCase):
             self.assertEqual(dialog.choice(), 'auto' if can_resize else 'convert')
             dialog.deleteLater()
 
-    def test_warning_preference_validation_and_settings_restore(self):
+    def test_settings_dialog_roundtrip_preserves_existing_values(self):
         from widgets import SettingsDialog
-        self.assertTrue(Settings.read({}).warn_app_mismatch)
-        with self.assertRaises(ValueError):
-            Settings.read({'warn_app_mismatch': 'false'})
-        settings = Settings(warn_app_mismatch=False)
-        self.assertEqual(Settings.read(asdict(settings)), settings)
+        settings = Settings(auto_pause=False, click_hold_ms=7, theme='Light')
         dialog = SettingsDialog(settings, self.window)
-        self.assertNotIn('warn_app_mismatch', dialog.checks)
-        self.assertFalse(dialog.value().warn_app_mismatch)
+        self.assertEqual(dialog.value(), settings)
         dialog.deleteLater()
 
     def test_app_replaced_during_confirmation_cannot_start_under_old_approval(self):
@@ -313,7 +306,6 @@ class StartChecks(unittest.TestCase):
     def test_coordinate_capture_confirms_and_saves_app_and_point_together(self):
         w = self.window
         self.identity.return_value = OTHER
-        w.settings.warn_app_mismatch = False
         with patch('app.CoordinateAppDialog') as prompt, \
              patch.object(w.native, 'cursor', return_value=(700,600)), \
              patch.object(w.native, 'bounds', return_value=(0,0,1280,720)):

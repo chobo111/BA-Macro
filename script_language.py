@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from functools import lru_cache
 import re
+from coordinate_transform import COORD_COMMANDS
 
 COORD_LIMIT = 99999
 
@@ -106,7 +107,7 @@ def _compile_cached(source):
             parent.append(Instruction('loop', (count,), start, tuple(current)))
             current = parent
             continue
-        if command in ('click', 'press', 'release', 'switch', 'curve', 'move'):
+        if command in COORD_COMMANDS:
             args = points(arg.lower(), line_no)
             if command in ('press', 'release', 'switch', 'move') and len(args) != 1:
                 raise ScriptError(line_no, '이 명령에는 좌표 하나만 입력하세요.')
@@ -195,7 +196,7 @@ class ScriptRuntime:
             self.steps += 1
             name, args = instruction.name, instruction.args
             try:
-                if (name in ('move', 'click', 'press', 'release', 'switch', 'curve')
+                if (name in COORD_COMMANDS
                         and 'mouse' in args):
                     # Sample once per instruction, including each loop iteration.
                     # Keep all points of a single curve stable during its drag.

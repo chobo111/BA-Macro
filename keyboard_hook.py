@@ -65,13 +65,12 @@ class PhysicalHook:
     def start(self):
         self.thread.start()
         if not self.ready.wait(5):
-            raise RuntimeError('키보드 훅 초기화 시간이 초과됐습니다.')
+            raise RuntimeError('입력 훅 초기화 시간이 초과됐습니다.')
         if self.error:
             raise self.error
         return self.close
 
     def run(self):
-        handle = None
         @PROC
         def callback(code, message, data):
             if code >= 0 and message in (0x100, 0x101, 0x104, 0x105):
@@ -85,11 +84,16 @@ class PhysicalHook:
                     except Exception:
                         pass
             return U.CallNextHookEx(None, code, message, data)
+        self._run_hook(13, callback)
+
+    def _run_hook(self, kind, callback):
+        """Own registration, message queue, and cleanup for every input hook."""
+        handle = None
         try:
             self.thread_id = K.GetCurrentThreadId()
             msg = W.MSG()
             U.PeekMessageW(C.byref(msg), None, 0, 0, 0)
-            handle = U.SetWindowsHookExW(13, callback, K.GetModuleHandleW(None), 0)
+            handle = U.SetWindowsHookExW(kind, callback, K.GetModuleHandleW(None), 0)
             if not handle:
                 raise C.WinError(C.get_last_error())
             self.ready.set()

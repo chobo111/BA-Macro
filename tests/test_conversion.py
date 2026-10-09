@@ -4,6 +4,18 @@ from conversion import plan_conversion
 
 
 class ConversionTests(unittest.TestCase):
+    def test_success_and_invalid_size_preserve_original_profile(self):
+        profile = Profile([Row(x=100, y=200)], (1000,1000))
+        before = profile.export()
+        plan = plan_conversion(profile, (1000,1000), (2000,2000))
+        self.assertFalse(plan.errors)
+        self.assertEqual((plan.profile.rows[0].x, plan.profile.rows[0].y), (200,400))
+        self.assertEqual(plan.profile.resolution, (2000,2000))
+        self.assertEqual(profile.export(), before)
+        with self.assertRaises(ValueError):
+            plan_conversion(profile, (0,1), (1,1))
+        self.assertEqual(profile.export(), before)
+
     def test_script_preserves_syntax_comments_and_non_coordinate_values(self):
         source = ('loop 2\r\n  curve_first_time 5\r\ncurve_last_time 5\r\n'
                   '  CuRvE 100 , 200 mouse 300,400 // keep 100,200\r\n'
@@ -25,8 +37,9 @@ class ConversionTests(unittest.TestCase):
     def test_errors_do_not_partially_mutate_profile(self):
         profile = Profile([Row(x=10,y=20),Row(action_mode='script',script='click 1000,20')],(1000,1000))
         original = profile.export()
-        with self.assertRaisesRegex(ValueError, '범위 밖'):
-            profile.convert((1000,1000),(500,500))
+        plan = plan_conversion(profile, (1000,1000), (500,500))
+        self.assertTrue(plan.errors)
+        self.assertIn('범위 밖', '\n'.join(plan.errors))
         self.assertEqual(original, profile.export())
         profile.rows[1].script = 'curve X,Y mouse'
         self.assertTrue(plan_conversion(profile,(1000,1000),(500,500)).errors)
@@ -81,5 +94,3 @@ class ConversionTests(unittest.TestCase):
         self.assertFalse(plan.errors)
         self.assertEqual(plan.profile.resolution, (1280,960))
         self.assertEqual(profile.export(), before)
-        profile.convert((1920,1080),(1280,960))
-        self.assertEqual(profile.resolution, (1280,960))
