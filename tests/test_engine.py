@@ -31,6 +31,7 @@ class FakeWindows:
     def cursor(self, hwnd=None): return self.position
     def cursor_screen(self): return self.position
     def screen(self, hwnd, x, y): return x, y
+    def point_belongs_to(self, hwnd, x, y): return True
 
     def move(self, x, y):
         self.position = (x, y)
@@ -145,9 +146,9 @@ class EngineTests(unittest.TestCase):
 
     def test_disabled_cursor_return_skips_restore_and_return_wait(self):
         from unittest.mock import patch
-        with patch.object(self.engine, 'wait') as wait, patch.object(self.native, 'cursor_screen') as cursor:
+        with patch.object(self.engine, 'wait') as wait, patch.object(self.native, 'cursor_screen', wraps=self.native.cursor_screen) as cursor:
             self.engine.execute(replace(self.command, return_cursor=False, cursor_return_delay_ms=5000))
-            cursor.assert_not_called()
+            cursor.assert_called_once()  # Read only to hit-test the click, not to restore it.
         self.assertEqual([call.args[0] for call in wait.call_args_list], [0, 1])
         self.assertEqual(self.native.events, [("move", 30, 40), ("button", True), ("button", False)])
         self.assertEqual(self.native.position, (30, 40))
@@ -216,3 +217,31 @@ class EngineTests(unittest.TestCase):
             self.wait_idle()
         self.assertEqual(self.errors, ['앱을 선택하세요.'] * 3)
         self.assertEqual(self.native.events, [])
+
+    def test_covered_coordinate_never_clicks_and_restores_cursor(self):
+        from unittest.mock import patch
+        with patch.object(self.native,'point_belongs_to',return_value=False) as hit:
+            self.engine.submit(self.command)
+            self.wait_idle()
+        hit.assert_called_once_with(1,30,40)
+        self.assertEqual(self.native.events,[('move',30,40),('move',200,300)])
+        self.assertEqual(len(self.errors),1)
+        self.assertIn('가려졌습니다',self.errors[0])
+
+    def test_hit_test_uses_actual_cursor_after_click_delay(self):
+        from unittest.mock import patch
+        def moved_during_delay(milliseconds, command):
+            self.native.position=(900,500)
+        with patch.object(self.engine,'wait',side_effect=moved_during_delay), patch.object(self.native,'point_belongs_to',return_value=False) as hit:
+            with self.assertRaisesRegex(ValueError,'가려졌습니다'):
+                self.engine.execute(self.command)
+        hit.assert_called_once_with(1,900,500)
+        self.assertFalse(any(event[0]=='button' for event in self.native.events))
+        self.assertEqual(self.native.position,(200,300))
+
+    def test_move_only_still_moves_without_click_hit_test(self):
+        from unittest.mock import patch
+        with patch.object(self.native,'point_belongs_to',return_value=False) as hit:
+            self.engine.execute(replace(self.command,mode='move_only'))
+        hit.assert_not_called()
+        self.assertEqual(self.native.events,[('move',30,40)])

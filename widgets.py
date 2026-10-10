@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 
 from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent, QSignalBlocker, QKeyCombination
@@ -9,7 +10,7 @@ from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolyg
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QHeaderView, QAbstractItemView,
     QSpinBox, QLineEdit, QDialog, QFormLayout, QDialogButtonBox, QCheckBox, QKeySequenceEdit,
-    QStyledItemDelegate, QStatusBar, QTabWidget, QWidget, QFrame,
+    QStyledItemDelegate, QStatusBar, QTabWidget, QWidget, QFrame, QApplication,
 )
 
 from domain import Settings
@@ -347,6 +348,8 @@ class SettingsDialog(QDialog):
 
 
 class ResizeDialog(QDialog):
+    resizing = Signal()
+
     PRESETS = {
         "16:9": [(640, 360), (960, 540), (1280, 720), (1600, 900), (1920, 1080), (2560, 1440), (3840, 2160)],
         "4:3": [(640, 480), (800, 600), (1024, 768), (1280, 960), (1600, 1200), (1920, 1440)],
@@ -359,6 +362,9 @@ class ResizeDialog(QDialog):
         self.current_size = tuple(size)
         self.request_resize, self.read_size = request_resize, read_size
         self.pending = False
+        self.resize_future = self.resize_executor = None
+        self.refresh_notice = ''
+        QApplication.instance().aboutToQuit.connect(self.wait_for_request)
         layout = QVBoxLayout(self)
         self.current_label = QLabel()
         layout.addWidget(self.current_label)
@@ -521,15 +527,41 @@ class ResizeDialog(QDialog):
         self.set_pending(True)
         self.show_message('실제 창 크기를 확인하고 있습니다…')
         try:
-            self.request_resize(self.requested_size)
+            self.resizing.emit()
+            self.refresh_notice = ''
+            self.resize_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='window-resize')
+            self.resize_future = self.resize_executor.submit(self.request_resize, self.requested_size)
             self.attempts = self.matches = 0
             self.verify_timer.start()
         except Exception as error:
+            self.release_executor()
             self.set_pending(False)
             self.show_message(str(error))
 
+    def release_executor(self):
+        if self.resize_executor is not None:
+            self.resize_executor.shutdown(wait=False)
+            self.resize_executor = None
+
+    def wait_for_request(self):
+        # Finish native cursor/focus cleanup before the application exits.
+        if self.resize_future is not None:
+            try:
+                self.resize_future.result()
+            except Exception:
+                pass  # verify_resize reports failures while the dialog is open.
+        self.release_executor()
+
     def verify_resize(self):
+        if not self.pending:
+            return
         try:
+            if self.resize_future is not None:
+                if not self.resize_future.done():
+                    return
+                completed, self.resize_future = self.resize_future, None
+                self.release_executor()
+                self.refresh_notice = completed.result() or ''
             actual = tuple(self.read_size())
             self.current_size = actual
             self.attempts += 1

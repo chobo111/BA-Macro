@@ -1181,6 +1181,7 @@ class UiTests(unittest.TestCase):
         dialog.presets.setCurrentIndex(dialog.PRESETS['16:9'].index((1280,720)))
         request.assert_not_called()
         dialog.apply()
+        dialog.wait_for_request()
         dialog.verify_timer.stop()
         request.assert_called_once_with((1280,720))
         dialog.verify_resize()
@@ -1196,6 +1197,7 @@ class UiTests(unittest.TestCase):
         dialog=ResizeDialog((1920,1080),self.window,request_resize=lambda size:None,read_size=lambda:(1920,1080))
         dialog.presets.setCurrentIndex(dialog.PRESETS['16:9'].index((1280,720)))
         dialog.apply()
+        dialog.wait_for_request()
         dialog.verify_timer.stop()
         for _ in range(10):
             dialog.verify_resize()
@@ -1206,6 +1208,7 @@ class UiTests(unittest.TestCase):
             raise OSError('대상 창이 닫혔습니다.')
         dialog.read_size=closed
         dialog.apply()
+        dialog.wait_for_request()
         dialog.verify_timer.stop()
         dialog.verify_resize()
         self.assertFalse(dialog.pending)
@@ -1224,6 +1227,7 @@ class UiTests(unittest.TestCase):
                 dialog.return_value.exec.return_value=QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
                 dialog.return_value.convert_profile.isChecked.return_value=convert
                 dialog.return_value.current_size=(1280,720)
+                dialog.return_value.refresh_notice=''
                 w.resize_dialog()
                 self.assertEqual(conversion.called,expected)
                 self.assertEqual(w.settings.resize_convert_profile,convert)
@@ -1859,6 +1863,7 @@ class UiTests(unittest.TestCase):
                                   read_size=lambda:(1920,1080))
             dialog.set_size((1920,1080))
             dialog.apply()
+            dialog.wait_for_request()
             self.assertTrue(dialog.pending)
             dialog.verify_resize()
             dialog.verify_resize()
@@ -1878,7 +1883,7 @@ class UiTests(unittest.TestCase):
             dialog.current_size=(1920,1080)
             dialog.convert_profile.isChecked.return_value=False
             def execute():
-                factory.call_args.kwargs['request_resize']((1920,1080))
+                dialog.refresh_notice = factory.call_args.kwargs['request_resize']((1920,1080))
                 return QDialog.DialogCode.Accepted
             dialog.exec.side_effect=execute
             w.resize_dialog()
@@ -2338,3 +2343,15 @@ class UiTests(unittest.TestCase):
         second.close.assert_not_called()
         self.assertIs(editor.coordinate_hook, second)
         self.assertNotIn('old error', editor.validation.text())
+
+    def test_ampersand_shortcut_is_displayed_literally_without_changing_binding(self):
+        w=self.window
+        row=w.profile.rows[0]
+        row.move_hk='shift+&'
+        w.validate_profile_shortcuts(w.profile)
+        w.rebuild(row.id)
+        self.assertEqual(w.table.cellWidget(0,0).text(),'SHIFT+&&')
+        self.assertEqual(row.move_hk,'shift+&')
+        with patch.object(w,'edit_key') as edit:
+            w.table.cellWidget(0,0).click()
+            edit.assert_called_once_with(row.id)

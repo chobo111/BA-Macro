@@ -1,7 +1,6 @@
 """Guard user-entered fixed coordinates while allowing captured baseline points."""
 import re
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QKeySequence, QTextDocument
 from PySide6.QtWidgets import QPlainTextEdit
 from coordinate_transform import COORD_COMMANDS
 
@@ -18,68 +17,88 @@ def coordinate_tokens(source):
 
 
 class CoordinateTextEdit(QPlainTextEdit):
+    """Validate actual user edits as one undoable transaction.
+
+    Initial text, templates and inverse-scaled captures use programmatic text
+    setters. User edits use these guarded entry points, including the standard
+    context menu. Undo/redo can only revisit already-approved transactions.
+    """
     def __init__(self, source, can_edit_coordinates):
         super().__init__(source)
         self.can_edit_coordinates = can_edit_coordinates
+        self.editing = False
 
-    def allow_replacement(self, replacement, *, start=None, end=None):
+    def guarded_edit(self, operation):
+        if self.editing:
+            operation()
+            return
+        self.editing = True
+        try:
+            before = self.toPlainText()
+            cursor = self.textCursor()
+            selection = cursor.anchor(), cursor.position()
+            cursor.beginEditBlock()
+            try:
+                operation()
+            finally:
+                cursor.endEditBlock()
+            after = self.toPlainText()
+            new = coordinate_tokens(after)
+            if not new or new == coordinate_tokens(before):
+                return
+            changed = self.textCursor()
+            changed_selection = changed.anchor(), changed.position()
+            # Restore the valid draft BEFORE a modal decision can save/convert it.
+            super().undo()
+            self.restore_selection(selection)
+            if self.can_edit_coordinates():
+                super().redo()
+                self.restore_selection(changed_selection)
+            else:
+                # A cancelled edit must not be recoverable via Ctrl+Y or the menu.
+                self.document().clearUndoRedoStacks(QTextDocument.Stacks.RedoStack)
+        finally:
+            self.editing = False
+
+    def restore_selection(self, selection):
         cursor = self.textCursor()
-        start = cursor.selectionStart() if start is None else start
-        end = cursor.selectionEnd() if end is None else end
-        source = self.toPlainText()
-        encoded = source.encode('utf-16-le')
-        proposed = (encoded[:start*2].decode('utf-16-le') + replacement
-                    + encoded[end*2:].decode('utf-16-le'))
-        new = coordinate_tokens(proposed)
-        if new and new != coordinate_tokens(source):
-            return self.can_edit_coordinates()
-        return True
+        cursor.setPosition(selection[0])
+        cursor.setPosition(selection[1], cursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
 
     def keyPressEvent(self, event):
-        cursor = self.textCursor()
-        start, end = cursor.selectionStart(), cursor.selectionEnd()
-        replacement = event.text()
-        if event.matches(QKeySequence.StandardKey.Cut):
-            replacement = ''
-        elif event.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
-            if start == end:
-                selection = self.textCursor()
-                operation = (selection.MoveOperation.PreviousCharacter if event.key() == Qt.Key.Key_Backspace
-                             else selection.MoveOperation.NextCharacter)
-                selection.movePosition(operation, selection.MoveMode.KeepAnchor)
-                start,end = selection.selectionStart(),selection.selectionEnd()
-            replacement = ''
-        elif event.key() in (Qt.Key.Key_Return,Qt.Key.Key_Enter):
-            replacement = '\n'
-        elif not replacement or any(ord(char) < 32 for char in replacement):
+        if event.matches(QKeySequence.StandardKey.Undo) or event.matches(QKeySequence.StandardKey.Redo):
             return super().keyPressEvent(event)
-        if not self.allow_replacement(replacement,start=start,end=end):
-            event.accept()
-            return
-        super().keyPressEvent(event)
+        self.guarded_edit(lambda: super(CoordinateTextEdit, self).keyPressEvent(event))
+
+    def cut(self):
+        self.guarded_edit(super().cut)
+
+    def delete_selection(self):
+        self.guarded_edit(lambda: self.textCursor().removeSelectedText())
+
+    def createStandardContextMenu(self, *args):
+        menu = super().createStandardContextMenu(*args)
+        callbacks = {'edit-cut': self.cut, 'edit-delete': self.delete_selection}
+        for action in menu.actions():
+            callback = callbacks.get(action.objectName())
+            if callback is not None:
+                action.triggered.disconnect()
+                action.triggered.connect(callback)
+        return menu
+
+    def contextMenuEvent(self, event):
+        menu = self.createStandardContextMenu(event.pos())
+        try:
+            menu.exec(event.globalPos())
+        finally:
+            menu.deleteLater()
 
     def insertFromMimeData(self, source):
-        if source.hasText() and not self.allow_replacement(source.text()):
-            return
-        super().insertFromMimeData(source)
+        self.guarded_edit(lambda: super(CoordinateTextEdit, self).insertFromMimeData(source))
 
     def inputMethodEvent(self, event):
-        commit = event.commitString()
-        if commit:
-            cursor = self.textCursor()
-            start,end = cursor.selectionStart(),cursor.selectionEnd()
-            if event.replacementLength():
-                start = cursor.position()+event.replacementStart()
-                end = start+event.replacementLength()
-            if not self.allow_replacement(commit,start=start,end=end):
-                event.accept()
-                return
-        super().inputMethodEvent(event)
+        self.guarded_edit(lambda: super(CoordinateTextEdit, self).inputMethodEvent(event))
 
     def dropEvent(self, event):
-        source = event.mimeData()
-        cursor = self.cursorForPosition(event.position().toPoint())
-        if source.hasText() and not self.allow_replacement(source.text(),start=cursor.position(),end=cursor.position()):
-            event.ignore()
-            return
-        super().dropEvent(event)
+        self.guarded_edit(lambda: super(CoordinateTextEdit, self).dropEvent(event))

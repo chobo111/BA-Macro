@@ -99,6 +99,9 @@ class Engine:
 
     def click(self, command):
         self.guard(command)
+        point = self.native.cursor_screen()
+        if not self.native.point_belongs_to(command.hwnd, *point):
+            raise ValueError('클릭 위치가 다른 창에 가려졌습니다. 대상 앱이 보이도록 창을 옮겨 주세요.')
         try:
             self.native.button(True)
             self.wait(command.click_hold_ms, command)

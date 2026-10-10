@@ -301,7 +301,7 @@ class MainWindow(QMainWindow):
             item = QTableWidgetItem(row.memo)
             item.setData(Qt.ItemDataRole.UserRole, row.id)
             self.table.setItem(i, 4, item)
-            button = self.button(row.move_hk.upper(), lambda checked=False, rid=row.id: self.edit_key(rid))
+            button = self.button(row.move_hk.upper().replace('&', '&&'), lambda checked=False, rid=row.id: self.edit_key(rid))
             button.setToolTip('단축키 지정')
             button.setAccessibleName('단축키 지정')
             self.table.setCellWidget(i, 0, button)
@@ -1146,15 +1146,14 @@ class MainWindow(QMainWindow):
                 if target != self.target or not self.native.exists(target):
                     raise OSError("대상 창이 닫혔거나 변경되었습니다.")
                 return self.native.size(target)
-            refresh_notice = ''
+            native = self.native
             def request_resize(size):
-                nonlocal refresh_notice
-                read_size()
-                self.stop()
-                refresh_notice = resize_window(self.native, target, *size)
+                # Worker callback: immutable target and native APIs only, no Qt state.
+                return resize_window(native, target, *size)
             with managed_dialog(ResizeDialog(
                     read_size(), self, convert_profile=False if profile_size else self.settings.resize_convert_profile,
                     request_resize=request_resize, read_size=read_size)) as dialog:
+                dialog.resizing.connect(self.stop)
                 if profile_size:
                     if not all(1 <= value <= 16384 for value in profile_size):
                         raise ValueError('창 크기는 1~16384px 범위여야 합니다. 프로필 좌표 변환을 사용하세요.')
@@ -1169,7 +1168,7 @@ class MainWindow(QMainWindow):
                 if accepted:
                     message = ('창 크기를 변경했습니다. 다시 시작을 눌러 주세요.' if profile_size else
                                '창 내부 크기 변경 완료: %d × %d' % dialog.current_size)
-                    self.statusBar().showMessage(message + (' · ' + refresh_notice if refresh_notice else ''))
+                    self.statusBar().showMessage(message + (' · ' + dialog.refresh_notice if dialog.refresh_notice else ''))
                     if convert:
                         self.convert_dialog(reason="창 크기가 바뀌었습니다. 저장 좌표도 새 해상도에 맞출 수 있습니다.")
         except Exception as error:

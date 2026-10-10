@@ -267,3 +267,83 @@ class CoordinateEditTests(unittest.TestCase):
         w.flush_pending_saves()
         self.assertEqual((w.profile.export(),w.path.read_bytes()),original)
         self.assertEqual(w.table.cellWidget(0,1).value(),300)
+
+    def test_context_cut_and_delete_cannot_change_mismatched_coordinates(self):
+        clipboard=QApplication.clipboard()
+        old_clipboard=clipboard.text()
+        try:
+            for action_name in ('edit-cut','edit-delete'):
+                with self.subTest(action=action_name):
+                    editor=self.editor('click 640,360')
+                    cursor=editor.editor.textCursor()
+                    cursor.setPosition(6)
+                    cursor.setPosition(7,cursor.MoveMode.KeepAnchor)
+                    editor.editor.setTextCursor(cursor)
+                    menu=editor.editor.createStandardContextMenu()
+                    with patch('app.ManualCoordinateDialog') as prompt:
+                        prompt.return_value.choice.return_value='cancel'
+                        next(action for action in menu.actions() if action.objectName()==action_name).trigger()
+                        prompt.assert_called_once()
+                        self.assertEqual(editor.editor.toPlainText(),'click 640,360')
+                        QTest.keyClick(editor.editor,Qt.Key.Key_Y,Qt.KeyboardModifier.ControlModifier)
+                        self.assertEqual(editor.editor.toPlainText(),'click 640,360')
+                    editor.save()
+                    self.w.flush_pending_saves()
+                    self.assertEqual(Profile.read(read_json(self.w.path)).rows[0].script,'click 640,360')
+                    menu.deleteLater()
+        finally:
+            clipboard.setText(old_clipboard)
+
+    def test_word_delete_cannot_uncomment_current_size_coordinates(self):
+        editor=self.editor('//click 960,540')
+        for key,position in ((Qt.Key.Key_Backspace,2),(Qt.Key.Key_Delete,0)):
+            with self.subTest(key=key),patch('app.ManualCoordinateDialog') as prompt:
+                cursor=editor.editor.textCursor();cursor.setPosition(position)
+                editor.editor.setTextCursor(cursor)
+                prompt.return_value.choice.return_value='cancel'
+                QTest.keyClick(editor.editor,key,Qt.KeyboardModifier.ControlModifier)
+                prompt.assert_called_once()
+                self.assertEqual(editor.editor.toPlainText(),'//click 960,540')
+
+    def test_deletion_only_input_method_checks_actual_edit(self):
+        editor=self.editor('//click 960,540')
+        cursor=editor.editor.textCursor();cursor.setPosition(2)
+        editor.editor.setTextCursor(cursor)
+        event=QInputMethodEvent();event.setCommitString('',-2,2)
+        with patch('app.ManualCoordinateDialog') as prompt:
+            prompt.return_value.choice.return_value='cancel'
+            QApplication.sendEvent(editor.editor,event)
+            prompt.assert_called_once()
+        self.assertEqual(editor.editor.toPlainText(),'//click 960,540')
+
+    def test_rejected_edit_preserves_previous_approved_undo_history(self):
+        self.size.return_value=(1280,720)
+        editor=self.editor('click ')
+        QTest.keyClicks(editor.editor,'640,360')
+        self.size.return_value=(1920,1080)
+        with patch('app.ManualCoordinateDialog') as prompt:
+            prompt.return_value.choice.return_value='cancel'
+            QTest.keyClick(editor.editor,Qt.Key.Key_9)
+            self.assertEqual(editor.editor.toPlainText(),'click 640,360')
+            QTest.keyClick(editor.editor,Qt.Key.Key_Y,Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(editor.editor.toPlainText(),'click 640,360')
+            QTest.keyClick(editor.editor,Qt.Key.Key_Z,Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(editor.editor.toPlainText(),'click 640,36')
+            QTest.keyClick(editor.editor,Qt.Key.Key_Y,Qt.KeyboardModifier.ControlModifier)
+            self.assertEqual(editor.editor.toPlainText(),'click 640,360')
+            prompt.assert_called_once()
+
+    def test_context_paste_and_non_bmp_text_preserve_original_on_cancel(self):
+        clipboard=QApplication.clipboard();old=clipboard.text()
+        try:
+            editor=self.editor('// 🐈 메모\nclick ')
+            clipboard.setText('960,540')
+            menu=editor.editor.createStandardContextMenu()
+            with patch('app.ManualCoordinateDialog') as prompt:
+                prompt.return_value.choice.return_value='cancel'
+                next(action for action in menu.actions() if action.objectName()=='edit-paste').trigger()
+                prompt.assert_called_once()
+            self.assertEqual(editor.editor.toPlainText(),'// 🐈 메모\nclick ')
+            menu.deleteLater()
+        finally:
+            clipboard.setText(old)
