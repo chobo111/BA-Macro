@@ -5,6 +5,37 @@ from domain import Profile, Row, Settings, atomic_json, read_json, hotkey
 
 
 class DomainTests(unittest.TestCase):
+    def test_coordinate_free_scripts_do_not_require_a_saved_basis(self):
+        for source in ('', '  \n', '// click 100,200', 'click mouse // 100,200',
+                       'sleep 5', 'curve_first_time 5\ncurve_last_time 5\ncurve mouse mouse',
+                       'loop 2\nclick mouse\nsleep 5\nloop_end',
+                       'mouse_press left\nrelease_actions\nmouse_release left'):
+            with self.subTest(source=source):
+                profile = Profile([Row(action_mode='script', script=source)])
+                self.assertFalse(profile.has_fixed_coordinates())
+
+    def test_fixed_script_coordinates_require_a_saved_basis_in_all_modes(self):
+        sources = [f'{command} 0,0' for command in ('click', 'move', 'press', 'release', 'switch')]
+        sources += ['curve mouse 0,0', 'CLICK\t-10, 20 // note',
+                    'loop 2\nloop 3\nclick 0,0\nloop_end\nloop_end',
+                    'click mouse\nrelease_actions\nrelease 0,0']
+        for mode in ('script', 'move_only', 'move_and_click'):
+            for source in sources:
+                with self.subTest(mode=mode, source=source):
+                    self.assertTrue(Profile([Row(action_mode=mode, script=source)]).has_fixed_coordinates())
+
+    def test_retained_table_coordinates_require_a_saved_basis(self):
+        self.assertFalse(Profile.default().has_fixed_coordinates())
+        for point in ((0, 1), (1, 0), (-1, -1)):
+            with self.subTest(point=point):
+                row = Row(x=point[0], y=point[1], action_mode='script', script='click mouse')
+                self.assertTrue(Profile([row]).has_fixed_coordinates())
+
+    def test_incomplete_coordinate_scripts_preserve_unknown_basis_protection(self):
+        for source in ('click 10,', 'curve mouse -4,', 'loop 2\nclick 0,0'):
+            with self.subTest(source=source):
+                self.assertTrue(Profile([Row(script=source)]).has_fixed_coordinates())
+
     def test_target_identity_accepts_only_filename(self):
         from domain import target_identity
         for exe in (r'C:\Games\1.0\Game.exe', 'C:/Games/Game.exe', 'C:Game.exe'):

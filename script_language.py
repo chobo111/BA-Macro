@@ -31,6 +31,22 @@ def strip_comment(line):
     return line.split('//', 1)[0].strip()
 
 
+def coordinate_tokens(source):
+    """Find numeric coordinate tokens, including incomplete drafts, without Qt.
+
+    Time/count arguments and comments do not establish a coordinate basis.
+    Keep partial coordinate edits visible even before the script can compile.
+    """
+    result = []
+    for line in source.splitlines():
+        code = strip_comment(line).split(None, 1)
+        if len(code) == 2 and code[0].lower() in COORD_COMMANDS:
+            numbers = tuple(re.findall(r'-?\d+', code[1]))
+            if numbers:
+                result.append((code[0].lower(), numbers))
+    return tuple(result)
+
+
 def bounded_integer(text, line, minimum, maximum, message):
     try:
         value = int(text)

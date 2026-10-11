@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 import uuid
 from shortcuts import hotkey, validate_hotkeys, ShortcutError
+from script_language import coordinate_tokens
 
 MODES = {
     "move_and_click": "좌표 클릭",
@@ -125,6 +126,11 @@ class Profile:
         obj = cls(rows, size, target_identity(data.get('target_program')))
         obj.validate()
         return obj
+
+    def has_fixed_coordinates(self):
+        # Keep hidden coordinates too: changing a row's mode can restore them.
+        # The default table point (0, 0) alone does not establish a saved basis.
+        return any(row.x or row.y or coordinate_tokens(row.script) for row in self.rows)
 
     def validate(self, reserved=()):
         validate_hotkeys((*reserved, *(row.move_hk for row in self.rows)))

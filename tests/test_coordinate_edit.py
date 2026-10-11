@@ -55,6 +55,64 @@ class CoordinateEditTests(unittest.TestCase):
         editor.editor.setTextCursor(cursor)
         return editor
 
+    def save_mouse_only_profile(self):
+        self.w.profile.resolution = None
+        editor = self.editor('click mouse // 100,200 is only a comment')
+        editor.save()
+        self.w.flush_pending_saves()
+        self.assertIsNone(Profile.read(read_json(self.w.path)).resolution)
+
+    def test_table_capture_after_mouse_only_script_establishes_first_basis(self):
+        self.save_mouse_only_profile()
+        w = self.w
+        with patch.object(w.native, 'cursor', return_value=(960,540)), \
+             patch.object(w.native, 'bounds', return_value=(0,0,1920,1080)), \
+             patch.object(w, 'convert_dialog') as convert:
+            w.capture(w.profile.rows[1].id)
+            convert.assert_not_called()
+        w.flush_pending_saves()
+        saved = Profile.read(read_json(w.path))
+        self.assertEqual((saved.resolution, saved.rows[1].x, saved.rows[1].y),
+                         ((1920,1080), 960, 540))
+        self.assertEqual(saved.rows[0].script, w.profile.rows[0].script)
+
+    def test_manual_row_entry_after_mouse_only_script_establishes_first_basis(self):
+        self.save_mouse_only_profile()
+        w = self.w
+        with patch('app.ManualCoordinateDialog') as prompt:
+            w.table.cellWidget(1,1).setValue(960)
+            prompt.assert_not_called()
+        w.flush_pending_saves()
+        saved = Profile.read(read_json(w.path))
+        self.assertEqual((saved.resolution, saved.rows[1].x), ((1920,1080), 960))
+
+    def test_script_capture_after_mouse_only_script_establishes_first_basis(self):
+        self.save_mouse_only_profile()
+        editor = self.editor('click mouse\nclick ')
+        with patch.object(self.w.native, 'bounds', return_value=(0,0,1920,1080)):
+            editor.pick_coordinate((960,540))
+        self.assertEqual(editor.editor.toPlainText(), 'click mouse\nclick 960,540')
+        self.assertEqual(editor.capture_resolution, (1920,1080))
+        editor.save()
+        self.assertIsNone(self.w.script_editor)
+        self.w.flush_pending_saves()
+        saved = Profile.read(read_json(self.w.path))
+        self.assertEqual((saved.resolution, saved.rows[0].script),
+                         ((1920,1080), 'click mouse\nclick 960,540'))
+
+    def test_manual_script_entry_after_mouse_only_script_establishes_first_basis(self):
+        self.save_mouse_only_profile()
+        editor = self.editor('click mouse\nclick ')
+        with patch('app.ManualCoordinateDialog') as prompt:
+            QTest.keyClicks(editor.editor, '960,540')
+            prompt.assert_not_called()
+        editor.save()
+        self.assertIsNone(self.w.script_editor)
+        self.w.flush_pending_saves()
+        saved = Profile.read(read_json(self.w.path))
+        self.assertEqual((saved.resolution, saved.rows[0].script),
+                         ((1920,1080), 'click mouse\nclick 960,540'))
+
     def test_cancel_mismatched_row_entry_preserves_point_baseline_and_file(self):
         w=self.w
         w.save()

@@ -1,19 +1,7 @@
 """Guard user-entered fixed coordinates while allowing captured baseline points."""
-import re
 from PySide6.QtGui import QKeySequence, QTextDocument
 from PySide6.QtWidgets import QPlainTextEdit
-from coordinate_transform import COORD_COMMANDS
-
-
-def coordinate_tokens(source):
-    result = []
-    for line in source.splitlines():
-        code = line.split('//', 1)[0].split(None, 1)
-        if len(code) == 2 and code[0].lower() in COORD_COMMANDS:
-            numbers = tuple(re.findall(r'-?\d+', code[1]))
-            if numbers:
-                result.append((code[0].lower(), numbers))
-    return tuple(result)
+from script_language import coordinate_tokens
 
 
 class CoordinateTextEdit(QPlainTextEdit):

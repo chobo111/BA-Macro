@@ -375,10 +375,9 @@ class MainWindow(QMainWindow):
         try:
             size = tuple(self.native.size(target))
             basis = basis or profile.resolution
-            has_coordinates = any(row.x or row.y or row.script.strip() for row in profile.rows)
             if basis == size:
                 return True
-            if basis is None and not has_coordinates:
+            if basis is None and not profile.has_fixed_coordinates():
                 identity = self.confirm_coordinate_app(target)
                 if identity is None:
                     return False
@@ -693,8 +692,7 @@ class MainWindow(QMainWindow):
                 raise ValueError("커서를 대상 영역 안으로 옮겨 주세요.")
             if abs(x) > 99999 or abs(y) > 99999:
                 raise ValueError('좌표는 부호를 제외하고 최대 5자리까지 저장할 수 있습니다.')
-            has_coordinates = any(r.x or r.y or r.script.strip() for r in profile.rows)
-            if not basis and has_coordinates:
+            if not basis and profile.has_fixed_coordinates():
                 self.convert_dialog(reason="저장 좌표와 현재 화면의 해상도 기준을 먼저 맞춰 주세요. 변환 후 좌표를 다시 캡처하세요.")
                 return
             converted = basis is not None and basis != (w, h)

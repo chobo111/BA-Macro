@@ -303,8 +303,7 @@ class ScriptEditor(QDialog):
             size = self.native.size(self.target)
             profile = self.validate_capture_profile()
             basis = self.capture_resolution or profile.resolution
-            has_coordinates = any(row.x or row.y or row.script.strip() for row in profile.rows)
-            if not basis and has_coordinates:
+            if not basis and profile.has_fixed_coordinates():
                 self.log('해상도 기준이 다릅니다. 편집기를 닫고 설정 → 프로필 해상도 변환을 먼저 진행하세요.', error=True)
                 return
             identity = self.native.window_identity(self.target)
