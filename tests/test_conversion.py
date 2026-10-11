@@ -4,6 +4,30 @@ from conversion import plan_conversion
 
 
 class ConversionTests(unittest.TestCase):
+    def test_expanded_script_over_limit_blocks_conversion_without_mutating_source(self):
+        profile = Profile([Row(action_mode='script', script='click 99,99\n' * 8000)], (100,100))
+        before = profile.export()
+        Profile.read(before)
+        plan = plan_conversion(profile, (100,100), (1000,1000))
+        self.assertEqual(len(plan.profile.rows[0].script), 112000)
+        self.assertIn('변환 후 스크립트', '\n'.join(plan.errors))
+        self.assertIn('100,000', '\n'.join(plan.errors))
+        self.assertEqual(profile.export(), before)
+
+    def test_converted_script_length_boundary_and_reload(self):
+        from script_language import compile_script
+        for extra in (0, 1):
+            with self.subTest(extra=extra):
+                source = ('click 99,99\n' * 7000) + '//' + ('x' * (1998 + extra))
+                profile = Profile([Row(action_mode='script', script=source)], (100,100))
+                compile_script(source)
+                plan = plan_conversion(profile, (100,100), (1000,1000))
+                self.assertEqual(len(plan.profile.rows[0].script), 100000 + extra)
+                self.assertEqual(bool(plan.errors), bool(extra))
+                if not extra:
+                    self.assertEqual(Profile.read(plan.profile.export()), plan.profile)
+                    compile_script(plan.profile.rows[0].script)
+
     def test_success_and_invalid_size_preserve_original_profile(self):
         profile = Profile([Row(x=100, y=200)], (1000,1000))
         before = profile.export()

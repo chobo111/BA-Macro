@@ -281,11 +281,16 @@ class ScriptEditor(QDialog):
             parent = self.parentWidget()
             if self.target != parent.target:
                 raise ValueError('선택한 앱이 변경되었습니다. 편집기를 다시 열어 주세요.')
-            allowed = parent.ensure_manual_coordinate_basis(basis=self.capture_resolution or self.profile_resolution)
-            if allowed and self.profile_resolution is None and self.capture_resolution is None:
-                # The first manual coordinate establishes an empty profile's basis.
-                self.profile_resolution = parent.profile.resolution
-            return allowed
+            prepared = parent.prepare_manual_coordinate_basis(
+                basis=self.capture_resolution or self.profile_resolution, confirm_app=False)
+            if prepared is None:
+                return False
+            size, identity = prepared
+            if identity is not None:
+                # Share the capture draft: cancellation never writes profile metadata.
+                self.capture_resolution = size
+                self.capture_program = identity
+            return True
         except (ValueError, OSError) as error:
             self.log(str(error), error=True)
             return False

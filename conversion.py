@@ -56,5 +56,10 @@ def plan_conversion(profile, source, destination):
                 raw = POINT.sub(replace, code) + separator + comment
             lines.append(raw)
         row.script = ''.join(lines)
+        try:
+            # Larger coordinates can expand a valid source beyond the load limit.
+            compile_script(row.script)
+        except ValueError as error:
+            plan.errors.append(f'{label} · 변환 후 스크립트 {error}')
     plan.profile.resolution = (dw, dh)
     return plan

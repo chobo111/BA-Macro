@@ -359,51 +359,60 @@ class MainWindow(QMainWindow):
         row = self.row(rid)
         if row is None or getattr(row, field) == value:
             return
-        if self.ensure_manual_coordinate_basis():
-            self.set_value(rid, field, value)
-        else:
+        prepared = self.prepare_manual_coordinate_basis()
+        if prepared is None:
             self.rebuild(rid)
+            return
+        size, identity = prepared
+        if identity is not None:
+            self.profile.resolution = size
+            self.profile.target_program = identity
+        self.set_value(rid, field, value)
 
     @editing_dialog(hooks=False, pause=False)
-    def ensure_manual_coordinate_basis(self, *, basis=None):
+    def prepare_manual_coordinate_basis(self, *, basis=None, confirm_app=True):
+        """Return (size, initial app identity), or None when the edit is denied.
+
+        An already matching basis has no new identity. Callers commit an initial
+        basis with the actual row edit or retain it in the script editor's draft.
+        Drafts defer app confirmation until saving.
+        """
         target, profile, path = self.target, self.profile, self.path
         original_basis = profile.resolution
         if not target or not self.native.exists(target):
             self.stop()
             self.statusBar().showMessage('좌표를 직접 입력하려면 앱을 선택하세요.')
-            return False
+            return None
         try:
             size = tuple(self.native.size(target))
             basis = basis or profile.resolution
             if basis == size:
-                return True
+                return size, None
             if basis is None and not profile.has_fixed_coordinates():
-                identity = self.confirm_coordinate_app(target)
+                identity = (self.confirm_coordinate_app(target) if confirm_app
+                            else self.native.window_identity(target))
                 if identity is None:
-                    return False
+                    return None
                 if (self.profile is not profile or self.path != path or self.target != target or
                         profile.resolution is not None or tuple(self.native.size(target)) != size):
                     raise ValueError('입력 중 앱 또는 프로필 기준이 변경되었습니다. 다시 입력하세요.')
-                profile.resolution = size
-                profile.target_program = identity
-                self.changed()
-                return True
+                return size, identity
             self.stop()
             with managed_dialog(ManualCoordinateDialog(basis, size, self)) as dialog:
                 dialog.exec()
                 choice = dialog.choice()
             if (self.profile is not profile or self.path != path or self.target != target or
                     profile.resolution != original_basis or not self.native.exists(target)):
-                return False
+                return None
             if choice == 'resize' and basis:
                 self.resize_dialog(profile_size=basis)
             elif choice == 'convert':
                 self.convert_dialog(reason='현재 앱 크기에 맞게 프로필 좌표를 변환한 뒤 직접 입력하세요.')
             # Discard the pending edit: conversion may replace the profile/editor.
-            return False
+            return None
         except (OSError, ValueError) as error:
             self.on_engine_error(str(error))
-            return False
+            return None
 
     def edit_script(self, rid):
         if self.script_editor is not None:

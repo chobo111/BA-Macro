@@ -1690,6 +1690,34 @@ class UiTests(unittest.TestCase):
             submit.assert_called_once()
             self.assertEqual(submit.call_args.args[0].hwnd, 123)
 
+    def test_oversized_conversion_blocks_both_saves_and_can_retry_with_smaller_size(self):
+        from conversion_dialog import ConversionDialog
+        w = self.window
+        w.profile.resolution = (100,100)
+        w.profile.rows[0].action_mode = 'script'
+        w.profile.rows[0].script = 'click 99,99\n' * 8000
+        w.save()
+        before = w.profile.export(), w.path.read_bytes()
+        with patch.object(w, 'save_conversion', wraps=w.save_conversion) as save:
+            dialog = ConversionDialog(w.profile, w.path, (1000,1000), save, w)
+            try:
+                self.assertFalse(dialog.apply_button.isEnabled())
+                self.assertFalse(dialog.copy_button.isEnabled())
+                self.assertIn('100,000', dialog.error.text())
+                for mode in ('apply', 'copy'):
+                    dialog.save(mode)
+                    self.assertEqual((w.profile.export(), w.path.read_bytes()), before)
+                save.assert_not_called()
+                dialog.destination.set_value((50,50))
+                dialog.save('apply')
+                self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+                save.assert_called_once()
+                saved = Profile.read(read_json(w.path))
+                self.assertEqual(saved.resolution, (50,50))
+                self.assertEqual(saved.rows[0].script, 'click 49,49\n' * 8000)
+            finally:
+                dialog.deleteLater()
+
     def test_conversion_with_blank_script_rows_can_be_saved(self):
         from domain import Row
         from conversion_dialog import ConversionDialog

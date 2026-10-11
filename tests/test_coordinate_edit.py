@@ -219,12 +219,122 @@ class CoordinateEditTests(unittest.TestCase):
         w=self.w;w.profile.resolution=None;w.profile.target_program={}
         editor=self.editor()
         QTest.keyClicks(editor.editor,'960,540')
-        self.assertEqual(editor.profile_resolution,(1920,1080))
+        self.assertIsNone(editor.profile_resolution)
+        self.assertIsNone(w.profile.resolution)
+        self.assertEqual(w.profile.target_program,{})
+        self.assertEqual(editor.capture_resolution,(1920,1080))
+        self.assertEqual(editor.capture_program,GAME)
         editor.save()
         self.assertIsNone(w.script_editor)
         w.flush_pending_saves()
         saved=Profile.read(read_json(w.path))
         self.assertEqual((saved.resolution,saved.rows[0].script),((1920,1080),'click 960,540'))
+
+    def prepare_empty_script_profile(self):
+        w = self.w
+        w.profile.resolution = None
+        w.profile.target_program = {}
+        w.profile.rows[0].action_mode = 'script'
+        w.save()
+        return w.profile.export(), w.path.read_bytes()
+
+    def test_cancel_initial_manual_script_keeps_profile_and_file_unchanged(self):
+        before = self.prepare_empty_script_profile()
+        editor = self.editor('click ')
+        QTest.keyClicks(editor.editor, '960,540')
+        self.w.flush_pending_saves()
+        self.assertEqual((self.w.profile.export(), self.w.path.read_bytes()), before)
+        editor.reject()
+        self.w.flush_pending_saves()
+        self.assertEqual((self.w.profile.export(), self.w.path.read_bytes()), before)
+        self.size.return_value = (1280,720)
+        editor = self.editor('click ')
+        with patch('app.ManualCoordinateDialog') as prompt:
+            QTest.keyClicks(editor.editor, '640,360')
+            prompt.assert_not_called()
+        editor.save()
+        self.w.flush_pending_saves()
+        saved = Profile.read(read_json(self.w.path))
+        self.assertEqual((saved.resolution, saved.target_program, saved.rows[0].script),
+                         ((1280,720), GAME, 'click 640,360'))
+
+    def test_invalid_initial_manual_script_keeps_metadata_pending_until_saved(self):
+        before = self.prepare_empty_script_profile()
+        editor = self.editor('click ')
+        QTest.keyClicks(editor.editor, '960,')
+        editor.save()
+        self.assertIs(self.w.script_editor, editor)
+        self.assertTrue(editor.validation.property('error'))
+        self.w.flush_pending_saves()
+        self.assertEqual((self.w.profile.export(), self.w.path.read_bytes()), before)
+        cursor = editor.editor.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        editor.editor.setTextCursor(cursor)
+        QTest.keyClicks(editor.editor, '540')
+        editor.save()
+        self.assertIsNone(self.w.script_editor)
+        self.w.flush_pending_saves()
+        saved = Profile.read(read_json(self.w.path))
+        self.assertEqual((saved.resolution, saved.target_program, saved.rows[0].script),
+                         ((1920,1080), GAME, 'click 960,540'))
+
+    def test_initial_manual_script_rejects_app_change_before_save(self):
+        before = self.prepare_empty_script_profile()
+        editor = self.editor('click ')
+        QTest.keyClicks(editor.editor, '960,540')
+        self.identity.return_value = {'exe':'Other.exe', 'class':'Other', 'title':'Other'}
+        editor.save()
+        self.assertIs(self.w.script_editor, editor)
+        self.assertTrue(editor.validation.property('error'))
+        self.w.flush_pending_saves()
+        self.assertEqual((self.w.profile.export(), self.w.path.read_bytes()), before)
+        editor.reject()
+
+    def test_initial_manual_script_confirms_app_only_on_save_and_preserves_declined_draft(self):
+        self.prepare_empty_script_profile()
+        w = self.w
+        w.profile.target_program = {'exe':'Other.exe', 'class':'Other', 'title':'Other'}
+        w.save()
+        before = w.profile.export(), w.path.read_bytes()
+        editor = self.editor('click ')
+        with patch('app.CoordinateAppDialog') as prompt:
+            QTest.keyClicks(editor.editor, '960,540')
+            prompt.assert_not_called()
+            prompt.return_value.confirmed.return_value = False
+            editor.save()
+            prompt.assert_called_once()
+            self.assertIs(w.script_editor, editor)
+            self.assertEqual((w.profile.export(), w.path.read_bytes()), before)
+            prompt.return_value.confirmed.return_value = True
+            editor.save()
+            self.assertEqual(prompt.call_count, 2)
+        self.assertIsNone(w.script_editor)
+        w.flush_pending_saves()
+        saved = Profile.read(read_json(w.path))
+        self.assertEqual((saved.resolution, saved.target_program, saved.rows[0].script),
+                         ((1920,1080), GAME, 'click 960,540'))
+
+    def test_manual_draft_basis_survives_resize_and_reverse_capture(self):
+        before = self.prepare_empty_script_profile()
+        editor = self.editor('click ')
+        QTest.keyClicks(editor.editor, '960,540')
+        self.size.return_value = (1280,720)
+        with patch('app.ManualCoordinateDialog') as prompt:
+            prompt.return_value.choice.return_value = 'cancel'
+            QTest.keyClick(editor.editor, Qt.Key.Key_9)
+            prompt.assert_called_once()
+        self.assertEqual(editor.editor.toPlainText(), 'click 960,540')
+        self.assertEqual((self.w.profile.export(), self.w.path.read_bytes()), before)
+        QTest.keyClick(editor.editor, Qt.Key.Key_Return)
+        QTest.keyClicks(editor.editor, 'click ')
+        with patch.object(self.w.native, 'bounds', return_value=(0,0,1280,720)):
+            editor.pick_coordinate((640,360))
+        editor.save()
+        self.assertIsNone(self.w.script_editor)
+        self.w.flush_pending_saves()
+        saved = Profile.read(read_json(self.w.path))
+        self.assertEqual((saved.resolution, saved.rows[0].script),
+                         ((1920,1080), 'click 960,540\nclick 960,540'))
 
     def test_capture_only_script_with_unknown_basis_saves_after_resize(self):
         w=self.w;w.profile.resolution=None
