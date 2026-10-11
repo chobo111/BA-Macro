@@ -182,6 +182,7 @@ class MainWindow(QMainWindow):
         self.table = RowsTable()
         self.table.itemChanged.connect(self.memo_changed)
         self.table.memo_edited.connect(self.live_memo_changed)
+        self.table.memo_notice.connect(self.statusBar().showMessage)
         self.table.moved.connect(self.move_row)
         self.table.horizontalHeader().sectionResized.connect(self.queue_fit_content_width)
         self.table.verticalScrollBar().rangeChanged.connect(self.queue_fit_content_width)

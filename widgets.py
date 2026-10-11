@@ -5,8 +5,8 @@ from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 
-from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent, QSignalBlocker, QKeyCombination
-from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolygon, QPen
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent, QSignalBlocker, QKeyCombination, QPersistentModelIndex
+from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolygon, QPen, QValidator
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QHeaderView, QAbstractItemView,
     QSpinBox, QLineEdit, QDialog, QFormLayout, QDialogButtonBox, QCheckBox, QKeySequenceEdit,
@@ -110,12 +110,37 @@ class TargetCombo(NoWheelCombo):
         super().showPopup()
 
 
+class MemoLengthValidator(QValidator):
+    LIMIT = 1000
+
+    def __init__(self, original, parent):
+        super().__init__(parent)
+        # Existing long notes remain editable and undoable without growing.
+        self.limit = max(self.LIMIT, len(original))
+
+    def validate(self, text, position):
+        state = self.State.Acceptable if len(text) <= self.limit else self.State.Invalid
+        return state, text, position
+
+
 class MemoDelegate(QStyledItemDelegate):
     def createEditor(self, parent, option, index):
         editor = super().createEditor(parent, option, index)
         if isinstance(editor, QLineEdit):
-            editor.setProperty('originalMemo', index.data(Qt.ItemDataRole.EditRole))
-            editor.textChanged.connect(lambda text: self.parent().memo_edited.emit(index.row(), text))
+            original = index.data(Qt.ItemDataRole.EditRole) or ''
+            editor.setProperty('originalMemo', original)
+            index = QPersistentModelIndex(index)
+            editor.setProperty('memoIndex', index)
+            # Validate Unicode characters instead of truncating Qt's UTF-16 text.
+            # Programmatic initialization must preserve even old, very long notes.
+            editor.setMaxLength(2**31 - 1)
+            editor.setValidator(MemoLengthValidator(original, editor))
+            editor.textEdited.connect(lambda text: self.parent().memo_edited.emit(index.row(), text))
+            notice = f'메모는 최대 {MemoLengthValidator.LIMIT:,}자까지 입력할 수 있습니다.'
+            if len(original) > MemoLengthValidator.LIMIT:
+                notice = f'기존 메모가 {MemoLengthValidator.LIMIT:,}자를 초과합니다. 원문은 유지되며 더 늘릴 수 없습니다.'
+                self.parent().memo_notice.emit(notice)
+            editor.inputRejected.connect(lambda: self.parent().memo_notice.emit(notice))
         return editor
 
     def eventFilter(self, editor, event):
@@ -123,12 +148,20 @@ class MemoDelegate(QStyledItemDelegate):
                 and event.matches(QKeySequence.StandardKey.Cancel)):
             # Live edits are already autosaved. Roll back the same way before
             # Qt closes the editor with RevertModelCache.
-            editor.setText(editor.property('originalMemo') or '')
+            original = editor.property('originalMemo') or ''
+            if editor.text() != original:
+                editor.setText(original)
+                # setText is intentionally excluded from live autosave; cancellation
+                # explicitly restores the original through the same ordered writer.
+                index = editor.property('memoIndex')
+                if index.isValid():
+                    self.parent().memo_edited.emit(index.row(), original)
         return super().eventFilter(editor, event)
 
 
 class RowsTable(AnimatedRowsTable):
     memo_edited = Signal(int, str)
+    memo_notice = Signal(str)
     MEMO_MIN_WIDTH = 70
 
     def __init__(self):
@@ -141,7 +174,7 @@ class RowsTable(AnimatedRowsTable):
         self.setShowGrid(False)
         self.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         delegate = MemoDelegate(self)
-        delegate.closeEditor.connect(lambda *_: QTimer.singleShot(0, self.update_memo_tooltips))
+        delegate.closeEditor.connect(lambda *_: QTimer.singleShot(0, self, self.update_memo_tooltips))
         self.setItemDelegateForColumn(4, delegate)
         for column, width in ((0, 72), (1, 60), (2, 60), (3, 122), (4, 70)):
             self.setColumnWidth(column, width)
