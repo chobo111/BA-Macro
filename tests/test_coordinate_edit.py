@@ -4,8 +4,8 @@ from dataclasses import asdict
 import tempfile
 import unittest
 from unittest.mock import patch
-from PySide6.QtCore import Qt, QMimeData
-from PySide6.QtGui import QInputMethodEvent
+from PySide6.QtCore import Qt, QMimeData, QPointF
+from PySide6.QtGui import QInputMethodEvent, QDragEnterEvent, QDropEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 from app import MainWindow
@@ -347,3 +347,88 @@ class CoordinateEditTests(unittest.TestCase):
             menu.deleteLater()
         finally:
             clipboard.setText(old)
+
+
+    def drop_text(self, editor, text, action):
+        field=editor.editor
+        self.qt.processEvents()
+        point=field.cursorRect().center()
+        mime=QMimeData();mime.setText(text)
+        modifiers=Qt.KeyboardModifier.ShiftModifier if action==Qt.DropAction.MoveAction else Qt.KeyboardModifier.ControlModifier
+        enter=QDragEnterEvent(point,action,mime,Qt.MouseButton.LeftButton,modifiers)
+        QApplication.sendEvent(field.viewport(),enter)
+        self.assertTrue(enter.isAccepted())
+        drop=QDropEvent(QPointF(point),action,mime,Qt.MouseButton.LeftButton,modifiers)
+        QApplication.sendEvent(field.viewport(),drop)
+        return drop.isAccepted()
+
+    def test_rejected_move_and_copy_drop_report_failure_to_source(self):
+        for action in (Qt.DropAction.MoveAction,Qt.DropAction.CopyAction):
+            with self.subTest(action=action):
+                editor=self.editor('click ')
+                with patch('app.ManualCoordinateDialog') as prompt:
+                    prompt.return_value.choice.return_value='cancel'
+                    accepted=self.drop_text(editor,'960,540',action)
+                    prompt.assert_called_once()
+                self.assertFalse(accepted)
+                self.assertEqual(editor.editor.toPlainText(),'click ')
+                editor.editor.redo()
+                self.assertEqual(editor.editor.toPlainText(),'click ')
+
+    def test_aligned_move_and_copy_drop_are_accepted_and_can_be_saved(self):
+        self.size.return_value=(1280,720)
+        for action in (Qt.DropAction.MoveAction,Qt.DropAction.CopyAction):
+            with self.subTest(action=action):
+                editor=self.editor('click ')
+                with patch('app.ManualCoordinateDialog') as prompt:
+                    self.assertTrue(self.drop_text(editor,'640,360',action))
+                    prompt.assert_not_called()
+                self.assertEqual(editor.editor.toPlainText(),'click 640,360')
+                editor.save()
+                self.w.flush_pending_saves()
+                self.assertEqual(Profile.read(read_json(self.w.path)).rows[0].script,'click 640,360')
+
+    def test_noncoordinate_drop_still_allowed_when_app_size_differs(self):
+        editor=self.editor('sleep ')
+        with patch('app.ManualCoordinateDialog') as prompt:
+            self.assertTrue(self.drop_text(editor,'5',Qt.DropAction.MoveAction))
+            prompt.assert_not_called()
+        self.assertEqual(editor.editor.toPlainText(),'sleep 5')
+
+    def test_failed_drop_guard_restores_draft_and_cannot_be_redone(self):
+        editor=self.editor('click ')
+        field=editor.editor
+        self.qt.processEvents()
+        mime=QMimeData();mime.setText('960,540')
+        point=field.cursorRect().center()
+        enter=QDragEnterEvent(point,Qt.DropAction.MoveAction,mime,Qt.MouseButton.LeftButton,Qt.KeyboardModifier.ShiftModifier)
+        QApplication.sendEvent(field.viewport(),enter)
+        drop=QDropEvent(QPointF(point),Qt.DropAction.MoveAction,mime,Qt.MouseButton.LeftButton,Qt.KeyboardModifier.ShiftModifier)
+        with patch.object(field,'can_edit_coordinates',side_effect=RuntimeError('guard failed')):
+            with self.assertRaisesRegex(RuntimeError,'guard failed'):
+                field.dropEvent(drop)
+        self.assertFalse(drop.isAccepted())
+        field.redo()
+        self.assertEqual(field.toPlainText(),'click ')
+        self.assertFalse(field.editing)
+
+    def test_long_numbers_show_save_error_and_preserve_profile_until_corrected(self):
+        row=self.w.profile.rows[0]
+        row.action_mode='script';row.script='sleep 1'
+        self.w.save()
+        before=self.w.path.read_bytes()
+        for command in ('sleep '+('9'*5000),'click '+('9'*5000)+',1'):
+            with self.subTest(command=command.split()[0]):
+                editor=self.editor('sleep 1\n'+command)
+                editor.save()
+                self.assertIs(self.w.script_editor,editor)
+                self.assertTrue(editor.validation.property('error'))
+                self.assertTrue(editor.validation.text().startswith('오류 · 2행:'))
+                self.assertEqual(editor.editor.textCursor().blockNumber(),1)
+                self.assertEqual(row.script,'sleep 1')
+                self.assertEqual(self.w.path.read_bytes(),before)
+        editor.editor.setPlainText('sleep 5')
+        editor.save()
+        self.assertIsNone(self.w.script_editor)
+        self.w.flush_pending_saves()
+        self.assertEqual(Profile.read(read_json(self.w.path)).rows[0].script,'sleep 5')

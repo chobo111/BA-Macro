@@ -31,10 +31,22 @@ def strip_comment(line):
     return line.split('//', 1)[0].strip()
 
 
+def bounded_integer(text, line, minimum, maximum, message):
+    try:
+        value = int(text)
+    except ValueError:
+        # Python also rejects excessively long decimal strings before range checking.
+        raise ScriptError(line, message) from None
+    if not minimum <= value <= maximum:
+        raise ScriptError(line, message)
+    return value
+
+
 def number(text, line, minimum=0, maximum=600000):
-    if not re.fullmatch(r'\d+', text) or not minimum <= int(text) <= maximum:
-        raise ScriptError(line, f'{minimum}~{maximum} 범위의 정수가 필요합니다.')
-    return int(text)
+    message = f'{minimum}~{maximum} 범위의 정수가 필요합니다.'
+    if not re.fullmatch(r'\d+', text):
+        raise ScriptError(line, message)
+    return bounded_integer(text, line, minimum, maximum, message)
 
 
 def points(text, line):
@@ -44,10 +56,10 @@ def points(text, line):
         if token == 'mouse':
             result.append('mouse')
         elif re.fullmatch(r'-?\d+,-?\d+', token):
-            point = tuple(map(int, token.split(',')))
-            if any(abs(v) > COORD_LIMIT for v in point):
-                raise ScriptError(line, '좌표는 부호를 제외하고 최대 5자리입니다.')
-            result.append(point)
+            result.append(tuple(
+                bounded_integer(value, line, -COORD_LIMIT, COORD_LIMIT,
+                                '좌표는 부호를 제외하고 최대 5자리입니다.')
+                for value in token.split(',')))
         else:
             raise ScriptError(line, '좌표는 x,y 또는 mouse로 입력하세요.')
     if not result:

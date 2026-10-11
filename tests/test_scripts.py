@@ -40,6 +40,60 @@ class ScriptTests(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(ScriptError):
                 compile_script(source)
 
+    def test_oversized_integer_arguments_are_localized(self):
+        digits = '9' * 5000
+        for command, suffix, minimum, maximum in (
+                ('sleep', '', 0, 600000),
+                ('curve_first_time', '', 0, 600000),
+                ('curve_last_time', '', 0, 600000),
+                ('loop', '\nclick mouse\nloop_end', 1, 10000)):
+            with self.subTest(command=command):
+                with self.assertRaises(ScriptError) as raised:
+                    compile_script(f'// comment\n{command} {digits}{suffix}')
+                self.assertEqual(raised.exception.line, 2)
+                self.assertEqual(str(raised.exception),
+                                 f'2행: {minimum}~{maximum} 범위의 정수가 필요합니다.')
+
+    def test_oversized_coordinates_are_localized(self):
+        digits = '9' * 5000
+        for command in ('click', 'move', 'press', 'release', 'switch', 'curve'):
+            for point in (f'{digits},0', f'0,-{digits}'):
+                with self.subTest(command=command, axis=point.startswith('0,')):
+                    with self.assertRaises(ScriptError) as raised:
+                        suffix = ' mouse' if command == 'curve' else ''
+                        compile_script(f'sleep 1\n{command} {point}{suffix}')
+                    self.assertEqual(raised.exception.line, 2)
+                    self.assertEqual(str(raised.exception),
+                                     '2행: 좌표는 부호를 제외하고 최대 5자리입니다.')
+
+    def test_integer_argument_boundaries_and_decimal_notation(self):
+        for command in ('sleep', 'curve_first_time', 'curve_last_time'):
+            for token, expected in (('0', 0), ('600000', 600000),
+                                    ('0' * 100 + '5', 5), ('００٥', 5)):
+                with self.subTest(command=command, token=token):
+                    program = compile_script(f'{command} {token}')
+                    self.assertEqual(program.pressed[0].args, (expected,))
+            for token in ('-1', '600001'):
+                with self.subTest(command=command, token=token), self.assertRaises(ScriptError):
+                    compile_script(f'{command} {token}')
+        for token, expected in (('1', 1), ('10000', 10000), ('００٢', 2)):
+            with self.subTest(loop=token):
+                program = compile_script(f'loop {token}\nclick mouse\nloop_end')
+                self.assertEqual(program.pressed[0].args, (expected,))
+        for token in ('0', '10001'):
+            with self.subTest(loop=token), self.assertRaises(ScriptError):
+                compile_script(f'loop {token}\nclick mouse\nloop_end')
+
+    def test_coordinate_boundaries_and_decimal_notation(self):
+        for token, expected in (('-99999,99999', (-99999, 99999)),
+                                ('0' * 100 + '5,-００٢', (5, -2))):
+            with self.subTest(token=token):
+                program = compile_script(f'click {token}')
+                self.assertEqual(program.pressed[0].args, (expected,))
+        for token in ('-100000,0', '0,100000'):
+            with self.subTest(token=token), self.assertRaises(ScriptError):
+                compile_script(f'click {token}')
+
     def test_click_mouse_snapshot_and_comments(self):
         self.run_script('click 20,30\nsleep 12\nclick mouse // 한글 주석')
         self.assertIn(('move', 200, 300), self.native.events)

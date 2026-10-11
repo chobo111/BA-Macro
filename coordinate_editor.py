@@ -29,9 +29,10 @@ class CoordinateTextEdit(QPlainTextEdit):
         self.editing = False
 
     def guarded_edit(self, operation):
+        """Return whether this edit passed the coordinate-basis check."""
         if self.editing:
             operation()
-            return
+            return True
         self.editing = True
         try:
             before = self.toPlainText()
@@ -45,18 +46,23 @@ class CoordinateTextEdit(QPlainTextEdit):
             after = self.toPlainText()
             new = coordinate_tokens(after)
             if not new or new == coordinate_tokens(before):
-                return
+                return True
             changed = self.textCursor()
             changed_selection = changed.anchor(), changed.position()
             # Restore the valid draft BEFORE a modal decision can save/convert it.
             super().undo()
             self.restore_selection(selection)
-            if self.can_edit_coordinates():
+            approved = False
+            try:
+                approved = bool(self.can_edit_coordinates())
+            finally:
+                if not approved:
+                    # Cancelled/failed edits cannot return via Ctrl+Y or the menu.
+                    self.document().clearUndoRedoStacks(QTextDocument.Stacks.RedoStack)
+            if approved:
                 super().redo()
                 self.restore_selection(changed_selection)
-            else:
-                # A cancelled edit must not be recoverable via Ctrl+Y or the menu.
-                self.document().clearUndoRedoStacks(QTextDocument.Stacks.RedoStack)
+            return approved
         finally:
             self.editing = False
 
@@ -101,4 +107,11 @@ class CoordinateTextEdit(QPlainTextEdit):
         self.guarded_edit(lambda: super(CoordinateTextEdit, self).inputMethodEvent(event))
 
     def dropEvent(self, event):
-        self.guarded_edit(lambda: super(CoordinateTextEdit, self).dropEvent(event))
+        approved = False
+        try:
+            approved = self.guarded_edit(lambda: super(CoordinateTextEdit, self).dropEvent(event))
+        finally:
+            if not approved:
+                # A source editor deletes its selection after an accepted MOVE.
+                # Rolling back our document alone would still report success.
+                event.ignore()
