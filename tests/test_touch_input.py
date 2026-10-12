@@ -18,7 +18,9 @@ class Device:
         self.down = threading.Event()
         self.closed = False
 
-    def send(self, point, flags):
+    def send(self, point, flags, *, before_send=None):
+        if before_send is not None:
+            before_send()
         self.events.append((point, flags))
         if flags & DOWN:
             self.down.set()

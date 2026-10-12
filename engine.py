@@ -79,12 +79,15 @@ class Engine:
             if tuple(self.native.size(command.hwnd)) != command.expected_size:
                 raise WindowSizeChanged(WINDOW_SIZE_CHANGED)
 
-    def guard(self, command):
+    def check_input(self, command):
         if not command.hwnd:
             raise ValueError('앱을 선택하세요.')
         if self.cancel.is_set() or not self.native.active(command.hwnd):
             raise Cancelled()
         self.check_size(command)
+
+    def guard(self, command):
+        self.check_input(command)
         self.runtime.native.keep_alive()
 
     def wait(self, milliseconds, command):
@@ -168,7 +171,9 @@ class Engine:
                     program = c.program if c.program is not None else compile_script(c.script)
                     self.check_size(c)
                     self.input_context = c
-                    self.runtime.native.begin(c.hwnd)
+                    # Bind this command, including while a latched contact is idle.
+                    # The injection check must not generate another heartbeat.
+                    self.runtime.native.begin(c.hwnd, check_input=lambda command=c: self.check_input(command))
                     self.runtime.run(program, c)
                     continue
                 # A coordinate action must not inherit a script's latched inputs.

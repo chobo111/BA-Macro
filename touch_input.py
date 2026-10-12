@@ -110,7 +110,7 @@ class TouchDevice:
             self.close()
             raise
 
-    def send(self, position, flags):
+    def send(self, position, flags, *, before_send=None):
         if not self.handle:
             raise OSError('터치 입력 장치가 닫혔습니다.')
         if self.promotion_filter:
@@ -118,7 +118,6 @@ class TouchDevice:
                 error = self.promotion_filter.error
                 self.close()
                 raise OSError(f'터치 입력 감시 실패: {error}') from error
-            self.promotion_filter.expect(position)
         packet = PointerTypeInfo(type=PT_TOUCH)
         pointer = packet.info.touchInfo.pointerInfo
         pointer.pointerType, pointer.pointerId = PT_TOUCH, 1
@@ -126,6 +125,12 @@ class TouchDevice:
         pointer.ptPixelLocation = W.POINT(*position)
         # Let Windows timestamp the frame; retry identical frames if too close.
         for attempt in range(4):
+            # Initialization and ERROR_NOT_READY waits can outlive a stop or
+            # window change. Recheck immediately before every contact frame.
+            if before_send is not None:
+                before_send()
+            if self.promotion_filter:
+                self.promotion_filter.expect(position)
             if self.inject(self.handle, C.byref(packet), 1):
                 return
             error = C.get_last_error()
@@ -152,8 +157,9 @@ class TouchScriptInput:
         self.position = None
         self.pressed = False
         self.last_frame = 0
+        self.check_input = None
 
-    def begin(self, target):
+    def begin(self, target, *, check_input=None):
         if not target:
             raise ValueError('스크립트를 실행하려면 앱을 선택하세요.')
         if not self.native.active(target):
@@ -161,6 +167,7 @@ class TouchScriptInput:
         if self.target != target:
             self.close()
         self.target = target
+        self.check_input = check_input
         if not self.pressed:
             self.position = self.native.screen(target, *self.native.cursor(target))
 
@@ -177,11 +184,18 @@ class TouchScriptInput:
         if not self.native.active(self.target) or not self.native.point_belongs_to(self.target, *self.position):
             raise ValueError('터치 위치가 대상 창에 가려졌거나 대상 창이 비활성 상태입니다.')
 
+    def check_contact(self):
+        if self.check_input is not None:
+            self.check_input()
+        self.validate_pointer(self.target)
+
     def _send(self, flags):
-        if self.device is None:
-            self.device = self.device_factory()
         try:
-            self.device.send(self.position, flags)
+            if self.device is None:
+                self.device = self.device_factory()
+            # Release frames must still be sent after cancellation/focus loss.
+            check = self.check_contact if flags & (DOWN | UPDATE) else None
+            self.device.send(self.position, flags, before_send=check)
             self.last_frame = time.monotonic()
         except Exception:
             self.close()

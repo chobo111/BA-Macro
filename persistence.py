@@ -63,7 +63,8 @@ class ProfileStore:
         recent = self.directory / Path(settings.last_profile).name if settings.last_profile else None
         path = recent if recent and recent.is_file() else self.directory / 'macro.json'
         try:
-            profile = Profile.read(read_json(path)) if path.exists() else Profile.default()
+            profile = (Profile.read(read_json(path)) if path.exists()
+                       else Profile.default((settings.capture_hk, settings.pause_hk)))
             profile.validate((settings.capture_hk, settings.pause_hk))
             if not path.exists() and not settings_valid:
                 path = None
@@ -81,7 +82,7 @@ class ProfileStore:
                 except Exception as error:
                     warnings.append(f'설정 저장 실패: {error}')
         except Exception as error:
-            profile, path = Profile.default(), None
+            profile, path = Profile.default((settings.capture_hk, settings.pause_hk)), None
             warnings.append(f'프로필 불러오기 실패: {error}')
         return LoadedProfile(settings, profile, path, ' · '.join(warnings))
 

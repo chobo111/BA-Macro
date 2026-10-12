@@ -74,7 +74,7 @@ class MainWindow(QMainWindow):
         self.profile_saves = ProfileSaves()
         self.settings_error = ""
         self.settings = Settings()
-        self.profile = Profile.default()
+        self.profile = Profile.default((self.settings.capture_hk, self.settings.pause_hk))
         self.load_error = ""
         self.hook_enabled = hook_enabled
         loaded = self.store.load()
@@ -555,7 +555,8 @@ class MainWindow(QMainWindow):
                 if latest != current and not same_program(current, latest):
                     self.statusBar().showMessage('선택한 앱이 변경되었습니다. 다시 선택하세요.')
                     return None
-                candidate = deepcopy(self.profile) if choice == 'copy' else Profile.default()
+                candidate = (deepcopy(self.profile) if choice == 'copy'
+                             else Profile.default((self.settings.capture_hk, self.settings.pause_hk)))
                 candidate.target_program = latest
                 self.validate_profile_shortcuts(candidate)
                 self.stop()
@@ -950,7 +951,7 @@ class MainWindow(QMainWindow):
             self.store.validate_profile_path(path)
             if not self.confirm_changes():
                 return
-            candidate = Profile.default()
+            candidate = Profile.default((self.settings.capture_hk, self.settings.pause_hk))
             self.stop()
             self.commit_start_profile(candidate, path)
             self.finish_script_editor()

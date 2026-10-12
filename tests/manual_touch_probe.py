@@ -37,9 +37,9 @@ class Probe(QWidget):
         self.frames = []
         owner = self
         class RecordingDevice(TouchDevice):
-            def send(self, position, flags):
+            def send(self, position, flags, *, before_send=None):
                 before = owner.native.cursor_screen()
-                super().send(position, flags)
+                super().send(position, flags, before_send=before_send)
                 owner.frames.append({'point': position, 'cursor_before': before,
                                      'cursor_after': owner.native.cursor_screen()})
         self.native.create_touch_input = lambda: TouchScriptInput(self.native, RecordingDevice)

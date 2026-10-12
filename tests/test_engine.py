@@ -9,7 +9,7 @@ class FakeScriptInput:
     """In-memory interpreter backend used to isolate scheduling tests."""
     def __init__(self, native): self.native = native
     def __getattr__(self, name): return getattr(self.native, name)
-    def begin(self, target): pass
+    def begin(self, target, *, check_input=None): pass
     def keep_alive(self): pass
     def close(self): pass
     def move(self, x, y): self.native.events.append(('move', x, y))

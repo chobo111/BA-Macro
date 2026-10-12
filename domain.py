@@ -102,8 +102,11 @@ class Profile:
     target_program: dict = field(default_factory=dict)
 
     @classmethod
-    def default(cls):
-        return cls([Row(move_hk=k, action_mode="move_and_click") for k in ("q", "w", "e")])
+    def default(cls, reserved=()):
+        # Keep three presets, leaving only keys owned by global shortcuts blank.
+        reserved = {hotkey(key) for key in reserved}
+        return cls([Row(move_hk="" if k in reserved else k, action_mode="move_and_click")
+                    for k in ("q", "w", "e")])
 
     @classmethod
     def read(cls, data):
