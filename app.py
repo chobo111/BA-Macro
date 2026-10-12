@@ -365,18 +365,17 @@ class MainWindow(QMainWindow):
             self.rebuild(rid)
             return
         size, identity = prepared
-        if identity is not None:
-            self.profile.resolution = size
-            self.profile.target_program = identity
+        self.profile.resolution = size
+        self.profile.target_program = identity
         self.set_value(rid, field, value)
 
     @editing_dialog(hooks=False, pause=False)
     def prepare_manual_coordinate_basis(self, *, basis=None, confirm_app=True):
-        """Return (size, initial app identity), or None when the edit is denied.
+        """Return (size, app identity), or None when the edit is denied.
 
-        An already matching basis has no new identity. Callers commit an initial
-        basis with the actual row edit or retain it in the script editor's draft.
-        Drafts defer app confirmation until saving.
+        Matching dimensions do not imply a matching app. Table edits confirm
+        ownership before committing; scripts retain it in the draft and confirm
+        on save. Both paths recheck the profile and size after any prompt.
         """
         target, profile, path = self.target, self.profile, self.path
         original_basis = profile.resolution
@@ -387,15 +386,13 @@ class MainWindow(QMainWindow):
         try:
             size = tuple(self.native.size(target))
             basis = basis or profile.resolution
-            if basis == size:
-                return size, None
-            if basis is None and not profile.has_fixed_coordinates():
+            if basis == size or (basis is None and not profile.has_fixed_coordinates()):
                 identity = (self.confirm_coordinate_app(target) if confirm_app
                             else self.native.window_identity(target))
                 if identity is None:
                     return None
                 if (self.profile is not profile or self.path != path or self.target != target or
-                        profile.resolution is not None or tuple(self.native.size(target)) != size):
+                        profile.resolution != original_basis or tuple(self.native.size(target)) != size):
                     raise ValueError('입력 중 앱 또는 프로필 기준이 변경되었습니다. 다시 입력하세요.')
                 return size, identity
             self.stop()
@@ -1019,7 +1016,7 @@ class MainWindow(QMainWindow):
         except Exception as error:
             self.dirty = True
             self.update_labels()
-            self.statusBar().showMessage(f'저장 실패: {error}')
+            self.statusBar().show_save_result(f'저장 실패: {error}', failed=True)
             return False
 
     def save_completed(self, revision, result):
@@ -1031,11 +1028,11 @@ class MainWindow(QMainWindow):
             self.settings.last_profile = result.recent_name
         self.update_labels()
         if not result.profile_saved:
-            self.statusBar().showMessage(f'자동저장 실패: {result.error} · 변경사항은 아직 저장되지 않았습니다.')
+            self.statusBar().show_save_result(f'자동저장 실패: {result.error} · 변경사항은 아직 저장되지 않았습니다.', failed=True)
         elif result.error:
-            self.statusBar().showMessage(f'프로필 저장 완료 · 설정/최근 프로필 정보 저장 실패: {result.error}')
+            self.statusBar().show_save_result(f'프로필 저장 완료 · 설정/최근 프로필 정보 저장 실패: {result.error}', failed=True)
         else:
-            self.statusBar().showMessage(f'저장 완료: {self.path}')
+            self.statusBar().show_save_result(f'저장 완료: {self.path}')
 
     def flush_pending_saves(self):
         for revision, future in self.profile_saves.pending():

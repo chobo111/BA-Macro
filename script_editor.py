@@ -273,6 +273,11 @@ class ScriptEditor(QDialog):
             raise ValueError('프로필 기준 크기가 변경되었습니다. 편집기를 다시 열어 주세요.')
         return profile
 
+    def check_capture_program(self, identity):
+        if (self.capture_program is not None and identity != self.capture_program
+                and not same_program(self.capture_program, identity)):
+            raise ValueError('좌표를 가져온 앱이 변경되었습니다. 편집기를 다시 열어 주세요.')
+
     def can_edit_coordinates(self):
         try:
             self.validate_capture_profile()
@@ -286,10 +291,10 @@ class ScriptEditor(QDialog):
             if prepared is None:
                 return False
             size, identity = prepared
-            if identity is not None:
-                # Share the capture draft: cancellation never writes profile metadata.
-                self.capture_resolution = size
-                self.capture_program = identity
+            self.check_capture_program(identity)
+            # Share the capture draft: cancellation never writes profile metadata.
+            self.capture_resolution = size
+            self.capture_program = identity
             return True
         except (ValueError, OSError) as error:
             self.log(str(error), error=True)
@@ -312,9 +317,7 @@ class ScriptEditor(QDialog):
                 self.log('해상도 기준이 다릅니다. 편집기를 닫고 설정 → 프로필 해상도 변환을 먼저 진행하세요.', error=True)
                 return
             identity = self.native.window_identity(self.target)
-            if self.capture_program is not None and identity != self.capture_program and not same_program(self.capture_program, identity):
-                self.log('좌표를 가져온 앱이 변경되었습니다. 편집기를 다시 열어 주세요.', error=True)
-                return
+            self.check_capture_program(identity)
             warning = ''
             converted = basis is not None and basis != size
             if converted:

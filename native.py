@@ -203,9 +203,6 @@ class Windows:
         get_pid(foreground(), C.byref(pid))
         return pid.value == process_id
 
-    def foreground(self):
-        return int(foreground() or 0)
-
     def cursor_screen(self):
         return cursor_position()
 

@@ -507,12 +507,16 @@ class UiTests(unittest.TestCase):
         w.armed = True
         w.target = 99
         w.profile.resolution = (1280,720)
-        with patch.object(w.native,'exists',return_value=True), patch.object(w.native,'size',return_value=(1280,720)):
+        identity = {"exe": "Game.exe", "class": "Game", "title": "Game"}
+        with patch.object(w.native, 'exists', return_value=True), \
+             patch.object(w.native, 'size', return_value=(1280,720)), \
+             patch.object(w.native, 'window_identity', return_value=identity):
             w.table.cellWidget(0, 1).setValue(125)
         self.assertFalse(w.armed)
         w.flush_pending_saves()
         self.assertFalse(w.dirty)
         self.assertEqual(Profile.read(self.saved(w.path)).rows[0].x,125)
+        self.assertEqual(Profile.read(self.saved(w.path)).target_program, identity)
         w.table.item(0, 4).setText("첫 번째 스킬")
         rid = w.profile.rows[0].id
         w.move_row(0, 2)

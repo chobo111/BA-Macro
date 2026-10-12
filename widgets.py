@@ -190,8 +190,20 @@ class RowsTable(AnimatedRowsTable):
 
 
 class BriefStatusBar(QStatusBar):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._save_message = False
+
     def showMessage(self, message, timeout=4000):
+        self._save_message = False
         super().showMessage(message, timeout)
+
+    def show_save_result(self, message, *, failed=False):
+        # Success must not replace an action notice or restart its expiry timer.
+        # A retry may replace its own save failure; failures are always visible.
+        if failed or self._save_message or not self.currentMessage():
+            self.showMessage(message)
+            self._save_message = True
 
 
 class ClickToCaptureEdit(QKeySequenceEdit):
