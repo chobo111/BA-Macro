@@ -2,7 +2,7 @@
 from pathlib import Path
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox,
-    QComboBox, QPushButton, QGroupBox)
+    QComboBox, QPushButton, QGroupBox, QDialogButtonBox)
 from conversion import plan_conversion
 from widgets import ResizeDialog
 
@@ -50,6 +50,40 @@ class ResolutionInput(QGroupBox):
         size = self.presets.itemData(index)
         if size:
             self.set_value(size)
+
+
+class BaselineResolutionDialog(QDialog):
+    """Ask for the author's coordinate basis without guessing or scaling data."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('프로필 기준 해상도 지정')
+        self.resize(360, 220)
+        layout = QVBoxLayout(self)
+        notice = QLabel('저장된 좌표의 기준 해상도가 없습니다.\n'
+                        '좌표를 작성했을 당시의 앱 내부 크기를 입력하세요.\n'
+                        '좌표는 그대로 유지됩니다. 저장한 뒤 다시 시작해 주세요.')
+        notice.setWordWrap(True)
+        layout.addWidget(notice)
+        self.resolution = ResolutionInput('좌표를 작성한 해상도', None, self.update_save_button)
+        layout.addWidget(self.resolution)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
+        self.save_button.setText('저장')
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('취소')
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.update_save_button()
+
+    def value(self):
+        return self.resolution.value()
+
+    def update_save_button(self):
+        self.save_button.setEnabled(all(value > 0 for value in self.value()))
+
+    def accept(self):
+        if all(value > 0 for value in self.value()):
+            super().accept()
 
 
 class ConversionDialog(QDialog):

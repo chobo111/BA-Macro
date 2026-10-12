@@ -27,7 +27,7 @@ from script_editor import ScriptEditor
 from persistence import ProfileStore
 from profile_saves import ProfileSaves
 from profile_dialogs import RenameProfileDialog, ProfileInfoDialog
-from conversion_dialog import ConversionDialog
+from conversion_dialog import ConversionDialog, BaselineResolutionDialog
 from version import APP_NAME, VERSION
 from theme import DARK, LIGHT, palette, stylesheet
 from session import ExecutionSession, editing_dialog
@@ -576,6 +576,9 @@ class MainWindow(QMainWindow):
                 return None
         if not selection_valid():
             return None
+        if resolution is None and profile.has_fixed_coordinates():
+            self.set_missing_profile_resolution(current)
+            return None
         current_size = tuple(self.native.size(target))
         if resolution:
             if current_size != resolution:
@@ -614,6 +617,32 @@ class MainWindow(QMainWindow):
             self.commit_start_profile(candidate, self.path or self.next_profile_path())
             self.profile.target_program = dict(current)
         return plan
+
+    def set_missing_profile_resolution(self, approved_app):
+        """Commit only a user-specified basis, leaving execution stopped."""
+        profile, path, target = self.profile, self.path, self.target
+        self.stop()
+        with managed_dialog(BaselineResolutionDialog(self)) as dialog:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            resolution = dialog.value()
+        if (self.profile is not profile or self.path != path or self.target != target
+                or profile.resolution is not None or not self.native.exists(target)):
+            self.statusBar().showMessage('앱 또는 프로필이 변경되었습니다. 다시 시작하세요.')
+            return
+        current = self.native.window_identity(target)
+        if current != approved_app and not same_program(approved_app, current):
+            self.statusBar().showMessage('선택한 앱이 변경되었습니다. 다시 시작하세요.')
+            return
+        candidate = replace(profile, resolution=resolution, target_program=dict(current))
+        self.commit_start_profile(candidate, path or self.next_profile_path())
+        profile.resolution = resolution
+        profile.target_program = dict(current)
+        self.update_labels()
+        message = '프로필 기준 해상도를 저장했습니다. 다시 시작을 눌러 주세요.'
+        if self.settings_error:
+            message += f' · 최근 프로필 정보 저장 실패: {self.settings_error}'
+        self.statusBar().showMessage(message)
 
     def commit_start_profile(self, candidate, path):
         """Save the approved candidate before changing the current profile/app."""
