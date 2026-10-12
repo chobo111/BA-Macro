@@ -15,11 +15,12 @@ from PySide6.QtWidgets import (
     QSystemTrayIcon, QMenu, QGroupBox, QSizePolicy, QFrame,
 )
 
-from domain import MODES, Profile, Row, Settings, read_json, same_program, WindowSizeUnavailable
+from domain import MODES, Profile, Row, read_json, same_program, WindowSizeUnavailable
 from engine import Engine
 from native import Windows
 from interactive_resize import resize as resize_window
 from hotkeys import Hotkeys
+from keyboard_hook import current_keyboard_layout
 from execution_plan import ExecutionPlan
 from coordinate_transform import aspect_warning
 from coordinate_cache import scaled_point
@@ -66,20 +67,17 @@ class MainWindow(QMainWindow):
         self.dirty = False
         self.rebuilding = False
         self.script_editor = None
-        self.path = None
         self.data_dir = Path(data_dir or BASE).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.store = ProfileStore(self.data_dir)
         self.settings_path = self.store.settings_path
         self.profile_saves = ProfileSaves()
         self.settings_error = ""
-        self.settings = Settings()
-        self.profile = Profile.default((self.settings.capture_hk, self.settings.pause_hk))
-        self.load_error = ""
         self.hook_enabled = hook_enabled
         loaded = self.store.load()
         self.settings, self.profile, self.path = loaded.settings, loaded.profile, loaded.path
         self.load_error = loaded.warning
+        self._validated_shortcuts = None
         self.bridge = Bridge()
         self.engine = Engine(self.native, lambda key: self.hooks.held(key), self.bridge.error.emit)
         self.hooks = Hotkeys(self.bridge.action.emit, self.eligible, self.engine.stop, self.bridge.error.emit)
@@ -454,8 +452,13 @@ class MainWindow(QMainWindow):
 
     def validate_profile_shortcuts(self, profile, settings=None):
         settings = self.settings if settings is None else settings
-        Hotkeys.validate((settings.capture_hk, settings.pause_hk,
-                          *(row.move_hk for row in profile.rows)))
+        keys = (settings.capture_hk, settings.pause_hk,
+                *(row.move_hk for row in profile.rows))
+        signature = (keys, current_keyboard_layout())
+        if signature != self._validated_shortcuts:
+            # Memo/coordinate autosaves reuse only a successful validation.
+            Hotkeys.validate(keys)
+            self._validated_shortcuts = signature
 
     def rebind(self):
         values = [(self.settings.pause_hk, "pause", ""), (self.settings.capture_hk, "capture_selected", "")]

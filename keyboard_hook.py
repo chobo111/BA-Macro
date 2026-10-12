@@ -34,6 +34,12 @@ K.GetCurrentThreadId.argtypes, K.GetCurrentThreadId.restype = [], W.DWORD
 
 U.VkKeyScanW.argtypes, U.VkKeyScanW.restype = [W.WCHAR], C.c_short
 U.MapVirtualKeyW.argtypes, U.MapVirtualKeyW.restype = [W.UINT, W.UINT], W.UINT
+U.GetKeyboardLayout.argtypes, U.GetKeyboardLayout.restype = [W.DWORD], W.HANDLE
+
+
+def current_keyboard_layout():
+    """Identify the calling thread's layout used by character/scan mapping."""
+    return U.GetKeyboardLayout(0)
 
 
 def key_scan_code(virtual_key):

@@ -32,6 +32,8 @@ class CoordinateTextEdit(QPlainTextEdit):
             finally:
                 cursor.endEditBlock()
             after = self.toPlainText()
+            if after == before:
+                return True
             new = coordinate_tokens(after)
             if not new or new == coordinate_tokens(before):
                 return True

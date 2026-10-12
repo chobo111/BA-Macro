@@ -580,6 +580,30 @@ class CoordinateEditTests(unittest.TestCase):
         self.assertEqual(field.toPlainText(),'click ')
         self.assertFalse(field.editing)
 
+    def test_navigation_and_selection_skip_coordinate_scans(self):
+        from script_language import coordinate_tokens
+        source = '// 😀 메모\n' + 'click 100,200\n' * 7000
+        field = self.editor(source).editor
+        with patch('coordinate_editor.coordinate_tokens', wraps=coordinate_tokens) as scan, \
+                patch.object(field, 'can_edit_coordinates') as guard:
+            for key, modifiers in ((Qt.Key.Key_Left, Qt.KeyboardModifier.NoModifier),
+                                   (Qt.Key.Key_Right, Qt.KeyboardModifier.ShiftModifier),
+                                   (Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)):
+                QTest.keyClick(field, key, modifiers)
+            self.assertTrue(field.textCursor().hasSelection())
+            self.assertEqual(field.toPlainText(), source)
+            scan.assert_not_called()
+            guard.assert_not_called()
+
+    def test_ineffective_delete_keeps_undo_history_without_scanning(self):
+        field = self.editor('click 640,360').editor
+        QTest.keyClicks(field, ' // note')
+        with patch('coordinate_editor.coordinate_tokens') as scan:
+            QTest.keyClick(field, Qt.Key.Key_Delete)
+            scan.assert_not_called()
+        QTest.keyClick(field, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(field.toPlainText(), 'click 640,360 // not')
+
     def test_long_numbers_show_save_error_and_preserve_profile_until_corrected(self):
         row=self.w.profile.rows[0]
         row.action_mode='script';row.script='sleep 1'
