@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import sys
 
-from PySide6.QtCore import Qt, Signal, QObject, QTimer, QStandardPaths, QSize
+from PySide6.QtCore import Qt, Signal, QObject, QTimer, QStandardPaths, QSize, QSignalBlocker, QModelIndex, QItemSelectionModel
 from PySide6.QtGui import QKeySequence
 
 from PySide6.QtWidgets import (
@@ -282,60 +282,116 @@ class MainWindow(QMainWindow):
     def changed(self):
         self.pause_for_configuration()
         self.dirty = True
-        self.update_labels()
         return self.save(automatic=True)
 
     def row(self, row_id):
         return next((r for r in self.profile.rows if r.id == row_id), None)
 
     def rebuild(self, selected=None):
+        """Synchronize by row ID so edits and moves retain existing controls."""
+        table = self.table
         self.rebuilding = True
-        self.table.clearSpans()
-        self.table.setRowCount(0)
-        self.table.setRowCount(len(self.profile.rows))
-        coordinate_width = self.table.fontMetrics().horizontalAdvance("-99999") + 16
-        for column in (1, 2):
-            self.table.setColumnWidth(column, coordinate_width)
-        for i, row in enumerate(self.profile.rows):
+        try:
+            with QSignalBlocker(table):
+                current = [table.item(i, 4).data(Qt.ItemDataRole.UserRole)
+                           for i in range(table.rowCount())]
+                desired = [row.id for row in self.profile.rows]
+                if current != desired:
+                    # Qt moves items/widgets, but spans remain at their old indices.
+                    table.clearSpans()
+                    desired_ids = set(desired)
+                    for i in range(len(current) - 1, -1, -1):
+                        if current[i] not in desired_ids:
+                            table.removeRow(i)
+                            current.pop(i)
+                    for i, rid in enumerate(desired):
+                        if i < len(current) and current[i] == rid:
+                            continue
+                        if rid in current:
+                            origin = current.index(rid)
+                            table.model().moveRows(QModelIndex(), origin, 1, QModelIndex(), i)
+                            current.insert(i, current.pop(origin))
+                        else:
+                            table.insertRow(i)
+                            current.insert(i, rid)
+                coordinate_width = table.fontMetrics().horizontalAdvance("-99999") + 16
+                for column in (1, 2):
+                    if table.columnWidth(column) != coordinate_width:
+                        table.setColumnWidth(column, coordinate_width)
+                for i, row in enumerate(self.profile.rows):
+                    self.sync_row(i, row)
+        finally:
+            self.rebuilding = False
+        if self.profile.rows:
+            index = next((i for i, r in enumerate(self.profile.rows) if r.id == selected), 0)
+            # Moving focus to an existing cell widget can alter selection.
+            # Apply the final row selection after that focus change.
+            table.setCurrentCell(index, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+            table.selectionModel().select(table.model().index(index, 0),
+                                          QItemSelectionModel.SelectionFlag.ClearAndSelect
+                                          | QItemSelectionModel.SelectionFlag.Rows)
+        if selected is None:
+            self.update_labels()
+
+    def sync_row(self, index, row):
+        table = self.table
+        item = table.item(index, 4)
+        if item is None:
             item = QTableWidgetItem(row.memo)
             item.setData(Qt.ItemDataRole.UserRole, row.id)
-            self.table.setItem(i, 4, item)
+            table.setItem(index, 4, item)
             button = self.button(row.move_hk.upper().replace('&', '&&'), lambda checked=False, rid=row.id: self.edit_key(rid))
             button.setToolTip('단축키 지정')
             button.setAccessibleName('단축키 지정')
-            self.table.setCellWidget(i, 0, button)
-            if row.action_mode == 'script':
-                self.table.setSpan(i, 1, 1, 2)
-                script_button = self.button('스크립트 작성', lambda checked=False, rid=row.id: self.edit_script(rid))
-                script_button.setToolTip('스크립트 편집' if row.script else '실행할 스크립트를 작성하세요')
-                self.table.setCellWidget(i, 1, script_button)
-            else:
-                for column, field in ((1, "x"), (2, "y")):
-                    spin = NoWheelSpinBox()
-                    spin.setRange(-99999, 99999)
-                    spin.setValue(getattr(row, field))
-                    spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-                    spin.valueChanged.connect(lambda value, rid=row.id, f=field: self.edit_coordinate_value(rid, f, value))
-                    self.table.setCellWidget(i, column, spin)
+            table.setCellWidget(index, 0, button)
             mode = NoWheelCombo()
             mode.setMinimumContentsLength(1)
             mode.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             for value, label in MODES.items():
                 mode.addItem(label, value)
                 mode.setItemData(mode.count() - 1, label, Qt.ItemDataRole.ToolTipRole)
-            mode.setCurrentIndex(list(MODES).index(row.action_mode))
+            mode.currentIndexChanged.connect(lambda value, rid=row.id: self.set_value(rid, "action_mode", list(MODES)[value]))
+            table.setCellWidget(index, 3, mode)
+        if item.text() != row.memo:
+            item.setText(row.memo)
+        if item.toolTip() != row.memo:
+            item.setToolTip(row.memo)
+        button = table.cellWidget(index, 0)
+        key_text = row.move_hk.upper().replace('&', '&&')
+        if button.text() != key_text:
+            button.setText(key_text)
+        mode = table.cellWidget(index, 3)
+        mode_index = list(MODES).index(row.action_mode)
+        if mode.currentIndex() != mode_index:
+            with QSignalBlocker(mode):
+                mode.setCurrentIndex(mode_index)
+        if mode.toolTip() != MODES[row.action_mode]:
             mode.setToolTip(MODES[row.action_mode])
-            mode.currentIndexChanged.connect(lambda index, widget=mode: widget.setToolTip(list(MODES.values())[index]))
-            mode.currentIndexChanged.connect(lambda index, rid=row.id: self.set_value(rid, "action_mode", list(MODES)[index]))
-            self.table.setCellWidget(i, 3, mode)
-        self.rebuilding = False
-        self.table.update_memo_tooltips()
-        if selected:
-            index = next((i for i, r in enumerate(self.profile.rows) if r.id == selected), 0)
-            self.table.selectRow(index)
-        elif self.profile.rows:
-            self.table.selectRow(0)
-        self.update_labels()
+        if row.action_mode == 'script':
+            if table.columnSpan(index, 1) != 2:
+                table.setSpan(index, 1, 1, 2)
+            if not isinstance(table.cellWidget(index, 1), QPushButton):
+                table.removeCellWidget(index, 2)
+                script_button = self.button('스크립트 작성', lambda checked=False, rid=row.id: self.edit_script(rid))
+                table.setCellWidget(index, 1, script_button)
+            script_button = table.cellWidget(index, 1)
+            tip = '스크립트 편집' if row.script else '실행할 스크립트를 작성하세요'
+            if script_button.toolTip() != tip:
+                script_button.setToolTip(tip)
+        else:
+            if table.columnSpan(index, 1) != 1:
+                table.setSpan(index, 1, 1, 1)
+            for column, field in ((1, "x"), (2, "y")):
+                spin = table.cellWidget(index, column)
+                if not isinstance(spin, NoWheelSpinBox):
+                    spin = NoWheelSpinBox()
+                    spin.setRange(-99999, 99999)
+                    spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+                    spin.valueChanged.connect(lambda value, rid=row.id, f=field: self.edit_coordinate_value(rid, f, value))
+                    table.setCellWidget(index, column, spin)
+                if spin.value() != getattr(row, field):
+                    with QSignalBlocker(spin):
+                        spin.setValue(getattr(row, field))
 
     def live_memo_changed(self, index, text):
         if not self.rebuilding and 0 <= index < len(self.profile.rows):
@@ -471,9 +527,10 @@ class MainWindow(QMainWindow):
             self.stop()
 
     def stop(self):
+        was_armed = self.armed
         self.session.stop()
         self.engine.stop()
-        if hasattr(self, "pause_button"):
+        if was_armed and hasattr(self, "pause_button"):
             self.update_labels()
 
     def toggle(self):
@@ -903,7 +960,7 @@ class MainWindow(QMainWindow):
         self.restart_hooks()
 
     def move_row(self, origin, target):
-        if origin == target or not 0 <= target < len(self.profile.rows):
+        if origin == target or not (0 <= origin < len(self.profile.rows) and 0 <= target < len(self.profile.rows)):
             return
         row = self.profile.rows.pop(origin)
         self.profile.rows.insert(target, row)
