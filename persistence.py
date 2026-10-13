@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path, PureWindowsPath
 from hashlib import sha256
+import json
 from domain import Profile, Settings, atomic_json, read_json
 
 
@@ -172,14 +173,17 @@ class ProfileStore:
             self._release_recent_copy(path)
             return path
         copy = self.recent_copies.get(path)
+        content = None
         if copy is not None:
             try:
-                unchanged = sha256(copy.path.read_bytes()).digest() == copy.fingerprint
+                content = copy.path.read_bytes()
+                unchanged = sha256(content).digest() == copy.fingerprint
             except OSError:
                 unchanged = False
             if not unchanged:
                 del self.recent_copies[path]
                 copy = None
+                content = None
         if copy is None:
             local = self.directory / path.name
             number = 1
@@ -189,9 +193,18 @@ class ProfileStore:
                 number += 1
         else:
             local = copy.path
-        snapshot = profile if profile is not None else read_json(path)
-        if copy is None or read_json(local) != snapshot:
-            atomic_json(local, snapshot)
+        if profile is None:
+            source = path.read_bytes()
+            if content is not None and source == content:
+                return local
+            snapshot = json.loads(source.decode('utf-8-sig'))
+        else:
+            snapshot = profile
+        # Reuse the bytes already checked for external edits. An unchanged copy
+        # needs neither a rewrite nor a second fingerprint read.
+        if copy is not None and json.loads(content.decode('utf-8-sig')) == snapshot:
+            return local
+        atomic_json(local, snapshot)
         self.recent_copies[path] = _RecentCopy(local, sha256(local.read_bytes()).digest())
         return local
 

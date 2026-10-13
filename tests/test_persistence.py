@@ -374,6 +374,59 @@ class PersistenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.settings(None, asdict(loaded.settings))
 
+    def test_identical_external_copy_reads_each_file_once_without_parsing_or_writing(self):
+        with tempfile.TemporaryDirectory() as external:
+            source = Path(external) / 'shared.json'
+            first = self.store.save(source, Profile.default().export(), self.settings).result()
+            local = self.store.directory / first.recent_name
+            reads = []
+            read_bytes = Path.read_bytes
+            def read(path):
+                reads.append(path)
+                return read_bytes(path)
+            with patch.object(Path, 'read_bytes', read), \
+                    patch('persistence.json.loads') as parse, \
+                    patch('persistence.atomic_json') as write:
+                self.assertEqual(self.store.settings(source, self.settings), local.name)
+                self.assertEqual(reads.count(source), 1)
+                self.assertEqual(reads.count(local), 1)
+                parse.assert_not_called()
+                write.assert_not_called()
+
+    def test_equivalent_external_json_formats_preserve_copy_without_rewrite(self):
+        import json
+        with tempfile.TemporaryDirectory() as external:
+            source = Path(external) / 'shared.json'
+            profile = Profile.default().export()
+            profile['macros'][0]['memo'] = '한글 메모'
+            first = self.store.save(source, profile, self.settings).result()
+            local = self.store.directory / first.recent_name
+            original = local.read_bytes()
+            for encoding in ('utf-8', 'utf-8-sig'):
+                with self.subTest(encoding=encoding):
+                    source.write_text(json.dumps(profile, ensure_ascii=False), encoding=encoding)
+                    with patch('persistence.atomic_json') as write:
+                        self.assertEqual(self.store.settings(source, self.settings), local.name)
+                        write.assert_not_called()
+                    self.assertEqual(local.read_bytes(), original)
+
+    def test_unchanged_profile_snapshot_reuses_verified_copy_bytes(self):
+        with tempfile.TemporaryDirectory() as external:
+            source = Path(external) / 'shared.json'
+            profile = Profile.default().export()
+            first = self.store.save(source, profile, self.settings).result()
+            local = self.store.directory / first.recent_name
+            reads = []
+            read_bytes = Path.read_bytes
+            def read(path):
+                reads.append(path)
+                return read_bytes(path)
+            with patch.object(Path, 'read_bytes', read), \
+                    patch('persistence.atomic_json') as write:
+                self.assertEqual(self.store._sync_recent_copy(source, profile), local)
+                self.assertEqual(reads, [local])
+                write.assert_not_called()
+
     def test_recent_copy_reused_only_while_store_owned_and_unchanged(self):
         with tempfile.TemporaryDirectory() as external:
             source = Path(external) / 'shared.json'
