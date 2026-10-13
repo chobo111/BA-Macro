@@ -995,27 +995,39 @@ class UiTests(unittest.TestCase):
         w.flush_pending_saves()
         self.assertFalse(w.dirty)
 
+    def wait_for_conversion(self, dialog):
+        for _ in range(300):
+            if dialog.future is None:
+                return
+            QTest.qWait(10)
+        self.fail('Coordinate conversion did not finish')
+
     def test_conversion_dialog_unknown_resolution_presets_and_errors(self):
         from conversion_dialog import ConversionDialog
         w = self.window
         dialog = ConversionDialog(w.profile,w.path,None,lambda *args: False,w)
+        self.wait_for_conversion(dialog)
         self.assertFalse(dialog.copy_button.isEnabled())
         self.assertEqual(dialog.source.value(),(0,0))
         dialog.source.set_value((1920,1080))
         dialog.destination.mode.setCurrentText('4:3')
         dialog.refresh()
+        self.wait_for_conversion(dialog)
         self.assertEqual(dialog.destination.value(),(640,480))
         self.assertTrue(dialog.copy_button.isEnabled())
         self.assertTrue(dialog.apply_button.isEnabled())
         self.assertIn('비율',dialog.notice.text())
         dialog.destination.mode.setCurrentText('16:9')
         dialog.refresh()
+        self.wait_for_conversion(dialog)
         self.assertTrue(dialog.copy_button.isEnabled())
         dialog.profile.rows[0].x=1920
         dialog.refresh()
+        self.wait_for_conversion(dialog)
         self.assertFalse(dialog.copy_button.isEnabled())
         dialog.profile.rows[0].x=0
         dialog.refresh()
+        self.wait_for_conversion(dialog)
         self.assertTrue(dialog.copy_button.isEnabled())
         dialog.close()
 
@@ -1704,16 +1716,19 @@ class UiTests(unittest.TestCase):
         before = w.profile.export(), w.path.read_bytes()
         with patch.object(w, 'save_conversion', wraps=w.save_conversion) as save:
             dialog = ConversionDialog(w.profile, w.path, (1000,1000), save, w)
+            self.wait_for_conversion(dialog)
             try:
                 self.assertFalse(dialog.apply_button.isEnabled())
                 self.assertFalse(dialog.copy_button.isEnabled())
                 self.assertIn('100,000', dialog.error.text())
                 for mode in ('apply', 'copy'):
                     dialog.save(mode)
+                    self.wait_for_conversion(dialog)
                     self.assertEqual((w.profile.export(), w.path.read_bytes()), before)
                 save.assert_not_called()
                 dialog.destination.set_value((50,50))
                 dialog.save('apply')
+                self.wait_for_conversion(dialog)
                 self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
                 save.assert_called_once()
                 saved = Profile.read(read_json(w.path))
@@ -1733,10 +1748,12 @@ class UiTests(unittest.TestCase):
             Row(move_hk='2', action_mode='script', script='')], (1920,1080))
         self.assertTrue(w.save())
         dialog = ConversionDialog(w.profile, w.path, (1280,720), w.save_conversion, w)
+        self.wait_for_conversion(dialog)
         self.assertEqual(dialog.error.text(), '')
         self.assertTrue(dialog.copy_button.isEnabled())
         self.assertTrue(dialog.apply_button.isEnabled())
         dialog.save('apply')
+        self.wait_for_conversion(dialog)
         self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
         saved = Profile.read(read_json(w.path))
         self.assertEqual(saved.resolution, (1280,720))
@@ -1775,11 +1792,13 @@ class UiTests(unittest.TestCase):
         before = w.profile.export()
         saved = Mock(return_value=False)
         dialog = ConversionDialog(w.profile,w.path,(1280,720),saved,w)
+        self.wait_for_conversion(dialog)
         self.assertTrue(dialog.copy_button.isEnabled())
         dialog.destination.set_value((1280,960))
         self.assertFalse(dialog.copy_button.isEnabled())
         for mode in ('copy','apply'):
             dialog.save(mode)
+            self.wait_for_conversion(dialog)
             self.assertEqual(saved.call_args.args[0].resolution,(1280,960))
         self.assertEqual(saved.call_count,2)
         self.assertEqual(w.profile.export(),before)
@@ -1788,6 +1807,7 @@ class UiTests(unittest.TestCase):
         self.assertEqual(dialog.error.text(),'')
         dialog.destination.set_value((1835,1032))
         dialog.refresh()
+        self.wait_for_conversion(dialog)
         self.assertTrue(dialog.apply_button.isEnabled())
         self.assertEqual(dialog.notice.text(),'')
         dialog.reject()
@@ -2105,6 +2125,7 @@ class UiTests(unittest.TestCase):
                         other.edit_key(other.profile.rows[1].id)
                         self.assertEqual(other.profile.rows[1].move_hk, '')
                         self.assertTrue(other.dirty)
+                        self.assertIn('●', other.windowTitle())
                         self.assertFalse(other.armed)
                         self.assertEqual(other.hooks.bindings, [])
                         self.assertIn('남은 충돌', other.statusBar().currentMessage())

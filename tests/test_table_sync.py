@@ -201,3 +201,21 @@ class TableSyncTests(unittest.TestCase):
             self.test_delete_preserves_survivors_and_selects_previous_row()
         finally:
             QTest.keyRelease(self.window.table, Qt.Key.Key_Control)
+
+    def test_failed_save_as_restores_title_and_autosave_path(self):
+        from app import QFileDialog
+        from persistence import SaveResult
+        w = self.window
+        original = w.path
+        destination = original.with_name('failed-copy.json')
+        with patch.object(QFileDialog, 'getSaveFileName', return_value=(str(destination), '')), \
+                patch.object(w.store, '_save', return_value=SaveResult(False, error='denied')):
+            self.assertFalse(w.save_as())
+        self.assertEqual(w.path, original)
+        self.assertIn('● ' + original.stem + ' —', w.windowTitle())
+        self.assertNotIn(destination.stem, w.windowTitle())
+        self.assertIn('denied', w.statusBar().currentMessage())
+        w.live_memo_changed(0, 'after failed save-as')
+        w.flush_pending_saves()
+        self.assertEqual(read_json(original)['macros'][0]['memo'], 'after failed save-as')
+        self.assertFalse(destination.exists())

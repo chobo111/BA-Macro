@@ -1,5 +1,6 @@
 """Transactional profile coordinate conversion, independent of the UI."""
 from copy import deepcopy
+from concurrent.futures import CancelledError
 from dataclasses import dataclass
 import re
 
@@ -13,16 +14,21 @@ POINT = re.compile(r'(-?\d+)(\s*,\s*)(-?\d+)')
 @dataclass
 class ConversionPlan:
     profile: object
-    changes: list
+    changed_points: int
     errors: list
     warnings: list
     script_points: int = 0
 
 
-def plan_conversion(profile, source, destination):
+def plan_conversion(profile, source, destination, *, cancelled=None):
+    def check_cancelled():
+        if cancelled is not None and cancelled():
+            raise CancelledError()
+
+    check_cancelled()
     sw, sh, dw, dh = [bounded_int(v, 1, 100000, '해상도') for v in (*source, *destination)]
     warning = aspect_warning((sw, sh), (dw, dh))
-    plan = ConversionPlan(deepcopy(profile), [], [], [warning] if warning else [])
+    plan = ConversionPlan(deepcopy(profile), 0, [], [warning] if warning else [])
 
     def point(x, y, location):
         try:
@@ -30,10 +36,11 @@ def plan_conversion(profile, source, destination):
         except CoordinateOutOfBounds:
             plan.errors.append(f'{location}: {x}, {y} — 원본 해상도 범위 밖입니다.')
             return x, y
-        plan.changes.append((location, (x, y), new))
+        plan.changed_points += (x, y) != new
         return new
 
     for index, row in enumerate(plan.profile.rows, 1):
+        check_cancelled()
         label = f'{index}행' + (f' · {row.move_hk.upper()}' if row.move_hk else '')
         row.x, row.y = point(row.x, row.y, f'{label} · 표')
         # Empty script rows have no script coordinates to validate or convert.
@@ -46,6 +53,7 @@ def plan_conversion(profile, source, destination):
             continue
         lines = []
         for line_no, raw in enumerate(row.script.splitlines(keepends=True), 1):
+            check_cancelled()
             command = raw.strip().split(maxsplit=1)
             if command and command[0].lower() in COORD_COMMANDS:
                 code, separator, comment = raw.partition('//')
@@ -61,5 +69,6 @@ def plan_conversion(profile, source, destination):
             compile_script(row.script)
         except ValueError as error:
             plan.errors.append(f'{label} · 변환 후 스크립트 {error}')
+    check_cancelled()
     plan.profile.resolution = (dw, dh)
     return plan

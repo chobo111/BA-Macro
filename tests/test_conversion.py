@@ -118,3 +118,23 @@ class ConversionTests(unittest.TestCase):
         self.assertFalse(plan.errors)
         self.assertEqual(plan.profile.resolution, (1280,960))
         self.assertEqual(profile.export(), before)
+
+    def test_aggregate_counts_unchanged_rounded_and_nested_release_points(self):
+        profile = Profile([Row(x=0, y=0, script=(
+            'loop 2\ncurve 1,1 mouse 2,2\nloop_end\nrelease_actions\nclick 0,0 10,10'))], (100,100))
+        plan = plan_conversion(profile, (100,100), (50,50))
+        self.assertEqual(plan.changed_points, 3)
+        self.assertEqual(plan.script_points, 4)
+        self.assertEqual(plan.errors, [])
+
+    def test_cancelled_conversion_preserves_original(self):
+        from concurrent.futures import CancelledError
+        profile = Profile([Row(x=1, y=2, script='click 10,10\n' * 100)])
+        before = profile.export()
+        checks = []
+        def cancelled():
+            checks.append(True)
+            return len(checks) > 10
+        with self.assertRaises(CancelledError):
+            plan_conversion(profile, (100,100), (200,200), cancelled=cancelled)
+        self.assertEqual(before, profile.export())

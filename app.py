@@ -911,6 +911,7 @@ class MainWindow(QMainWindow):
                             raise
                         self.profile_saves.begin()
                         self.dirty = True
+                        self.update_labels()
                         self.block_conflicting_shortcuts(error)
                         self.rebuild(rid)
                         return
@@ -1116,6 +1117,7 @@ class MainWindow(QMainWindow):
         if self.save():
             return True
         self.path = previous
+        self.update_labels()
         return False
 
     @editing_dialog(hooks=False)

@@ -3,7 +3,7 @@ from pathlib import Path
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox,
     QComboBox, QPushButton, QGroupBox, QDialogButtonBox)
-from conversion import plan_conversion
+from conversion_jobs import ConversionJobs
 from widgets import ResizeDialog
 
 
@@ -92,6 +92,15 @@ class ConversionDialog(QDialog):
         self.profile, self.path = profile, Path(path)
         self.save_callback = save_callback
         self.plan = None
+        self.future = None
+        self.pending_save = None
+        self.jobs = jobs = ConversionJobs()
+        # This fallback owns only plain Python worker state, never a deleted widget.
+        self.destroyed.connect(lambda *_: jobs.close())
+        self.finished.connect(self.finish_conversion)
+        self.poll = QTimer(self)
+        self.poll.setInterval(25)
+        self.poll.timeout.connect(self.check_result)
         self.setWindowTitle('프로필 해상도 변환')
         self.resize(600, 320)
         layout = QVBoxLayout(self)
@@ -142,40 +151,77 @@ class ConversionDialog(QDialog):
         layout.addLayout(buttons)
         self.refresh()
 
-    def schedule(self):
+    def invalidate(self):
+        self.jobs.cancel()
+        self.future = None
+        self.plan = None
+        self.pending_save = None
+        self.poll.stop()
         self.copy_button.setEnabled(False)
         self.apply_button.setEnabled(False)
+
+    def schedule(self):
+        if self.jobs.closed:
+            return
+        self.invalidate()
         self.timer.start()
 
-    def refresh(self):
-        self.plan = None
+    def refresh(self, *, save_mode=None):
+        if self.jobs.closed:
+            return
+        self.timer.stop()
+        self.invalidate()
         self.error.clear()
+        self.notice.clear()
+        self.summary.clear()
         try:
-            if 0 in (*self.source.value(), *self.destination.value()):
+            source, destination = self.source.value(), self.destination.value()
+            if 0 in (*source, *destination):
                 raise ValueError('원본과 대상의 너비·높이를 모두 입력하세요. 원본은 제작 당시 해상도입니다.')
-            self.plan = plan_conversion(self.profile, self.source.value(), self.destination.value())
-            plan = self.plan
-            changed = sum(before != after for _, before, after in plan.changes)
-            self.summary.setText(f'표 {len(plan.profile.rows)}행 · 스크립트 좌표 {plan.script_points}개 · 변경 {changed}개')
+            self.future = self.jobs.submit(self.profile, source, destination)
+            self.pending_save = save_mode
+            self.summary.setText('좌표를 변환하고 있습니다…')
+            self.poll.start()
+        except Exception as error:
+            self.error.setText(str(error))
+
+    def check_result(self):
+        # Only the latest request is observed; cancelled work has no GUI callback.
+        if self.future is None or not self.future.done():
+            return
+        future, self.future = self.future, None
+        save_mode, self.pending_save = self.pending_save, None
+        self.poll.stop()
+        try:
+            self.plan = plan = future.result()
+            self.summary.setText(f'표 {len(plan.profile.rows)}행 · 스크립트 좌표 {plan.script_points}개 · 변경 {plan.changed_points}개')
             self.notice.setText('\n'.join(plan.warnings))
             if plan.errors:
                 details = '\n'.join(plan.errors[:3])
                 remaining = f'\n외 {len(plan.errors) - 3}개' if len(plan.errors) > 3 else ''
                 self.error.setText(f'오류 {len(plan.errors)}개: 원본 좌표 또는 스크립트를 수정하세요.\n{details}{remaining}')
-        except ValueError as error:
+        except Exception as error:
+            self.plan = None
             self.summary.clear()
-            self.notice.clear()
             self.error.setText(str(error))
         valid = self.plan is not None and not self.plan.errors
         self.copy_button.setEnabled(valid)
         self.apply_button.setEnabled(valid)
+        if valid and save_mode is not None:
+            try:
+                if self.save_callback(self.plan.profile, save_mode, self):
+                    self.accept()
+            except Exception as error:
+                self.error.setText(f'저장 실패: {error}')
 
     def save(self, mode):
-        self.refresh()
-        if self.plan is None or self.plan.errors:
-            return
-        try:
-            if self.save_callback(self.plan.profile, mode, self):
-                self.accept()
-        except Exception as error:
-            self.error.setText(f'저장 실패: {error}')
+        if self.pending_save is None:
+            # Recheck a fresh snapshot before saving, including any pending edits.
+            self.refresh(save_mode=mode)
+
+    def finish_conversion(self, *_):
+        self.timer.stop()
+        self.poll.stop()
+        self.future = None
+        self.pending_save = None
+        self.jobs.close()
