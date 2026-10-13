@@ -1092,6 +1092,64 @@ class UiTests(unittest.TestCase):
             self.assertIsNone(dialog.call_args.args[2])
             size.assert_not_called()
 
+    def test_minimized_target_allows_manual_profile_conversion_and_save(self):
+        from conversion_dialog import ConversionDialog
+        from domain import WindowSizeUnavailable
+        from PySide6.QtWidgets import QLabel
+        w = self.window
+        w.timer.stop()
+        w.target = 99
+        w.profile.resolution = (1920, 1080)
+        w.profile.rows[0].x, w.profile.rows[0].y = 300, 600
+        self.assertTrue(w.save())
+
+        def convert(dialog):
+            self.assertEqual(dialog.source.value(), (1920, 1080))
+            self.assertEqual(dialog.destination.value(), (0, 0))
+            self.assertFalse(dialog.apply_button.isEnabled())
+            self.assertTrue(any('크기 확인 불가' in label.text() for label in dialog.findChildren(QLabel)))
+            dialog.destination.set_value((1280, 720))
+            dialog.save('apply')
+            self.wait_for_conversion(dialog)
+            self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+            return dialog.result()
+
+        with patch.object(w.native, 'exists', return_value=True), \
+             patch.object(w.native, 'size', side_effect=WindowSizeUnavailable()), \
+             patch.object(ConversionDialog, 'exec', convert), patch.object(w, 'error') as error:
+            w.convert_dialog()
+            error.assert_not_called()
+        saved = Profile.read(read_json(w.path))
+        self.assertEqual(saved.resolution, (1280, 720))
+        self.assertEqual((saved.rows[0].x, saved.rows[0].y), (200, 400))
+
+    def test_minimized_target_conversion_cancel_preserves_profile(self):
+        from conversion_dialog import ConversionDialog
+        from domain import WindowSizeUnavailable
+        w = self.window
+        w.timer.stop()
+        w.target = 99
+        self.assertTrue(w.save())
+        original = w.path.read_bytes()
+        with patch.object(w.native, 'exists', return_value=True), \
+             patch.object(w.native, 'size', side_effect=WindowSizeUnavailable()), \
+             patch.object(ConversionDialog, 'exec', return_value=QDialog.DialogCode.Rejected) as dialog, \
+             patch.object(w, 'error') as error:
+            w.convert_dialog()
+            dialog.assert_called_once()
+            error.assert_not_called()
+        self.assertEqual(w.path.read_bytes(), original)
+
+    def test_conversion_reports_unexpected_size_error(self):
+        w = self.window
+        w.target = 99
+        with patch.object(w.native, 'exists', return_value=True), \
+             patch.object(w.native, 'size', side_effect=OSError('size failed')), \
+             patch('app.ConversionDialog') as dialog, patch.object(w, 'error') as error:
+            w.convert_dialog()
+            dialog.assert_not_called()
+            error.assert_called_once_with('size failed')
+
     def test_script_capture_converts_mismatched_resolution_to_profile_basis(self):
         w=self.window
         w.profile.resolution=(1920,1080)

@@ -108,7 +108,7 @@ class ConversionDialog(QDialog):
         title.setToolTip(str(self.path))
         layout.addWidget(title)
         baseline = '%d × %d' % profile.resolution if profile.resolution else '알 수 없음'
-        target_size = '%d × %d' % destination if destination else '대상 창 미선택'
+        target_size = '%d × %d' % destination if destination else '크기 확인 불가'
         layout.addWidget(QLabel(f'프로필 기록: {baseline}  ·  현재 {target_label}: {target_size}'))
         if reason:
             notice = QLabel(reason)

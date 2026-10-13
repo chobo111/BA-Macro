@@ -239,6 +239,35 @@ class EngineTests(unittest.TestCase):
         self.assertFalse(any(event[0]=='button' for event in self.native.events))
         self.assertEqual(self.native.position,(200,300))
 
+    def test_cursor_moved_within_target_during_delay_cancels_click(self):
+        from unittest.mock import patch
+        for restore in (True, False):
+            with self.subTest(return_cursor=restore):
+                self.native.events.clear()
+                self.native.position = (200, 300)
+                def move_cursor(milliseconds, command):
+                    self.native.position = (900, 500)
+                with patch.object(self.engine, 'wait', side_effect=move_cursor):
+                    with self.assertRaisesRegex(ValueError, '위치가 변경'):
+                        self.engine.execute(replace(self.command, return_cursor=restore))
+                self.assertFalse(any(event[0] == 'button' for event in self.native.events))
+                self.assertEqual(self.native.position, (200, 300) if restore else (900, 500))
+
+    def test_target_moved_during_delay_cancels_click(self):
+        from unittest.mock import patch
+        with patch.object(self.native, 'screen', side_effect=[(30, 40), (130, 140)]):
+            with self.assertRaisesRegex(ValueError, '위치가 변경'):
+                self.engine.execute(self.command)
+        self.assertFalse(any(event[0] == 'button' for event in self.native.events))
+        self.assertEqual(self.native.position, (200, 300))
+
+    def test_click_validates_screen_coordinates_on_negative_monitor(self):
+        from unittest.mock import patch
+        with patch.object(self.native, 'screen', return_value=(-1890, -160)):
+            self.engine.execute(self.command)
+        self.assertEqual(self.native.events, [
+            ('move', -1890, -160), ('button', True), ('button', False), ('move', 200, 300)])
+
     def test_move_only_still_moves_without_click_hit_test(self):
         from unittest.mock import patch
         with patch.object(self.native,'point_belongs_to',return_value=False) as hit:

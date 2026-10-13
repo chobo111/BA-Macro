@@ -105,6 +105,9 @@ class Engine:
         point = self.native.cursor_screen()
         if not self.native.point_belongs_to(command.hwnd, *point):
             raise ValueError('클릭 위치가 다른 창에 가려졌습니다. 대상 앱이 보이도록 창을 옮겨 주세요.')
+        expected = self.native.screen(command.hwnd, command.x, command.y)
+        if point != expected:
+            raise ValueError('클릭 전 커서 또는 앱 위치가 변경되었습니다. 다시 실행하세요.')
         try:
             self.native.button(True)
             self.wait(command.click_hold_ms, command)

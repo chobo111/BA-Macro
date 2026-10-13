@@ -1278,7 +1278,10 @@ class MainWindow(QMainWindow):
         self.stop()
         self.flush_pending_saves()
         try:
-            current = self.native.size(self.target) if self.target and self.native.exists(self.target) else None
+            try:
+                current = self.native.size(self.target) if self.target and self.native.exists(self.target) else None
+            except WindowSizeUnavailable:
+                current = None
             with managed_dialog(ConversionDialog(
                     self.profile, self.path or self.data_dir / "macro.json",
                     current, self.save_conversion, self, reason)) as dialog:
