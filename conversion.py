@@ -18,6 +18,13 @@ class ConversionPlan:
     errors: list
     warnings: list
     script_points: int = 0
+    error_count: int = 0
+
+    def add_error(self, message, *args):
+        """Count every error, formatting and retaining only the first three."""
+        self.error_count += 1
+        if len(self.errors) < 3:
+            self.errors.append(message.format(*args))
 
 
 def plan_conversion(profile, source, destination, *, cancelled=None):
@@ -34,7 +41,7 @@ def plan_conversion(profile, source, destination, *, cancelled=None):
         try:
             new = transform_point((x, y), (sw, sh), (dw, dh))
         except CoordinateOutOfBounds:
-            plan.errors.append(f'{location}: {x}, {y} — 원본 해상도 범위 밖입니다.')
+            plan.add_error('{}: {}, {} — 원본 해상도 범위 밖입니다.', location, x, y)
             return x, y
         plan.changed_points += (x, y) != new
         return new
@@ -49,7 +56,7 @@ def plan_conversion(profile, source, destination, *, cancelled=None):
         try:
             compile_script(row.script)
         except ValueError as error:
-            plan.errors.append(f'{label} · 스크립트 {error}')
+            plan.add_error('{} · 스크립트 {}', label, error)
             continue
         lines = []
         for line_no, raw in enumerate(row.script.splitlines(keepends=True), 1):
@@ -68,7 +75,7 @@ def plan_conversion(profile, source, destination, *, cancelled=None):
             # Larger coordinates can expand a valid source beyond the load limit.
             compile_script(row.script)
         except ValueError as error:
-            plan.errors.append(f'{label} · 변환 후 스크립트 {error}')
+            plan.add_error('{} · 변환 후 스크립트 {}', label, error)
     check_cancelled()
     plan.profile.resolution = (dw, dh)
     return plan

@@ -138,3 +138,32 @@ class ConversionTests(unittest.TestCase):
         with self.assertRaises(CancelledError):
             plan_conversion(profile, (100,100), (200,200), cancelled=cancelled)
         self.assertEqual(before, profile.export())
+
+    def test_error_detail_limit_preserves_total_and_original(self):
+        for count in (0, 1, 3, 4, 200):
+            with self.subTest(count=count):
+                profile = Profile([Row(x=-1) for _ in range(count)] or [Row()], (100,100))
+                original = profile.export()
+                plan = plan_conversion(profile, (100,100), (200,200))
+                self.assertEqual(plan.error_count, count)
+                self.assertEqual(len(plan.errors), min(count, 3))
+                self.assertEqual(plan.errors, [
+                    f'{i}행 · 표: -1, 0 — 원본 해상도 범위 밖입니다.'
+                    for i in range(1, min(count, 3) + 1)])
+                self.assertEqual(profile.export(), original)
+
+    def test_error_total_includes_later_script_and_expansion_failures(self):
+        profile = Profile([
+            Row(x=-1, script='click -1,0 100,0'),
+            Row(script='invalid'),
+            Row(script='click 99,99\n' * 8000),
+            Row(x=-1),
+        ], (100,100))
+        original = profile.export()
+        plan = plan_conversion(profile, (100,100), (1000,1000))
+        self.assertEqual(plan.error_count, 6)
+        self.assertEqual(len(plan.errors), 3)
+        self.assertTrue(all(message.startswith('1행') for message in plan.errors))
+        self.assertEqual(plan.script_points, 8002)
+        self.assertGreater(len(plan.profile.rows[2].script), 100000)
+        self.assertEqual(profile.export(), original)

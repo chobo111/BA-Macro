@@ -196,15 +196,16 @@ class ConversionDialog(QDialog):
             self.plan = plan = future.result()
             self.summary.setText(f'표 {len(plan.profile.rows)}행 · 스크립트 좌표 {plan.script_points}개 · 변경 {plan.changed_points}개')
             self.notice.setText('\n'.join(plan.warnings))
-            if plan.errors:
-                details = '\n'.join(plan.errors[:3])
-                remaining = f'\n외 {len(plan.errors) - 3}개' if len(plan.errors) > 3 else ''
-                self.error.setText(f'오류 {len(plan.errors)}개: 원본 좌표 또는 스크립트를 수정하세요.\n{details}{remaining}')
+            if plan.error_count:
+                details = '\n'.join(plan.errors)
+                omitted = plan.error_count - len(plan.errors)
+                remaining = f'\n외 {omitted}개' if omitted else ''
+                self.error.setText(f'오류 {plan.error_count}개: 원본 좌표 또는 스크립트를 수정하세요.\n{details}{remaining}')
         except Exception as error:
             self.plan = None
             self.summary.clear()
             self.error.setText(str(error))
-        valid = self.plan is not None and not self.plan.errors
+        valid = self.plan is not None and not self.plan.error_count
         self.copy_button.setEnabled(valid)
         self.apply_button.setEnabled(valid)
         if valid and save_mode is not None:
