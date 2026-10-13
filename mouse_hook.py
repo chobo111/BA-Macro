@@ -30,11 +30,8 @@ class CoordinateHook(PhysicalHook):
                         pid = W.DWORD()
                         U.GetWindowThreadProcessId(U.WindowFromPoint(event.point), C.byref(pid))
                         if pid.value != os.getpid():
-                            try:
-                                self.handler(event.point.x, event.point.y)
-                                suppressed = True
-                                return 1
-                            except Exception:
-                                pass
+                            self.handler(event.point.x, event.point.y)
+                            suppressed = True
+                            return 1
             return U.CallNextHookEx(None, code, message, data)
         self._run_hook(14, callback)

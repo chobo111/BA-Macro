@@ -183,6 +183,52 @@ class HookLifecycleTests(unittest.TestCase):
                     self.assertEqual(errors, [hook.error])
                     self.assertEqual(hook.error.winerror, 5)
 
+    def test_callback_failure_passes_input_releases_hook_and_reports_once(self):
+        import ctypes as C
+        from keyboard_hook import KeyEvent
+        from mouse_hook import MouseEvent, W
+        failure = RuntimeError('input handler failed')
+        broken = Mock(side_effect=failure)
+        cases = [
+            (PhysicalHook(broken), KeyEvent(vk=0x51, scan=16), 0x100),
+            (CoordinateHook(broken), MouseEvent(W.POINT(10, 20), 0, 0, 0, 0), 0x204),
+            (CoordinateHook(Mock(), can_capture=broken), MouseEvent(), 0x204),
+        ]
+        touch = TouchPromotionFilter()
+        touch.matches = broken
+        cases.append((touch, MouseEvent(), 0x200))
+        for hook, event, message in cases:
+            with self.subTest(hook=type(hook).__name__, gate=bool(getattr(hook, 'can_capture', None) is broken)):
+                broken.reset_mock()
+                stack, api = self.fake_os()
+                callbacks, results, errors = [], [], []
+                def installed(kind, callback, module, thread):
+                    callbacks.append(callback)
+                    return 123
+                def pump(*args):
+                    results.append(callbacks[0](0, message, C.addressof(event)))
+                    # Already queued callbacks must pass through after failure.
+                    results.append(callbacks[0](0, message, C.addressof(event)))
+                    return 1
+                def report(error):
+                    api['UnhookWindowsHookEx'].assert_called_once_with(123)
+                    errors.append(error)
+                hook.on_error = report
+                with stack, patch.object(U, 'PostThreadMessageW', return_value=True) as post, \
+                        patch.object(U, 'WindowFromPoint', return_value=1), \
+                        patch.object(U, 'GetWindowThreadProcessId', return_value=1):
+                    api['SetWindowsHookExW'].side_effect = installed
+                    # End the baseline loop too, even before the fix exists.
+                    api['GetMessageW'].side_effect = lambda *args: pump() if not results else 0
+                    api['CallNextHookEx'].return_value = 7
+                    hook.run()
+                    self.assertEqual(results, [7, 7])
+                    self.assertIs(hook.error, failure)
+                    self.assertEqual(errors, [failure])
+                    broken.assert_called_once()
+                    post.assert_called_once_with(42, 0x12, 0, 0)
+                    api['GetMessageW'].assert_called_once()
+
     def test_closed_hook_cannot_start_or_register_again(self):
         for hook, kind in self.hooks():
             with self.subTest(hook=type(hook).__name__):

@@ -90,12 +90,8 @@ class PhysicalHook:
                 event = C.cast(data, C.POINTER(KeyEvent)).contents
                 physical = physical_key_event(event, message)
                 if physical is not None:
-                    try:
-                        accepted = self.handler(physical)
-                        if not accepted:
-                            return 1
-                    except Exception:
-                        pass
+                    if not self.handler(physical):
+                        return 1
             return U.CallNextHookEx(None, code, message, data)
         self._run_hook(13, callback)
 
@@ -106,9 +102,15 @@ class PhysicalHook:
         def guarded_callback(code, message, data):
             # Startup cancellation may happen while Windows is still registering.
             # Even a late registration must pass all input through until released.
-            if self.stopping.is_set():
-                return U.CallNextHookEx(None, code, message, data)
-            return callback(code, message, data)
+            if not self.stopping.is_set() and self.error is None:
+                try:
+                    return callback(code, message, data)
+                except Exception as error:
+                    # ctypes callbacks cannot propagate Python exceptions safely.
+                    # Forward this input, then release/report outside the callback.
+                    self.error = error
+                    U.PostThreadMessageW(self.thread_id, 0x12, 0, 0)
+            return U.CallNextHookEx(None, code, message, data)
         try:
             self.thread_id = K.GetCurrentThreadId()
             msg = W.MSG()
@@ -121,7 +123,7 @@ class PhysicalHook:
             if self.stopping.is_set():
                 return
             self.ready.set()
-            while not self.stopping.is_set():
+            while not self.stopping.is_set() and self.error is None:
                 result = U.GetMessageW(C.byref(msg), None, 0, 0)
                 if result == -1:
                     raise C.WinError(C.get_last_error())
