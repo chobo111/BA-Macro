@@ -74,6 +74,15 @@ class EngineTests(unittest.TestCase):
             time.sleep(.005)
         self.fail("worker did not finish")
 
+    def test_worker_error_keeps_submitted_profile_and_row_context(self):
+        from unittest.mock import patch
+        with patch.object(self.native, 'point_belongs_to', return_value=False):
+            self.engine.submit(replace(self.command, error_context='raid.json · 2행 · Q'))
+            self.wait_idle()
+        self.assertEqual(len(self.errors), 1)
+        self.assertTrue(self.errors[0].startswith('raid.json · 2행 · Q\n'))
+        self.assertIn('가려졌습니다', self.errors[0])
+
     def test_coordinate_modes(self):
         self.engine.execute(self.command)
         self.assertEqual(self.native.events, [("move", 30, 40), ("button", True), ("button", False), ("move", 200, 300)])

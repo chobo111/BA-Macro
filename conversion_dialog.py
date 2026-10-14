@@ -151,6 +151,12 @@ class ConversionDialog(QDialog):
         layout.addLayout(buttons)
         self.refresh()
 
+    def show_error(self, text):
+        self.error.setText(text)
+        parent = self.parentWidget()
+        if parent is not None and hasattr(parent, 'record_error'):
+            parent.record_error('좌표 변환', text)
+
     def invalidate(self):
         self.jobs.cancel()
         self.future = None
@@ -183,7 +189,7 @@ class ConversionDialog(QDialog):
             self.summary.setText('좌표를 변환하고 있습니다…')
             self.poll.start()
         except Exception as error:
-            self.error.setText(str(error))
+            self.show_error(str(error))
 
     def check_result(self):
         # Only the latest request is observed; cancelled work has no GUI callback.
@@ -200,11 +206,11 @@ class ConversionDialog(QDialog):
                 details = '\n'.join(plan.errors)
                 omitted = plan.error_count - len(plan.errors)
                 remaining = f'\n외 {omitted}개' if omitted else ''
-                self.error.setText(f'오류 {plan.error_count}개: 원본 좌표 또는 스크립트를 수정하세요.\n{details}{remaining}')
+                self.show_error(f'오류 {plan.error_count}개: 원본 좌표 또는 스크립트를 수정하세요.\n{details}{remaining}')
         except Exception as error:
             self.plan = None
             self.summary.clear()
-            self.error.setText(str(error))
+            self.show_error(str(error))
         valid = self.plan is not None and not self.plan.error_count
         self.copy_button.setEnabled(valid)
         self.apply_button.setEnabled(valid)
@@ -213,7 +219,7 @@ class ConversionDialog(QDialog):
                 if self.save_callback(self.plan.profile, save_mode, self):
                     self.accept()
             except Exception as error:
-                self.error.setText(f'저장 실패: {error}')
+                self.show_error(f'저장 실패: {error}')
 
     def save(self, mode):
         if self.pending_save is None:

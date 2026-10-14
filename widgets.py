@@ -179,6 +179,20 @@ class RowsTable(AnimatedRowsTable):
         for column, width in ((0, 72), (1, 60), (2, 60), (3, 122), (4, 70)):
             self.setColumnWidth(column, width)
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.RightButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def setCellWidget(self, row, column, widget):
+        super().setCellWidget(row, column, widget)
+        for control in (widget, *widget.findChildren(QLineEdit)):
+            control.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            control.customContextMenuRequested.connect(
+                lambda point, control=control: self.customContextMenuRequested.emit(
+                    self.viewport().mapFromGlobal(control.mapToGlobal(point))))
+
     def update_memo_tooltips(self):
         # Long notes stay within the existing window; show full text on hover.
         with QSignalBlocker(self):
@@ -190,6 +204,8 @@ class RowsTable(AnimatedRowsTable):
 
 
 class BriefStatusBar(QStatusBar):
+    error_raised = Signal(str, str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._save_message = False
@@ -198,9 +214,15 @@ class BriefStatusBar(QStatusBar):
         self._save_message = False
         super().showMessage(message, timeout)
 
+    def show_error(self, message, source='일반'):
+        self.error_raised.emit(source, str(message))
+        self.showMessage(str(message))
+
     def show_save_result(self, message, *, failed=False):
         # Success must not replace an action notice or restart its expiry timer.
         # A retry may replace its own save failure; failures are always visible.
+        if failed:
+            self.error_raised.emit('저장', message)
         if failed or self._save_message or not self.currentMessage():
             self.showMessage(message)
             self._save_message = True
@@ -544,9 +566,12 @@ class ResizeDialog(QDialog):
     def value(self):
         return self.width_input.value(), self.height_input.value()
 
-    def show_message(self, text):
+    def show_message(self, text, *, error=False):
         self.message.setText(text)
         self.message.setVisible(bool(text))
+        parent = self.parentWidget()
+        if error and parent is not None and hasattr(parent, 'record_error'):
+            parent.record_error('창 크기', text)
 
     def set_pending(self, pending):
         self.pending = pending
@@ -581,7 +606,7 @@ class ResizeDialog(QDialog):
         except Exception as error:
             self.release_executor()
             self.set_pending(False)
-            self.show_message(str(error))
+            self.show_message(str(error), error=True)
 
     def release_executor(self):
         if self.resize_executor is not None:
@@ -621,11 +646,11 @@ class ResizeDialog(QDialog):
                 self.set_pending(False)
                 requested = '%d × %d' % self.requested_size
                 measured = '%d × %d' % actual
-                self.show_message(f'요청한 크기로 변경되지 않았습니다. 요청 {requested} / 실제 {measured}')
+                self.show_message(f'요청한 크기로 변경되지 않았습니다. 요청 {requested} / 실제 {measured}', error=True)
         except Exception as error:
             self.verify_timer.stop()
             self.set_pending(False)
-            self.show_message(str(error))
+            self.show_message(str(error), error=True)
 
     def reject(self):
         if not self.pending:

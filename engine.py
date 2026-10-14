@@ -26,6 +26,7 @@ class Command:
     cursor_return_delay_ms: int = 50
     return_cursor: bool = True
     expected_size: tuple[int, int] | None = None
+    error_context: str = ''
 
 
 class Cancelled(Exception):
@@ -190,8 +191,10 @@ class Engine:
             except Exception as error:
                 if isinstance(error, WindowSizeChanged):
                     self.stop()
+                context = c or self.input_context
+                message = f'{context.error_context}\n{error}' if context and context.error_context else str(error)
                 self.close_script_input()
-                self.report(str(error))
+                self.report(message)
             finally:
                 # Covers a switch arriving just after a script's last guard.
                 if self.cancel.is_set():

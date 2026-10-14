@@ -103,7 +103,7 @@ def stylesheet(c):
         QFrame#editorPanel {{background: {c.editor_background}; border: 1px solid {c.border}; border-radius: 0;}}
         QLabel#scriptLog {{background: {c.code_background}; color: {c.muted}; border: 1px solid {c.border}; border-radius: 4px; padding: 6px 8px;}}
         QLabel#scriptLog[error="true"] {{background: {c.error_background}; color: {c.error_text}; border-color: {c.error_border};}}
-        QPlainTextEdit#codeEditor, QTextBrowser#scriptHelp {{background: {c.code_background}; color: {c.text}; border: 1px solid {c.border}; padding: 10px; selection-background-color: {c.selection}; selection-color: {c.selected_text};}}
+        QPlainTextEdit#codeEditor, QPlainTextEdit#errorLog, QTextBrowser#scriptHelp {{background: {c.code_background}; color: {c.text}; border: 1px solid {c.border}; padding: 10px; selection-background-color: {c.selection}; selection-color: {c.selected_text};}}
         QPlainTextEdit#codeEditor {{font-family: Consolas, 'Malgun Gothic'; font-size: 15px;}}
         QDialog#scriptOverlay QPushButton, QDialog#scriptOverlay QComboBox {{padding: 7px 12px; border-radius: 5px;}}
         QDialog#scriptOverlay QPushButton#scriptHelpButton {{padding: 0; border-radius: 16px; font-weight: 700;}}

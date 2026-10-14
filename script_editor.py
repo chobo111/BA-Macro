@@ -204,6 +204,8 @@ class ScriptEditor(QDialog):
             self.accept()
 
     def log(self, message, error=False):
+        if error:
+            self.parentWidget().record_error('스크립트 편집', message)
         self.validation.setText(('오류 · ' if error else '') + message)
         self.validation.setProperty('error', error)
         self.validation.show()

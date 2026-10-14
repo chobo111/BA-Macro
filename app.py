@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from domain import MODES, Profile, Row, read_json, same_program, WindowSizeUnavailable
 from engine import Engine
+from error_log import ErrorLog, ErrorLogDialog
 from native import Windows
 from interactive_resize import resize as resize_window
 from hotkeys import Hotkeys
@@ -84,7 +85,9 @@ class MainWindow(QMainWindow):
         self.bridge.action.connect(self.dispatch, Qt.ConnectionType.QueuedConnection)
         self.bridge.error.connect(self.on_engine_error, Qt.ConnectionType.QueuedConnection)
         self.bridge.saved.connect(self.save_completed, Qt.ConnectionType.QueuedConnection)
+        self.error_log = ErrorLog(self)
         self.setStatusBar(BriefStatusBar(self))
+        self.statusBar().error_raised.connect(self.record_error)
         self.build_ui()
         self.build_menu()
         self.build_tray()
@@ -101,7 +104,8 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
         self.timer.start(100)
-        self.statusBar().showMessage(self.load_error)
+        if self.load_error:
+            self.statusBar().show_error(self.load_error, '초기화')
 
     def button(self, text, callback, primary=False):
         button = QPushButton(text)
@@ -178,6 +182,8 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.pause_button)
         layout.addWidget(toolbar_panel, 0, Qt.AlignmentFlag.AlignLeft)
         self.table = RowsTable()
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.row_context_menu)
         self.table.itemChanged.connect(self.memo_changed)
         self.table.memo_edited.connect(self.live_memo_changed)
         self.table.memo_notice.connect(self.statusBar().showMessage)
@@ -225,6 +231,7 @@ class MainWindow(QMainWindow):
         about = self.menuBar().addMenu("정보")
         about.addAction("프로그램 정보", self.about_dialog)
         about.addAction("현재 프로필 정보", self.profile_info_dialog)
+        about.addAction("오류 로그", self.error_log_dialog)
         self.cursor_label = QLabel("— , —")
         self.cursor_label.setObjectName("cursor")
         self.cursor_label.setFixedWidth(152)
@@ -559,7 +566,7 @@ class MainWindow(QMainWindow):
             self.session.start(plan)
         except WindowSizeUnavailable as error:
             self.stop()
-            self.statusBar().showMessage(str(error))
+            self.statusBar().show_error(str(error))
             return
         except Exception as error:
             self.error(str(error))
@@ -714,7 +721,7 @@ class MainWindow(QMainWindow):
         if result.recent_name:
             self.settings.last_profile = result.recent_name
         if result.error:
-            self.statusBar().showMessage(f'프로필 저장 완료 · 최근 프로필 정보 저장 실패: {result.error}')
+            self.statusBar().show_error(f'프로필 저장 완료 · 최근 프로필 정보 저장 실패: {result.error}')
 
     def dispatch(self, action, rid):
         if not self.eligible(action):
@@ -737,7 +744,8 @@ class MainWindow(QMainWindow):
             if plan is None:
                 return
             try:
-                command = plan.command(row, self.settings)
+                context = f'{self.path.name if self.path else "새 프로필"} · {self.profile.rows.index(row) + 1}행 · {row.move_hk.upper()}'
+                command = replace(plan.command(row, self.settings), error_context=context)
             except ValueError as error:
                 self.on_engine_error(str(error))
                 return
@@ -832,7 +840,7 @@ class MainWindow(QMainWindow):
                 index = self.targets.findData(restored) if restored else 0
             self.targets.setCurrentIndex(max(0, index))
         except Exception as error:
-            self.statusBar().showMessage(str(error))
+            self.statusBar().show_error(str(error))
         self.targets.blockSignals(False)
         self.change_target(remember=False)
 
@@ -850,7 +858,7 @@ class MainWindow(QMainWindow):
                     self.profile.target_program = identity
                     self.changed()
             except OSError as error:
-                self.statusBar().showMessage(str(error))
+                self.statusBar().show_error(str(error))
 
     def tick(self):
         try:
@@ -921,13 +929,13 @@ class MainWindow(QMainWindow):
                     self.changed()
                     self.rebuild(rid)
         except Exception as error:
-            self.statusBar().showMessage(str(error))
+            self.statusBar().show_error(str(error))
 
     def block_conflicting_shortcuts(self, error):
         self.stop()
         self.hooks.close()
         self.hooks.configure([], self.settings.exclusive_hook)
-        self.statusBar().showMessage(f'{error} · 남은 충돌을 수정하세요. 모두 해결하면 자동저장됩니다.')
+        self.statusBar().show_error(f'{error} · 남은 충돌을 수정하세요. 모두 해결하면 자동저장됩니다.', "단축키")
 
     def restart_hooks(self):
         try:
@@ -938,6 +946,81 @@ class MainWindow(QMainWindow):
             self.block_conflicting_shortcuts(error)
         except Exception as error:
             self.on_engine_error(str(error))
+
+    @editing_dialog(hooks=False, pause=False)
+    def row_context_menu(self, point):
+        index = self.table.indexAt(point)
+        if not index.isValid():
+            return
+        row_index = index.row()
+        if not self.table.selectionModel().isRowSelected(row_index, QModelIndex()):
+            self.table.setCurrentCell(row_index, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+            self.table.selectionModel().select(self.table.model().index(row_index, 0),
+                QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
+        selected = self.selected_row_indexes()
+        count = len(selected)
+        row = self.profile.rows[row_index]
+        with managed_dialog(QMenu(self)) as menu:
+            if count == 1:
+                if row.action_mode == 'script':
+                    menu.addAction('스크립트 편집', lambda: self.edit_script(row.id))
+                menu.addAction('단축키 변경…', lambda: self.edit_key(row.id))
+            clear = menu.addAction('단축키 해제' if count == 1 else f'{count}개 행 단축키 해제', self.clear_row_keys)
+            clear.setEnabled(any(self.profile.rows[i].move_hk for i in selected))
+            menu.addSeparator()
+            menu.addAction('복제' if count == 1 else f'{count}개 행 복제', self.duplicate_rows)
+            if count == 1:
+                menu.addAction('위에 행 추가', lambda: self.insert_row(row_index))
+                menu.addAction('아래에 행 추가', lambda: self.insert_row(row_index + 1))
+            menu.addSeparator()
+            menu.addAction('삭제' if count == 1 else f'{count}개 행 삭제', self.delete_rows)
+            menu.exec(self.table.viewport().mapToGlobal(point))
+
+    def selected_row_indexes(self):
+        return sorted(index.row() for index in self.table.selectionModel().selectedRows())
+
+    def clear_row_keys(self):
+        selected = self.selected_row_indexes()
+        if not selected or not any(self.profile.rows[i].move_hk for i in selected):
+            return
+        for i in selected:
+            self.profile.rows[i].move_hk = ''
+        self.changed()
+        self.rebuild(self.profile.rows[selected[0]].id)
+        self.restart_hooks()
+
+    def duplicate_rows(self):
+        selected = self.selected_row_indexes()
+        if not selected:
+            return
+        if len(self.profile.rows) + len(selected) > 200:
+            self.statusBar().showMessage('최대 200행까지 사용할 수 있습니다. 복제할 행 수를 줄여 주세요.')
+            return
+        copies = [replace(self.profile.rows[i], id=Row().id, move_hk='') for i in selected]
+        position = selected[-1] + 1
+        self.profile.rows[position:position] = copies
+        self.changed()
+        self.rebuild(copies[0].id)
+        for i in range(position, position + len(copies)):
+            self.table.selectionModel().select(self.table.model().index(i, 0),
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+
+    def insert_row(self, position):
+        if len(self.profile.rows) >= 200:
+            self.statusBar().showMessage('최대 200행까지 사용할 수 있습니다.')
+            return
+        row = Row()
+        self.profile.rows.insert(position, row)
+        self.changed()
+        self.rebuild(row.id)
+
+    def record_error(self, source, text):
+        self.error_log.record(source, text, self.path.name if self.path else '새 프로필')
+
+    @editing_dialog(hooks=False)
+    def error_log_dialog(self):
+        with managed_dialog(ErrorLogDialog(self.error_log, self)) as dialog:
+            dialog.exec()
 
     def add_row(self):
         if len(self.profile.rows) >= 200:
@@ -1023,10 +1106,11 @@ class MainWindow(QMainWindow):
             self.restart_hooks()
             message = f'새 프로필 생성: {path.name}'
             if self.settings_error:
+                self.record_error('설정 저장', self.settings_error)
                 message += f' · 최근 프로필 정보 저장 실패: {self.settings_error}'
             self.statusBar().showMessage(message)
         except (ValueError, OSError, RuntimeError) as error:
-            self.statusBar().showMessage(f'새 프로필 생성 실패: {error}')
+            self.statusBar().show_error(f'새 프로필 생성 실패: {error}')
 
     @editing_dialog(hooks=False)
     def open_profile(self):
@@ -1110,7 +1194,7 @@ class MainWindow(QMainWindow):
         try:
             self.store.validate_profile_path(path)
         except (ValueError, OSError) as error:
-            self.statusBar().showMessage(str(error))
+            self.statusBar().show_error(str(error))
             return False
         previous = self.path
         self.path = Path(path)
@@ -1153,10 +1237,11 @@ class MainWindow(QMainWindow):
             self.update_labels()
             message = f'프로필 이름 변경 완료: {destination.stem}'
             if result.error:
+                self.record_error('설정 저장', result.error)
                 message += f' · 최근 프로필 정보 저장 실패: {result.error}'
             self.statusBar().showMessage(message)
         except (ValueError, OSError, RuntimeError) as error:
-            self.statusBar().showMessage(f'이름 변경 실패: {error}')
+            self.statusBar().show_error(f'이름 변경 실패: {error}')
 
     def profile_details(self):
         def size_text(size):
@@ -1227,7 +1312,7 @@ class MainWindow(QMainWindow):
                     self.update_labels()
                     break
                 except ShortcutError as error:
-                    self.statusBar().showMessage(str(error))
+                    self.statusBar().show_error(str(error))
                     break
                 except Exception as error:
                     self.error(str(error))
@@ -1265,6 +1350,8 @@ class MainWindow(QMainWindow):
                 if accepted:
                     message = ('창 크기를 변경했습니다. 다시 시작을 눌러 주세요.' if profile_size else
                                '창 내부 크기 변경 완료: %d × %d' % dialog.current_size)
+                    if dialog.refresh_notice:
+                        self.record_error('창 크기', dialog.refresh_notice)
                     self.statusBar().showMessage(message + (' · ' + dialog.refresh_notice if dialog.refresh_notice else ''))
                     if convert:
                         self.convert_dialog(reason="창 크기가 바뀌었습니다. 저장 좌표도 새 해상도에 맞출 수 있습니다.")
@@ -1320,15 +1407,17 @@ class MainWindow(QMainWindow):
         self.update_labels()
         message = f'변환 완료: {path.name}'
         if result.error:
+            self.record_error('설정 저장', result.error)
             message += f' · 최근 프로필 정보 저장 실패: {result.error}'
         self.statusBar().showMessage(message)
         return True
 
     def on_engine_error(self, text):
         self.stop()
-        self.statusBar().showMessage("중단: " + text)
+        self.statusBar().show_error("중단: " + text, "실행")
 
     def error(self, text):
+        self.record_error('일반', text)
         self.stop()
         previous = self.modal
         self.modal = True
@@ -1345,7 +1434,7 @@ class MainWindow(QMainWindow):
             self.pin_button.blockSignals(True)
             self.pin_button.setChecked(not enabled)
             self.pin_button.blockSignals(False)
-            self.statusBar().showMessage(str(error))
+            self.statusBar().show_error(str(error))
 
     def restore(self):
         self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
@@ -1385,7 +1474,7 @@ class MainWindow(QMainWindow):
         try:
             self.persist_settings()
         except Exception as error:
-            self.statusBar().showMessage(str(error))
+            self.statusBar().show_error(str(error))
         self.shutdown()
         event.accept()
         QApplication.instance().quit()
