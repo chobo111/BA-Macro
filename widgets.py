@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 
-from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent, QSignalBlocker, QKeyCombination, QPersistentModelIndex
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent, QSignalBlocker, QKeyCombination, QPersistentModelIndex, QRectF
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolygon, QPen, QValidator
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QHeaderView, QAbstractItemView,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate, QStatusBar, QTabWidget, QWidget, QFrame, QApplication,
 )
 
+from theme import LIGHT
 from domain import Settings
 from shortcuts import hotkey, qt_hotkey, SHORTCUT_GUIDE
 from row_drag import AnimatedRowsTable
@@ -41,19 +42,57 @@ def make_icon():
     return QIcon(pixmap)
 
 
-def make_run_icon(running):
+def make_run_icon(running, color):
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor('#102b1a' if running else '#ffffff'))
+    painter.setBrush(QColor(color))
     if running:
         painter.drawRoundedRect(7, 7, 18, 18, 2, 2)
     else:
         painter.drawPolygon(QPolygon([QPoint(8, 5), QPoint(27, 16), QPoint(8, 27)]))
     painter.end()
     return QIcon(pixmap)
+
+
+class RunButton(QPushButton):
+    """Two steady status colors, independent of target focus."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.running = False
+        self.apply_theme(LIGHT)
+        self.setToolTip('정지 상태')
+        self.setAccessibleDescription('정지 상태')
+
+    def apply_theme(self, colors):
+        self.colors = colors
+        self.icons = (make_run_icon(False, colors.text), make_run_icon(True, colors.text))
+        self.setIcon(self.icons[self.running])
+        self.update()
+
+    def set_running(self, running):
+        running = bool(running)
+        if self.running == running:
+            return
+        self.running = running
+        self.setIcon(self.icons[running])
+        description = '작동 중' if running else '정지 상태'
+        self.setToolTip(description)
+        self.setAccessibleDescription(description)
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        color = self.colors.status_running if self.running else self.colors.status_stopped
+        painter.setBrush(QColor(color if self.isEnabled() else self.colors.disabled_text))
+        painter.drawEllipse(QRectF(self.width() - 15, (self.height() - 7) / 2, 7, 7))
+        painter.end()
 
 
 def make_pin_icon(muted, accent):

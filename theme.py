@@ -24,6 +24,8 @@ class ThemeColors:
     error_background: str
     error_text: str
     error_border: str
+    status_stopped: str
+    status_running: str
 
 
 DARK = ThemeColors(
@@ -34,6 +36,7 @@ DARK = ThemeColors(
     editor_background='#182634', code_background='#0e1822',
     command='#66cfff', comment='#8fa0b2',
     error_background='#352327', error_text='#ffb0a6', error_border='#a55450',
+    status_stopped='#f27881', status_running='#63d68d',
 )
 LIGHT = ThemeColors(
     background='#f0f5fa', panel='#ffffff', text='#172b40', muted='#526d85',
@@ -43,6 +46,7 @@ LIGHT = ThemeColors(
     editor_background='#f0f5fa', code_background='#ffffff',
     command='#075f91', comment='#526d85',
     error_background='#fff0ee', error_text='#a12d24', error_border='#dba29c',
+    status_stopped='#c63848', status_running='#21834a',
 )
 
 
@@ -88,8 +92,7 @@ def stylesheet(c):
         QPushButton:hover:enabled {{border-color: {c.accent}; background: {c.alternate};}}
         QPushButton:pressed:enabled {{background: {c.border};}}
         QPushButton:checked {{background: {c.selection}; color: {c.selected_text}; border-color: {c.accent};}}
-        QPushButton#primary {{background: #cf4452; color: #ffffff; border: none; font-weight: 700;}}
-        QPushButton#primary[running="true"] {{background: #39b86a; color: #102b1a;}}
+        RunButton {{padding-right: 25px; font-weight: 600;}}
         QTableWidget {{background: {c.panel}; alternate-background-color: {c.alternate}; border: 1px solid {c.border}; border-radius: 8px; selection-background-color: {c.selection}; selection-color: {c.selected_text};}}
         QTableWidget::item {{padding: 4px;}}
         QHeaderView {{background: {c.background};}}
@@ -108,5 +111,5 @@ def stylesheet(c):
         QDialog#scriptOverlay QPushButton, QDialog#scriptOverlay QComboBox {{padding: 7px 12px; border-radius: 5px;}}
         QDialog#scriptOverlay QPushButton#scriptHelpButton {{padding: 0; border-radius: 16px; font-weight: 700;}}
         QWidget:disabled, QLabel:disabled, QMenu::item:disabled {{color: {c.disabled_text};}}
-        QPushButton:disabled, QPushButton#primary:disabled, QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled, QKeySequenceEdit:disabled {{background: {c.disabled_background}; color: {c.disabled_text}; border-color: {c.disabled_border};}}
+        QPushButton:disabled, QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled, QKeySequenceEdit:disabled {{background: {c.disabled_background}; color: {c.disabled_text}; border-color: {c.disabled_border};}}
     """

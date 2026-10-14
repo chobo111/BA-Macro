@@ -36,7 +36,7 @@ from session import ExecutionSession, editing_dialog
 from shortcuts import ShortcutError, qt_hotkey
 from single_instance import SingleInstance
 from startup_dialogs import AppMismatchDialog, SizeMismatchDialog, CoordinateAppDialog, ManualCoordinateDialog
-from widgets import (managed_dialog, make_icon, make_run_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
+from widgets import (managed_dialog, make_icon, RunButton, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
                      BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog, NoWheelCombo, NoWheelSpinBox)
 
 BASE = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
@@ -107,11 +107,9 @@ class MainWindow(QMainWindow):
         if self.load_error:
             self.statusBar().show_error(self.load_error, '초기화')
 
-    def button(self, text, callback, primary=False):
+    def button(self, text, callback):
         button = QPushButton(text)
         button.clicked.connect(callback)
-        if primary:
-            button.setObjectName("primary")
         return button
 
     def build_ui(self):
@@ -175,9 +173,9 @@ class MainWindow(QMainWindow):
         self.pin_button.setToolTip("다른 창보다 항상 위에 표시")
         self.pin_button.toggled.connect(self.pin)
         toolbar.addWidget(self.pin_button)
-        self.pause_button = self.button("시작", self.toggle, True)
+        self.pause_button = RunButton()
+        self.pause_button.clicked.connect(self.toggle)
         self.pause_button.setFixedSize(106, 30)
-        self.run_icons = (make_run_icon(False), make_run_icon(True))
         self.pause_button.setIconSize(QSize(16, 16))
         toolbar.addWidget(self.pause_button)
         layout.addWidget(toolbar_panel, 0, Qt.AlignmentFlag.AlignLeft)
@@ -263,6 +261,8 @@ class MainWindow(QMainWindow):
         self.theme_colors = colors = DARK if dark else LIGHT
         self.setPalette(palette(colors))
         self.setStyleSheet(stylesheet(colors))
+        self.pause_button.apply_theme(colors)
+        self.pause_button.setFixedWidth(max(106, self.pause_button.sizeHint().width()))
         self.pin_button.setIcon(make_pin_icon(colors.muted, colors.accent))
         self.delete_button.setIcon(make_trash_icon(colors.muted))
         if self.script_editor is not None:
@@ -275,12 +275,7 @@ class MainWindow(QMainWindow):
         self.pause_button.setText(shortcut_text.replace('&', '&&'))
         action = "정지" if self.armed else "시작"
         self.pause_button.setAccessibleName(f'{action} ({shortcut_text})')
-        if self.pause_button.property("running") != self.armed:
-            self.pause_button.setProperty("running", self.armed)
-            self.pause_button.setIcon(self.run_icons[bool(self.armed)])
-            self.pause_button.style().unpolish(self.pause_button)
-            self.pause_button.style().polish(self.pause_button)
-            self.pause_button.update()
+        self.pause_button.set_running(self.armed)
         self.pause_button.setFixedWidth(max(106, self.pause_button.sizeHint().width()))
         self.setWindowTitle(f"{'● ' if self.dirty else ''}{name} — {APP_NAME}")
         if hasattr(self, "tray"):
