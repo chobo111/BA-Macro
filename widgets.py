@@ -5,14 +5,15 @@ from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 
-from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent, QSignalBlocker, QKeyCombination, QPersistentModelIndex
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent, QSignalBlocker, QKeyCombination, QPersistentModelIndex, QVariantAnimation, QEasingCurve, QRectF
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolygon, QPen, QValidator
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QHeaderView, QAbstractItemView,
     QSpinBox, QLineEdit, QDialog, QFormLayout, QDialogButtonBox, QCheckBox, QKeySequenceEdit,
-    QStyledItemDelegate, QStatusBar, QTabWidget, QWidget, QFrame, QApplication,
+    QStyledItemDelegate, QStatusBar, QTabWidget, QWidget, QFrame, QApplication, QStyle, QStyleOptionButton,
 )
 
+from theme import LIGHT
 from domain import Settings
 from shortcuts import hotkey, qt_hotkey, SHORTCUT_GUIDE
 from row_drag import AnimatedRowsTable
@@ -41,19 +42,93 @@ def make_icon():
     return QIcon(pixmap)
 
 
-def make_run_icon(running):
+def make_run_icon(running, color):
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor('#102b1a' if running else '#ffffff'))
+    painter.setBrush(QColor(color))
     if running:
         painter.drawRoundedRect(7, 7, 18, 18, 2, 2)
     else:
         painter.drawPolygon(QPolygon([QPoint(8, 5), QPoint(27, 16), QPoint(8, 27)]))
     painter.end()
     return QIcon(pixmap)
+
+
+class RunButton(QPushButton):
+    """A steady status light with a short background transition on start/stop."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.armed = False
+        self.state = 'stopped'
+        self.animation = QVariantAnimation(self)
+        self.animation.setDuration(180)
+        self.animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self.animation.valueChanged.connect(self._animate_background)
+        self.apply_theme(LIGHT)
+        self.setToolTip('정지됨')
+        self.setAccessibleDescription('정지됨')
+
+    def apply_theme(self, colors):
+        self.animation.stop()
+        self.colors = colors
+        self.background = QColor(colors.run_background if self.armed else colors.panel)
+        self.icons = (make_run_icon(False, colors.text), make_run_icon(True, colors.text))
+        self.setIcon(self.icons[self.armed])
+        self.update()
+
+    def _animate_background(self, color):
+        self.background = color
+        self.update()
+
+    def set_state(self, armed, focused):
+        armed = bool(armed)
+        state = 'stopped' if not armed else 'active' if focused else 'waiting'
+        if state == self.state:
+            return
+        if armed != self.armed:
+            self.animation.stop()
+            self.animation.setStartValue(self.background)
+            self.animation.setEndValue(QColor(self.colors.run_background if armed else self.colors.panel))
+            self.animation.start()
+            self.setIcon(self.icons[armed])
+        self.armed, self.state = armed, state
+        description = {'stopped': '정지됨', 'active': '활성화됨',
+                       'waiting': '대기 중 — 앱으로 전환하면 작동'}[state]
+        self.setToolTip(description)
+        self.setAccessibleDescription(description)
+        self.update()
+
+    def sizeHint(self):
+        size = super().sizeHint()
+        size.setWidth(size.width() + 18)
+        return size
+
+    def paintEvent(self, event):
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        colors = self.colors
+        enabled = self.isEnabled()
+        border = colors.accent if enabled and (self.underMouse() or self.hasFocus()) else colors.border
+        background = self.background if enabled else QColor(colors.disabled_background)
+        if enabled and self.isDown():
+            background = background.darker(110)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(border), 1))
+        painter.setBrush(background)
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), 5, 5)
+        option.rect.adjust(0, 0, -18, 0)
+        self.style().drawControl(QStyle.ControlElement.CE_PushButtonLabel, option, painter, self)
+        dot = {'stopped': colors.status_idle, 'active': colors.status_active,
+               'waiting': colors.status_waiting}[self.state]
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(dot if enabled else colors.disabled_text))
+        painter.drawEllipse(QRectF(self.width() - 15, (self.height() - 7) / 2, 7, 7))
+        painter.end()
 
 
 def make_pin_icon(muted, accent):
