@@ -118,7 +118,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(root)
         layout.setContentsMargins(8, 8, 8, 6)
         layout.setSpacing(6)
-        target_box = self.target_box = QGroupBox("대상 창")
+        target_box = self.target_box = QGroupBox("대상 앱")
         target_box.setFixedWidth(384)
         target_layout = QHBoxLayout(target_box)
         target_layout.setContentsMargins(6, 10, 6, 4)
@@ -547,7 +547,7 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage('프로필에 지정된 앱을 찾을 수 없거나 구분할 수 없습니다. 앱을 선택하세요.')
                 return
         if self.target and not self.native.exists(self.target):
-            self.statusBar().showMessage("먼저 대상 창을 선택하세요.")
+            self.statusBar().showMessage("먼저 대상 앱을 선택하세요.")
             return
         self.session.stop()
         try:
@@ -780,7 +780,7 @@ class MainWindow(QMainWindow):
         if not row:
             return
         if not self.native.exists(target):
-            self.statusBar().showMessage('대상 창이 닫혔습니다. 창을 다시 선택하세요.')
+            self.statusBar().showMessage('대상 앱이 닫혔습니다. 창을 다시 선택하세요.')
             return
         try:
             profile, path = self.profile, self.path
@@ -863,7 +863,7 @@ class MainWindow(QMainWindow):
                 self.targets.blockSignals(True)
                 self.targets.setCurrentIndex(0)
                 self.targets.blockSignals(False)
-                self.statusBar().showMessage("대상 창이 닫혔습니다. 새 창을 선택하세요.")
+                self.statusBar().showMessage("대상 앱이 닫혔습니다. 새 창을 선택하세요.")
             if self.target:
                 w, h = self.native.size(self.target)
                 self.check_running_size((w, h))
@@ -1315,13 +1315,13 @@ class MainWindow(QMainWindow):
     @editing_dialog(hooks=False)
     def resize_dialog(self, *, profile_size=None):
         if not self.native.exists(self.target):
-            self.statusBar().showMessage("대상 창을 먼저 선택하세요.")
+            self.statusBar().showMessage("대상 앱을 먼저 선택하세요.")
             return
         try:
             target = self.target
             def read_size():
                 if target != self.target or not self.native.exists(target):
-                    raise OSError("대상 창이 닫혔거나 변경되었습니다.")
+                    raise OSError("대상 앱이 닫혔거나 변경되었습니다.")
                 return self.native.size(target)
             native = self.native
             def request_resize(size):

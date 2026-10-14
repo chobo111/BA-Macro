@@ -87,7 +87,7 @@ class BaselineResolutionDialog(QDialog):
 
 
 class ConversionDialog(QDialog):
-    def __init__(self, profile, path, destination, save_callback, parent=None, reason='', target_label='대상 창 내부'):
+    def __init__(self, profile, path, destination, save_callback, parent=None, reason='', target_label='대상 앱 내부'):
         super().__init__(parent)
         self.profile, self.path = profile, Path(path)
         self.save_callback = save_callback

@@ -163,7 +163,7 @@ class TouchScriptInput:
         if not target:
             raise ValueError('스크립트를 실행하려면 앱을 선택하세요.')
         if not self.native.active(target):
-            raise ValueError('독립 터치는 활성화된 대상 창을 선택해야 사용할 수 있습니다.')
+            raise ValueError('독립 터치는 활성화된 대상 앱을 선택해야 사용할 수 있습니다.')
         if self.target != target:
             self.close()
         self.target = target
@@ -182,7 +182,7 @@ class TouchScriptInput:
 
     def validate_pointer(self, target):
         if not self.native.active(self.target) or not self.native.point_belongs_to(self.target, *self.position):
-            raise ValueError('터치 위치가 대상 창에 가려졌거나 대상 창이 비활성 상태입니다.')
+            raise ValueError('터치 위치가 대상 앱에 가려졌거나 대상 앱이 비활성 상태입니다.')
 
     def check_contact(self):
         if self.check_input is not None:

@@ -463,7 +463,7 @@ class ResizeDialog(QDialog):
 
     def __init__(self, size, parent=None, *, convert_profile=True, request_resize=None, read_size=None):
         super().__init__(parent)
-        self.setWindowTitle("대상 창 크기 조절")
+        self.setWindowTitle("대상 앱 크기 조절")
         self.resize(420, 230)
         self.current_size = tuple(size)
         self.request_resize, self.read_size = request_resize, read_size

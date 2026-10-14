@@ -107,7 +107,7 @@ def restore_process_window(process_id):
 
 def check(value):
     if not value:
-        raise OSError("Windows 입력/창 제어에 실패했습니다. 대상 창과 권한을 확인하세요.")
+        raise OSError("Windows 입력/창 제어에 실패했습니다. 대상 앱과 권한을 확인하세요.")
     return value
 
 
