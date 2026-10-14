@@ -84,7 +84,7 @@ class ScriptEditor(QDialog):
         self.editor = CoordinateTextEdit(source, self.can_edit_coordinates)
         self.editor.setObjectName('codeEditor')
         self.editor.setLineWrapMode(CoordinateTextEdit.LineWrapMode.NoWrap)
-        self.editor.setPlaceholderText('프로그램 밖에서 우클릭하면\n현재 입력 위치에 좌표(x,y)가 추가됩니다.' if target else '앱을 선택한 뒤\n편집기를 다시 열어 주세요.')
+        self.editor.setPlaceholderText('앱 밖에서 우클릭하면\n현재 입력 위치에 좌표(x,y)가 추가됩니다.' if target else '앱을 선택한 뒤\n편집기를 다시 열어 주세요.')
         self.highlighter = Highlighter(self.editor.document(), parent.theme_colors)
         body.addWidget(self.editor, 1)
         layout.addLayout(body, 1)

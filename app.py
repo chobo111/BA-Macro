@@ -227,7 +227,7 @@ class MainWindow(QMainWindow):
         tools.addAction("환경설정", self.settings_dialog)
         tools.addAction("프로필 해상도 변환…", self.convert_dialog)
         about = self.menuBar().addMenu("정보")
-        about.addAction("프로그램 정보", self.about_dialog)
+        about.addAction("앱 정보", self.about_dialog)
         about.addAction("현재 프로필 정보", self.profile_info_dialog)
         about.addAction("오류 로그", self.error_log_dialog)
         self.cursor_label = QLabel("— , —")
@@ -1443,7 +1443,7 @@ class MainWindow(QMainWindow):
 
     @editing_dialog(hooks=False)
     def about_dialog(self):
-        QMessageBox.information(self, '프로그램 정보', f'{APP_NAME}\n버전: {VERSION}')
+        QMessageBox.information(self, '앱 정보', f'{APP_NAME}\n버전: {VERSION}')
 
     def shutdown(self):
         if self.closing:

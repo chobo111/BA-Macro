@@ -199,11 +199,11 @@ class UiTests(unittest.TestCase):
         menus = {action.text(): action.menu() for action in w.menuBar().actions()}
         self.assertIn('정보', menus)
         self.assertNotIn('도움말', menus)
-        self.assertEqual(menus['정보'].actions()[0].text(), '프로그램 정보')
+        self.assertEqual(menus['정보'].actions()[0].text(), '앱 정보')
         self.assertNotIn('변경 기록', [action.text() for action in menus['정보'].actions()])
         with patch.object(QMessageBox, 'information') as about:
             w.about_dialog()
-        self.assertEqual(about.call_args.args[1], '프로그램 정보')
+        self.assertEqual(about.call_args.args[1], '앱 정보')
         self.assertIn(VERSION, about.call_args.args[2])
         editor = ScriptEditor('', w.native, 0, w)
         editor.show()

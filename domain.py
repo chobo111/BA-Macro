@@ -28,10 +28,10 @@ def target_identity(data):
     if not data:
         return {}
     if not isinstance(data, dict) or any(not isinstance(v, str) for v in data.values()):
-        raise ValueError('대상 프로그램 정보가 올바르지 않습니다.')
+        raise ValueError('대상 앱 정보가 올바르지 않습니다.')
     exe = data.get('exe', '')
     if any(character in exe for character in '/\\:'):
-        raise ValueError('대상 프로그램 exe에는 경로가 아닌 실행파일명만 입력하세요.')
+        raise ValueError('대상 앱 exe에는 경로가 아닌 실행파일명만 입력하세요.')
     return {'exe': exe,
             'class': data.get('class', ''), 'title': data.get('title', '')}
 

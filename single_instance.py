@@ -34,7 +34,7 @@ class SingleInstance(QObject):
                 raise OSError('창 열기 요청을 받을 수 없습니다: ' + self.server.errorString())
             return True
         if self.lock.error() != QLockFile.LockError.LockFailedError:
-            raise OSError('프로그램 실행 잠금 파일을 만들 수 없습니다.')
+            raise OSError('앱 실행 잠금 파일을 만들 수 없습니다.')
         pid, *_ = self.lock.getLockInfo()
         if pid > 0:
             allow_foreground(pid)
@@ -51,7 +51,7 @@ class SingleInstance(QObject):
         # Older running versions have the same lock, but no local server yet.
         if pid > 0 and restore_process_window(pid):
             return False
-        raise OSError('실행 중인 프로그램의 창을 열지 못했습니다. 잠시 후 다시 실행하세요.')
+        raise OSError('실행 중인 앱의 창을 열지 못했습니다. 잠시 후 다시 실행하세요.')
 
     def _activate(self):
         while self.server.hasPendingConnections():
