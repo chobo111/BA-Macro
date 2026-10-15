@@ -62,7 +62,7 @@ class ProfileMenuTests(unittest.TestCase):
                          ['프로필 선택', '새 프로필…', '불러오기…', '복제…', '이름 변경…', '폴더 열기',
                           '환경설정', '프로필 해상도 변환…', '현재 프로필 정보', '앱 정보', '오류 로그'])
         self.assertFalse(hasattr(self.w, 'profile_panel'))
-        self.assertFalse(hasattr(self.w, 'cursor_label'))
+        self.assertIs(self.w.cursor_label.parentWidget(),self.w.target_box)
         self.assertFalse(self.w.menuBar().isVisible())
 
     def test_menu_refreshes_on_open_and_marks_current_profile(self):
@@ -100,7 +100,7 @@ class ProfileMenuTests(unittest.TestCase):
         with patch.object(w.native, 'exists', return_value=True), patch.object(w.native, 'size', return_value=(1280,720)), patch.object(w.native, 'cursor', return_value=(4,5)):
             w.tick()
             self.assertIn('1920×1080', w.windowTitle())
-            self.assertTrue(w.windowTitle().endswith(' — 4, 5'))
+            self.assertEqual(w.cursor_label.text(), '4, 5')
             self.assertEqual(w.target_info.text(), '현재 1280 × 720')
             w.session.start(ExecutionPlan(123, (1920,1080), (1280,720), automatic=True))
             w.tick()
@@ -278,28 +278,61 @@ class ProfileMenuTests(unittest.TestCase):
         self.qt.processEvents()
         self.assertEqual(w.width(), width)
         self.assertIn(other.stem + ' — 1920×1080', w.windowTitle())
-        self.assertEqual(editor.geometry(), w.rect())
+        self.assertEqual(editor.geometry(), editor.parent_area())
         w.resize(w.width()+50,w.height()+50)
         self.qt.processEvents()
-        self.assertEqual(editor.geometry(), w.rect())
+        self.assertEqual(editor.geometry(), editor.parent_area())
         self.assertIs(w.caption_menu.menu, w.main_menu)
 
-    def test_title_updates_coordinates_only_when_changed(self):
+    def test_coordinates_update_target_box_without_changing_title(self):
         w = self.w
         w.profile.resolution = (1920,1080)
         w.update_labels()
-        self.assertEqual(w.windowTitle(), 'macro — 1920×1080 — —, —')
+        self.assertEqual(w.windowTitle(), 'macro — 1920×1080')
         changes = []
         w.windowTitleChanged.connect(changes.append)
         w.set_cursor_position((-123,456))
         w.set_cursor_position((-123,456))
-        self.assertEqual(changes, ['macro — 1920×1080 — -123, 456'])
+        self.assertEqual(changes, [])
+        self.assertEqual(w.cursor_label.text(), '-123, 456')
         w.profile.resolution = None
         w.dirty = True
         w.update_labels()
-        self.assertEqual(w.windowTitle(), '● macro — 알 수 없음 — -123, 456')
+        self.assertEqual(w.windowTitle(), '● macro — 알 수 없음')
         w.set_cursor_position()
-        self.assertTrue(w.windowTitle().endswith(' — —, —'))
+        self.assertEqual(w.cursor_label.text(), '—, —')
+
+    def test_coordinate_label_stays_at_target_box_bottom_right(self):
+        w = self.w
+        w.resize(520,480)
+        self.qt.processEvents()
+        label = w.cursor_label
+        margins = w.target_box.layout().contentsMargins()
+        self.assertEqual(label.geometry().right(), w.target_box.contentsRect().right()-margins.right())
+        self.assertEqual(label.geometry().bottom(), w.target_box.contentsRect().bottom()-margins.bottom())
+        before = label.mapTo(w,QPoint())
+        width = w.width()
+        w.set_cursor_position((-99999,-99999))
+        self.qt.processEvents()
+        self.assertEqual(w.width(),width)
+        self.assertEqual(label.mapTo(w,QPoint()),before)
+        w.resize(850,480)
+        self.qt.processEvents()
+        self.assertEqual(label.mapTo(w,QPoint()),before)
+        self.assertGreaterEqual(label.width(),label.fontMetrics().horizontalAdvance(label.text()))
+
+    def test_editor_keeps_coordinates_visible_when_target_status_wraps(self):
+        w = self.w
+        editor = self.draft()
+        self.qt.processEvents()
+        bottom = w.target_box.mapTo(w,QPoint(0,w.target_box.height())).y()
+        self.assertGreaterEqual(editor.y(),bottom)
+        w.target_info.setText('현재 1920 × 1080 · 자동 변환 사용 중')
+        w.target_info.show()
+        self.qt.processEvents()
+        bottom = w.target_box.mapTo(w,QPoint(0,w.target_box.height())).y()
+        self.assertGreaterEqual(editor.y(),bottom)
+        self.assertEqual(editor.geometry(),editor.parent_area())
 
     def test_menu_switch_failure_keeps_current_check(self):
         w = self.w

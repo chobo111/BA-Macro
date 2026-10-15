@@ -222,6 +222,7 @@ class RowsTable(AnimatedRowsTable):
     def __init__(self):
         super().__init__(0, 5)
         self.setHorizontalHeaderLabels(["단축키", "X", "Y", "동작", "메모"])
+        self.horizontalHeaderItem(4).setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setAlternatingRowColors(True)

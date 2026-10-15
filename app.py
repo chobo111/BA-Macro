@@ -74,7 +74,6 @@ class MainWindow(QMainWindow):
         self.script_editor = None
         self._profile_switching = False
         self._selected_identity = {}
-        self._cursor_text = '—, —'
         self.data_dir = Path(data_dir or BASE).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.store = ProfileStore(self.data_dir)
@@ -155,8 +154,16 @@ class MainWindow(QMainWindow):
         self.target_info.setTextFormat(Qt.TextFormat.PlainText)
         self.target_info.setWordWrap(True)
         self.target_info.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        target_outer.addWidget(self.target_info)
-        self.target_info.hide()
+        target_footer = QHBoxLayout()
+        target_footer.setSpacing(6)
+        target_footer.addWidget(self.target_info, 1)
+        self.cursor_label = QLabel('—, —')
+        self.cursor_label.setObjectName('cursor')
+        self.cursor_label.setAccessibleName('실시간 커서 좌표')
+        self.cursor_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.cursor_label.setFixedWidth(128)
+        target_footer.addWidget(self.cursor_label, 0, Qt.AlignmentFlag.AlignBottom)
+        target_outer.addLayout(target_footer)
         layout.addWidget(target_box, 0, Qt.AlignmentFlag.AlignLeft)
 
         toolbar_panel = self.toolbar_panel = QWidget()
@@ -286,6 +293,8 @@ class MainWindow(QMainWindow):
         self.theme_colors = colors = DARK if dark else LIGHT
         self.setPalette(palette(colors))
         self.setStyleSheet(stylesheet(colors))
+        self.cursor_label.ensurePolished()
+        self.cursor_label.setFixedWidth(self.cursor_label.fontMetrics().horizontalAdvance('-99999, -99999') + 8)
         self.pause_button.apply_theme(colors)
         self.pause_button.setFixedWidth(max(106, self.pause_button.sizeHint().width()))
         self.pin_button.setIcon(make_pin_icon(colors.muted, colors.accent))
@@ -906,7 +915,6 @@ class MainWindow(QMainWindow):
                 self.update_target_info((w, h))
             else:
                 self.target_info.clear()
-                self.target_info.hide()
             coordinate_target = self.script_editor.target if self.script_editor is not None else self.target
             if not coordinate_target:
                 self.set_cursor_position()
@@ -1118,13 +1126,14 @@ class MainWindow(QMainWindow):
     def update_title(self):
         name = self.path.stem if self.path else '새 프로필'
         basis = '%d×%d' % self.profile.resolution if self.profile.resolution else '알 수 없음'
-        title = f"{'● ' if self.dirty else ''}{name} — {basis} — {self._cursor_text}"
+        title = f"{'● ' if self.dirty else ''}{name} — {basis}"
         if self.windowTitle() != title:
             self.setWindowTitle(title)
 
     def set_cursor_position(self, point=None):
-        self._cursor_text = f'{point[0]}, {point[1]}' if point is not None else '—, —'
-        self.update_title()
+        text = f'{point[0]}, {point[1]}' if point is not None else '—, —'
+        if self.cursor_label.text() != text:
+            self.cursor_label.setText(text)
 
     def update_target_info(self, size=None, *, state=''):
         warning = bool(self.target and self._selected_identity and self.profile.target_program
@@ -1141,7 +1150,6 @@ class MainWindow(QMainWindow):
                 text += (' · ' if text else '') + '자동 변환 사용 중'
         if self.target_info.text() != text:
             self.target_info.setText(text)
-        self.target_info.setVisible(bool(text))
         if self.target_info.property('warning') != warning:
             self.target_info.setProperty('warning', warning)
             self.target_info.style().unpolish(self.target_info)

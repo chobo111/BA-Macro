@@ -1,7 +1,7 @@
 """Embedded script editor that leaves the main title bar and menus accessible."""
 import re
 from threading import Event
-from PySide6.QtCore import Qt, QEvent, Signal, QTimer
+from PySide6.QtCore import Qt, QEvent, Signal, QTimer, QPoint
 from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QWidget, QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizeGrip, QApplication
 from mouse_hook import CoordinateHook
@@ -225,7 +225,9 @@ class ScriptEditor(QDialog):
 
     def parent_area(self):
         parent = self.parentWidget()
-        return parent.rect()
+        box = parent.target_box
+        top = box.mapTo(parent, QPoint(0, box.height())).y() + 6
+        return parent.rect().adjusted(0, top, 0, 0)
 
     def sync_to_parent(self):
         self.syncing_geometry = True
@@ -263,7 +265,7 @@ class ScriptEditor(QDialog):
                 self.capture_blockers.discard(watched)
                 # Qt clears activeModalWidget/activePopupWidget after Hide.
                 QTimer.singleShot(0, self, self.update_capture_enabled)
-        if watched is self.parentWidget() and event.type() in (QEvent.Type.Resize, QEvent.Type.Move):
+        if watched in (self.parentWidget(), self.parentWidget().target_box) and kind in (QEvent.Type.Resize, QEvent.Type.Move):
             if not self.syncing_geometry:
                 self.sync_to_parent()
         return super().eventFilter(watched, event)

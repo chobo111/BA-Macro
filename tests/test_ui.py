@@ -333,7 +333,7 @@ class UiTests(unittest.TestCase):
         self.assertEqual(dialog.geometry(), dialog.parent_area())
         self.assertFalse(dialog.isWindow())
         self.assertFalse(hasattr(dialog, "titlebar"))
-        self.assertEqual(dialog.y(), 0)
+        self.assertGreaterEqual(dialog.y(), w.target_box.mapTo(w, QPoint(0,w.target_box.height())).y())
         self.assertIs(w.caption_menu.menu, w.main_menu)
         self.assertTrue(dialog.validation.isHidden())
         self.assertFalse(hasattr(dialog, 'position'))
@@ -437,7 +437,8 @@ class UiTests(unittest.TestCase):
             w.tick()
         self.assertFalse(hasattr(dialog, 'cursor_label'))
         self.assertIsNone(w.menuBar().cornerWidget(Qt.Corner.TopRightCorner))
-        self.assertIn('123, 456', w.windowTitle())
+        self.assertEqual(w.cursor_label.text(), '123, 456')
+        self.assertGreaterEqual(dialog.y(), w.target_box.mapTo(w, QPoint(0,w.target_box.height())).y())
         title = w.windowTitle()
         dialog.reject()
         self.qt.processEvents()
@@ -648,6 +649,27 @@ class UiTests(unittest.TestCase):
             self.assertFalse(w.pin_button.isChecked())
             show.assert_not_called()
             self.assertEqual(int(w.winId()), handle)
+
+    def test_memo_header_anchor_stays_fixed_when_window_grows(self):
+        from PySide6.QtWidgets import QStyleOptionHeader, QStyle
+        w = self.window
+        def text_left():
+            header = w.table.horizontalHeader()
+            option = QStyleOptionHeader()
+            header.initStyleOptionForIndex(option,4)
+            option.rect = header.rect()
+            option.rect.setLeft(header.sectionViewportPosition(4))
+            option.rect.setWidth(header.sectionSize(4))
+            label = header.style().subElementRect(QStyle.SubElement.SE_HeaderLabel,option,header)
+            return header.style().alignedRect(header.layoutDirection(),option.textAlignment,
+                                               header.fontMetrics().size(0,option.text),label).left()
+        w.resize(520,420)
+        self.qt.processEvents()
+        first_left, first_width = text_left(), w.table.columnWidth(4)
+        w.resize(900,420)
+        self.qt.processEvents()
+        self.assertGreater(w.table.columnWidth(4),first_width)
+        self.assertEqual(text_left(),first_left)
 
     def test_resize_presets_and_custom_values(self):
         dialog = ResizeDialog((1234, 678), self.window)
@@ -2020,7 +2042,7 @@ class UiTests(unittest.TestCase):
         cursor.assert_not_called()
         convert.assert_not_called()
         self.assertEqual(w.profile.export(), before)
-        self.assertTrue(w.windowTitle().endswith(' — —, —'))
+        self.assertEqual(w.cursor_label.text(), '—, —')
 
 
     def test_unselected_script_editor_does_not_capture_external_clicks(self):
