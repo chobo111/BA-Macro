@@ -15,11 +15,24 @@ destroy_icon.argtypes = [W.HICON]
 destroy_icon.restype = W.BOOL
 
 
+class TRACKMOUSEEVENT(C.Structure):
+    _fields_ = [('cbSize', W.DWORD), ('dwFlags', W.DWORD), ('hwndTrack', W.HWND), ('dwHoverTime', W.DWORD)]
+
+
+track_mouse_event = user32.TrackMouseEvent
+track_mouse_event.argtypes = [C.POINTER(TRACKMOUSEEVENT)]
+track_mouse_event.restype = W.BOOL
+
+
 class CaptionMenu:
     def __init__(self, window, menu):
         self.window, self.menu = window, menu
         self.icon = None
         self.pending = False
+        self.hovered = False
+        self.menu_open = False
+        self.menu.aboutToShow.connect(self.menu_shown)
+        self.menu.aboutToHide.connect(self.menu_hidden)
         self.install_icon()
 
     def install_icon(self):
@@ -28,7 +41,8 @@ class CaptionMenu:
         dark = QApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
         rgb = QColor('#f0f0f0' if dark else '#202020')
         size = max(16, round(16 * self.window.devicePixelRatioF()))
-        icon = make_menu_icon(rgb).pixmap(size, size).toImage().toHICON()
+        background = ('#40576b' if dark else '#d5e5f3') if self.highlighted else None
+        icon = make_menu_icon(rgb, background).pixmap(size, size).toImage().toHICON()
         if not icon:
             return
         send_message(int(self.window.winId()), 0x0080, 0, icon)  # WM_SETICON / ICON_SMALL
@@ -36,7 +50,41 @@ class CaptionMenu:
         if previous:
             destroy_icon(previous)
 
+    @property
+    def highlighted(self):
+        return self.hovered or self.menu_open
+
+    def set_hovered(self, hovered):
+        previous = self.highlighted
+        self.hovered = hovered
+        if previous != self.highlighted:
+            self.refresh()
+
+    def menu_shown(self):
+        previous = self.highlighted
+        self.menu_open = True
+        if not previous:
+            self.refresh()
+
+    def menu_hidden(self):
+        previous = self.highlighted
+        self.menu_open = self.hovered = False
+        if previous:
+            self.refresh()
+
     def handle(self, message):
+        if self.window.closing:
+            return False
+        if message.message == 0x00A0:  # WM_NCMOUSEMOVE / HTSYSMENU.
+            hovered = message.wParam == 3
+            if hovered and not self.hovered:
+                tracking = TRACKMOUSEEVENT(C.sizeof(TRACKMOUSEEVENT), 0x12, int(self.window.winId()), 0)
+                track_mouse_event(C.byref(tracking))  # TME_LEAVE | TME_NONCLIENT.
+            self.set_hovered(hovered)
+        elif (message.message in (0x02A2, 0x0200, 0x001F)
+              or message.message == 0x0086 and not message.wParam):
+            # Nonclient leave, movement into the client area, cancel or deactivation.
+            self.set_hovered(False)
         # Capture only the caption icon and Alt+Space. Other native frame behavior stays native.
         if (message.message in (0x00A1, 0x00A3) and message.wParam == 3
                 or message.message == 0x0112 and (message.wParam & 0xFFF0) == 0xF100 and message.lParam == 32):

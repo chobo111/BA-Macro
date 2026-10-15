@@ -95,11 +95,15 @@ class RunButton(QPushButton):
         painter.end()
 
 
-def make_menu_icon(color):
+def make_menu_icon(color, background=None):
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    if background is not None:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(background))
+        painter.drawRoundedRect(1, 1, 30, 30, 5, 5)
     painter.setPen(QPen(QColor(color), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
     for y in (9, 16, 23):
         painter.drawLine(7, y, 25, y)

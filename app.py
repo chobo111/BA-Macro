@@ -64,7 +64,6 @@ class MainWindow(QMainWindow):
 
     def __init__(self, data_dir=None, hook_enabled=True):
         super().__init__()
-        self.setWindowTitle(APP_NAME)
         self.setWindowIcon(make_icon())
         self.resize(420, 420)
         self.setMinimumHeight(340)
@@ -1678,7 +1677,8 @@ def main():
     app = QApplication(sys.argv)
     # Keep the lock location stable across the display-name change.
     app.setApplicationName("BlueArchiveStudio")
-    app.setApplicationDisplayName(APP_NAME)
+    # Windows appends a nonempty display name to native window captions.
+    app.setApplicationDisplayName('')
     app.setApplicationVersion(VERSION)
     app.setOrganizationName("Chobo")
     app.setStyle("Fusion")
