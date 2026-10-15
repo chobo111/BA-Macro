@@ -95,6 +95,18 @@ class RunButton(QPushButton):
         painter.end()
 
 
+def make_menu_icon(color):
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(QColor(color), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    for y in (9, 16, 23):
+        painter.drawLine(7, y, 25, y)
+    painter.end()
+    return QIcon(pixmap)
+
+
 def make_pin_icon(muted, accent):
     icon = QIcon()
     for state, color in ((QIcon.State.Off, muted), (QIcon.State.On, accent)):

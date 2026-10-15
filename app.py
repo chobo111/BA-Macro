@@ -36,7 +36,7 @@ from session import ExecutionSession, editing_dialog
 from shortcuts import ShortcutError, qt_hotkey
 from single_instance import SingleInstance
 from startup_dialogs import AppMismatchDialog, SizeMismatchDialog, CoordinateAppDialog, ManualCoordinateDialog
-from widgets import (managed_dialog, make_icon, RunButton, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
+from widgets import (managed_dialog, make_icon, RunButton, make_menu_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
                      BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog, NoWheelCombo, NoWheelSpinBox)
 
 BASE = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
@@ -218,18 +218,26 @@ class MainWindow(QMainWindow):
             self.resize(width, self.height())
 
     def build_menu(self):
-        file_menu = self.menuBar().addMenu("파일")
-        for text, callback in (("새 프로필", self.new_profile), ("불러오기", self.open_profile),
-                               ("저장", self.save), ("다른 이름으로 저장…", self.save_as),
-                               ("프로필 이름 변경…", self.rename_profile)):
-            file_menu.addAction(text, callback)
-        tools = self.menuBar().addMenu("설정")
-        tools.addAction("환경설정", self.settings_dialog)
-        tools.addAction("프로필 해상도 변환…", self.convert_dialog)
-        about = self.menuBar().addMenu("정보")
-        about.addAction("앱 정보", self.about_dialog)
-        about.addAction("현재 프로필 정보", self.profile_info_dialog)
-        about.addAction("오류 로그", self.error_log_dialog)
+        bar = self.menuBar()
+        bar.setObjectName('appMenuBar')
+        bar.setAccessibleName('앱 메뉴')
+        bar.setFixedHeight(28)
+        menu = self.main_menu = bar.addMenu('메뉴')
+        menu.setObjectName('appMenu')
+        menu.setMinimumWidth(210)
+        menu.menuAction().setToolTip('메뉴')
+        for group in (
+            (("새 프로필", self.new_profile), ("불러오기", self.open_profile),
+             ("저장", self.save), ("다른 이름으로 저장…", self.save_as),
+             ("프로필 이름 변경…", self.rename_profile)),
+            (("환경설정", self.settings_dialog), ("프로필 해상도 변환…", self.convert_dialog)),
+            (("앱 정보", self.about_dialog), ("현재 프로필 정보", self.profile_info_dialog),
+             ("오류 로그", self.error_log_dialog)),
+        ):
+            if menu.actions():
+                menu.addSeparator()
+            for text, callback in group:
+                menu.addAction(text, callback)
         self.cursor_label = QLabel("— , —")
         self.cursor_label.setObjectName("cursor")
         self.cursor_label.setFixedWidth(152)
@@ -261,6 +269,7 @@ class MainWindow(QMainWindow):
         self.theme_colors = colors = DARK if dark else LIGHT
         self.setPalette(palette(colors))
         self.setStyleSheet(stylesheet(colors))
+        self.main_menu.setIcon(make_menu_icon(colors.text))
         self.pause_button.apply_theme(colors)
         self.pause_button.setFixedWidth(max(106, self.pause_button.sizeHint().width()))
         self.pin_button.setIcon(make_pin_icon(colors.muted, colors.accent))

@@ -19,9 +19,9 @@ class UiTests(unittest.TestCase):
     def test_profile_menu_actions_and_rename_preserve_editor_draft(self):
         from profile_dialogs import RenameProfileDialog
         w = self.window
-        menus = {action.text(): action.menu() for action in w.menuBar().actions()}
-        self.assertIn('프로필 이름 변경…', [a.text() for a in menus['파일'].actions()])
-        self.assertIn('현재 프로필 정보', [a.text() for a in menus['정보'].actions()])
+        items = [action.text() for action in w.main_menu.actions()]
+        self.assertIn('프로필 이름 변경…', items)
+        self.assertIn('현재 프로필 정보', items)
         w.edit_script(w.profile.rows[0].id)
         editor = w.script_editor
         editor.editor.setPlainText('sleep 123')
@@ -196,11 +196,11 @@ class UiTests(unittest.TestCase):
         from version import VERSION
         from PySide6.QtWidgets import QTextBrowser
         w = self.window
-        menus = {action.text(): action.menu() for action in w.menuBar().actions()}
-        self.assertIn('정보', menus)
-        self.assertNotIn('도움말', menus)
-        self.assertEqual(menus['정보'].actions()[0].text(), '앱 정보')
-        self.assertNotIn('변경 기록', [action.text() for action in menus['정보'].actions()])
+        self.assertEqual(len(w.menuBar().actions()), 1)
+        items = [action.text() for action in w.main_menu.actions()]
+        self.assertIn('앱 정보', items)
+        self.assertNotIn('도움말', items)
+        self.assertNotIn('변경 기록', items)
         with patch.object(QMessageBox, 'information') as about:
             w.about_dialog()
         self.assertEqual(about.call_args.args[1], '앱 정보')
@@ -1317,14 +1317,14 @@ class UiTests(unittest.TestCase):
         self.assertFalse(w.modal)
         self.assertFalse(editor.isWindow())
         self.assertEqual(editor.windowModality(),Qt.WindowModality.NonModal)
-        action=w.menuBar().actions()[1]
+        action=w.menuBar().actions()[0]
         QTest.mouseClick(w.menuBar(),Qt.MouseButton.LeftButton,pos=w.menuBar().actionGeometry(action).center())
         self.qt.processEvents()
         self.assertTrue(action.menu().isVisible())
         action.menu().hide()
         with patch('app.SettingsDialog') as settings:
             settings.return_value.exec.return_value=QDialog.DialogCode.Rejected
-            action.menu().actions()[0].trigger()
+            next(a for a in action.menu().actions() if a.text() == '환경설정').trigger()
             settings.assert_called_once()
         self.assertIs(w.script_editor,editor)
         self.assertEqual(editor.editor.toPlainText(),'sleep 123')
