@@ -19,9 +19,9 @@ class UiTests(unittest.TestCase):
     def test_profile_menu_actions_and_rename_preserve_editor_draft(self):
         from profile_dialogs import RenameProfileDialog
         w = self.window
-        items = [action.text() for action in w.main_menu.actions()]
-        self.assertIn('프로필 이름 변경…', items)
-        self.assertIn('현재 프로필 정보', items)
+        items = [action.text() for action in w.profile_panel.menu.actions()]
+        self.assertIn('이름 변경…', items)
+        self.assertTrue(w.profile_panel.summary.isCheckable())
         w.edit_script(w.profile.rows[0].id)
         editor = w.script_editor
         editor.editor.setPlainText('sleep 123')
@@ -80,7 +80,6 @@ class UiTests(unittest.TestCase):
         self.assertIn('최근 프로필 정보 저장 실패', w.statusBar().currentMessage())
 
     def test_profile_info_distinguishes_saved_app_and_current_app(self):
-        from profile_dialogs import ProfileInfoDialog
         from domain import WindowSizeUnavailable
         w = self.window
         w.profile.target_program = {'title': '<Game>', 'exe': 'Game.exe', 'class': 'Unity'}
@@ -95,8 +94,10 @@ class UiTests(unittest.TestCase):
             self.assertEqual(details['현재 크기'], '1280 × 720')
             self.assertIn('<Game>', details['지정 앱'])
             self.assertIn('1920 × 1080 → 1280 × 720', details['자동 변환'])
-            with patch.object(ProfileInfoDialog, 'exec', return_value=QDialog.DialogCode.Rejected), patch.object(w, 'save') as save:
-                w.profile_info_dialog()
+            with patch.object(w, 'save') as save:
+                w.profile_panel.summary.setChecked(True)
+                self.assertIn('파일 위치', w.profile_panel.values)
+                self.assertEqual(w.profile_panel.values['동작 수'].text(), details['동작 수'])
             save.assert_not_called()
         self.assertIs(w.session.plan, plan)
         self.assertEqual(w.profile.export(), before)
@@ -150,7 +151,7 @@ class UiTests(unittest.TestCase):
         data['target_resolution'] = '1920×1080'
         atomic_json(invalid, data)
         before = invalid.read_bytes()
-        with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(invalid), '')), patch.object(w, 'error') as error:
+        with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(invalid), '')), patch.object(w.statusBar(), 'show_error') as error:
             w.open_profile()
         self.assertIs(w.profile, original)
         self.assertEqual(w.path, path)
@@ -575,7 +576,7 @@ class UiTests(unittest.TestCase):
         content = '{"macros":[{"coords":"80, 90","action_mode":"move_only"}]}'
         legacy.write_text(content, encoding="utf-8")
         with patch.object(QFileDialog, "getOpenFileName", return_value=(str(legacy), "")), \
-             patch.object(w, "error") as error:
+             patch.object(w.statusBar(), "show_error") as error:
             w.open_profile()
         self.assertIs(w.profile, original)
         self.assertEqual(w.path, original_path)
@@ -2109,9 +2110,9 @@ class UiTests(unittest.TestCase):
         before, settings = invalid.read_bytes(), w.settings_path.read_bytes()
         w.edit_script(w.profile.rows[0].id)
         editor = w.script_editor
-        with patch.object(w, 'confirm_changes', return_value=True), \
+        with patch.object(w, 'prepare_profile_change', return_value=True), \
              patch.object(QFileDialog, 'getOpenFileName', return_value=(str(invalid), '')), \
-             patch.object(w, 'error') as error:
+             patch.object(w.statusBar(), 'show_error') as error:
             w.open_profile()
         self.assertIs(w.profile, original)
         self.assertEqual(w.path, path)

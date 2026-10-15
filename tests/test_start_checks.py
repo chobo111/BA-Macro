@@ -255,7 +255,7 @@ class StartChecks(unittest.TestCase):
         before = w.profile
         with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
              patch.object(QFileDialog, 'selectedFiles', return_value=[str(w.path.with_name('new.json'))]), \
-             patch.object(w, 'confirm_changes', return_value=False):
+             patch.object(w, 'prepare_profile_change', return_value=False):
             w.new_profile()
         self.assertIs(w.profile, before)
         self.assertEqual(w.target, 123)

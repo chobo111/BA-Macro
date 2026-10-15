@@ -81,6 +81,8 @@ def stylesheet(c):
         QWidget {{font-family: 'Segoe UI', 'Malgun Gothic'; font-size: 13px; color: {c.text};}}
         QLabel {{background: transparent;}}
         QLabel#muted {{color: {c.muted};}}
+        QLabel#targetStatus {{color: {c.muted};}}
+        QLabel#targetStatus[warning="true"] {{color: {c.error_text};}}
         QFrame#toolbarSeparator {{background: {c.border}; border: none;}}
         QLabel#cursor {{color: {c.accent}; font-family: Consolas; font-weight: 600;}}
         QTabWidget::pane {{border: 1px solid {c.border}; border-radius: 4px;}}
@@ -92,6 +94,10 @@ def stylesheet(c):
         QPushButton:hover:enabled {{border-color: {c.accent}; background: {c.alternate};}}
         QPushButton:pressed:enabled {{background: {c.border};}}
         QPushButton:checked {{background: {c.selection}; color: {c.selected_text}; border-color: {c.accent};}}
+        QPushButton#profileManage::menu-indicator {{image: none; width: 0px;}}
+        QPushButton#profileSummary {{background: transparent; border: none; text-align: left; color: {c.muted}; padding: 0 3px;}}
+        QPushButton#profileSummary:hover {{color: {c.accent};}}
+        QPushButton#profileSummary:checked {{color: {c.text};}}
         RunButton {{padding-right: 25px; font-weight: 600;}}
         QTableWidget {{background: {c.panel}; alternate-background-color: {c.alternate}; border: 1px solid {c.border}; border-radius: 8px; selection-background-color: {c.selection}; selection-color: {c.selected_text};}}
         QTableWidget::item {{padding: 4px;}}

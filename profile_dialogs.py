@@ -1,7 +1,6 @@
-"""Profile file naming and read-only profile details."""
-from PySide6.QtCore import Qt
+"""Profile file naming dialog."""
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QVBoxLayout,
+    QDialog, QDialogButtonBox, QLabel, QLineEdit, QVBoxLayout,
 )
 
 
@@ -22,26 +21,3 @@ class RenameProfileDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self.name.setFocus()
-
-
-class ProfileInfoDialog(QDialog):
-    def __init__(self, details, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle('현재 프로필 정보')
-        self.resize(460, 360)
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        self.values = {}
-        for title, text in details:
-            value = QLabel(text)
-            value.setTextFormat(Qt.TextFormat.PlainText)
-            value.setWordWrap(True)
-            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            form.addRow(title, value)
-            self.values[title] = value
-        layout.addLayout(form)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.button(QDialogButtonBox.StandardButton.Close).setText('닫기')
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)

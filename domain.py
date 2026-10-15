@@ -157,6 +157,7 @@ class Settings:
     auto_convert_on_start: bool = False
     theme: str = "Dark"
     last_profile: str = ""
+    recent_profiles: list[str] = field(default_factory=list)
 
     @classmethod
     def read(cls, data):
@@ -182,6 +183,11 @@ class Settings:
         if obj.theme not in ("Dark", "Light", "System"):
             raise ValueError("테마 값이 올바르지 않습니다.")
         obj.last_profile = str(data.get("last_profile", ""))
+        recent = data.get('recent_profiles', [])
+        if (not isinstance(recent, list) or len(recent) > 10
+                or any(not isinstance(path, str) or not path or not Path(path).is_absolute() for path in recent)):
+            raise ValueError('최근 프로필 목록에는 최대 10개의 파일 경로가 필요합니다.')
+        obj.recent_profiles = list(recent)
         return obj
 
 
