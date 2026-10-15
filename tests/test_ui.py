@@ -196,7 +196,7 @@ class UiTests(unittest.TestCase):
         from version import VERSION
         from PySide6.QtWidgets import QTextBrowser
         w = self.window
-        self.assertEqual(len(w.menuBar().actions()), 1)
+        self.assertEqual(len(w.menuBar().actions()), 0)
         items = [action.text() for action in w.main_menu.actions()]
         self.assertIn('앱 정보', items)
         self.assertNotIn('도움말', items)
@@ -1317,8 +1317,8 @@ class UiTests(unittest.TestCase):
         self.assertFalse(w.modal)
         self.assertFalse(editor.isWindow())
         self.assertEqual(editor.windowModality(),Qt.WindowModality.NonModal)
-        action=w.menuBar().actions()[0]
-        QTest.mouseClick(w.menuBar(),Qt.MouseButton.LeftButton,pos=w.menuBar().actionGeometry(action).center())
+        action=w.main_menu.menuAction()
+        w.caption_menu.show()
         self.qt.processEvents()
         self.assertTrue(action.menu().isVisible())
         action.menu().hide()

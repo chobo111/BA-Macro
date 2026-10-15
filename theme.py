@@ -102,7 +102,6 @@ def stylesheet(c):
         QComboBox QAbstractItemView {{background: {c.panel}; color: {c.text}; selection-background-color: {c.selection}; selection-color: {c.selected_text};}}
         QMenuBar, QMenu, QStatusBar {{background: {c.background}; color: {c.muted};}}
         QMenu::item:selected, QMenuBar::item:selected {{background: {c.selection}; color: {c.selected_text};}}
-        QMenuBar#appMenuBar::item {{padding: 5px 10px; margin: 1px 4px; border-radius: 4px;}}
         QMenu#appMenu {{background: {c.panel}; color: {c.text}; border: 1px solid {c.border}; border-radius: 6px; padding: 4px;}}
         QMenu#appMenu::item {{padding: 6px 16px; border-radius: 3px;}}
         QMenu#appMenu::item:selected {{background: {c.selection}; color: {c.selected_text};}}

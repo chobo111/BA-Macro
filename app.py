@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, replace
 from copy import deepcopy
 import os
+from ctypes import wintypes
 from pathlib import Path
 import sys
 
@@ -35,8 +36,9 @@ from theme import DARK, LIGHT, palette, stylesheet
 from session import ExecutionSession, editing_dialog
 from shortcuts import ShortcutError, qt_hotkey
 from single_instance import SingleInstance
+from titlebar_menu import CaptionMenu
 from startup_dialogs import AppMismatchDialog, SizeMismatchDialog, CoordinateAppDialog, ManualCoordinateDialog
-from widgets import (managed_dialog, make_icon, RunButton, make_menu_icon, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
+from widgets import (managed_dialog, make_icon, RunButton, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
                      BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog, NoWheelCombo, NoWheelSpinBox)
 
 BASE = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
@@ -92,6 +94,7 @@ class MainWindow(QMainWindow):
         self.build_menu()
         self.build_tray()
         self.apply_theme()
+        self.caption_menu = CaptionMenu(self, self.main_menu)
         QApplication.styleHints().colorSchemeChanged.connect(self.system_theme_changed)
         self.rebuild()
         self.refresh_windows(restore_saved=True)
@@ -226,6 +229,7 @@ class MainWindow(QMainWindow):
         menu.setObjectName('appMenu')
         menu.setMinimumWidth(210)
         menu.menuAction().setToolTip('메뉴')
+        bar.removeAction(menu.menuAction())
         for group in (
             (("새 프로필", self.new_profile), ("불러오기", self.open_profile),
              ("저장", self.save), ("다른 이름으로 저장…", self.save_as),
@@ -269,7 +273,6 @@ class MainWindow(QMainWindow):
         self.theme_colors = colors = DARK if dark else LIGHT
         self.setPalette(palette(colors))
         self.setStyleSheet(stylesheet(colors))
-        self.main_menu.setIcon(make_menu_icon(colors.text))
         self.pause_button.apply_theme(colors)
         self.pause_button.setFixedWidth(max(106, self.pause_button.sizeHint().width()))
         self.pin_button.setIcon(make_pin_icon(colors.muted, colors.accent))
@@ -1440,6 +1443,13 @@ class MainWindow(QMainWindow):
             self.pin_button.blockSignals(False)
             self.statusBar().show_error(str(error))
 
+    def nativeEvent(self, event_type, message):
+        if event_type == b'windows_generic_MSG' and hasattr(self, 'caption_menu'):
+            msg = wintypes.MSG.from_address(int(message))
+            if self.caption_menu.handle(msg):
+                return True, 0
+        return super().nativeEvent(event_type, message)
+
     def restore(self):
         self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
         self.show()
@@ -1466,6 +1476,7 @@ class MainWindow(QMainWindow):
         self.flush_pending_saves()
         self.store.close()
         self.tray.hide()
+        self.caption_menu.close()
 
     def closeEvent(self, event):
         if self.closing:
