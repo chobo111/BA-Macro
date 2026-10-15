@@ -94,10 +94,6 @@ def stylesheet(c):
         QPushButton:hover:enabled {{border-color: {c.accent}; background: {c.alternate};}}
         QPushButton:pressed:enabled {{background: {c.border};}}
         QPushButton:checked {{background: {c.selection}; color: {c.selected_text}; border-color: {c.accent};}}
-        QPushButton#profileManage::menu-indicator {{image: none; width: 0px;}}
-        QPushButton#profileSummary {{background: transparent; border: none; text-align: left; color: {c.muted}; padding: 0 3px;}}
-        QPushButton#profileSummary:hover {{color: {c.accent};}}
-        QPushButton#profileSummary:checked {{color: {c.text};}}
         RunButton {{padding-right: 25px; font-weight: 600;}}
         QTableWidget {{background: {c.panel}; alternate-background-color: {c.alternate}; border: 1px solid {c.border}; border-radius: 8px; selection-background-color: {c.selection}; selection-color: {c.selected_text};}}
         QTableWidget::item {{padding: 4px;}}

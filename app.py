@@ -30,8 +30,8 @@ from coordinate_cache import scaled_point
 from script_editor import ScriptEditor
 from persistence import ProfileStore
 from profile_saves import ProfileSaves
-from profile_dialogs import RenameProfileDialog
-from profile_panel import ProfilePanel, profile_entries, recent_profiles
+from profile_dialogs import RenameProfileDialog, ProfileInfoDialog
+from profile_catalog import profile_entries, recent_profiles
 from profile_wait import wait_for_saves
 from conversion_dialog import ConversionDialog, BaselineResolutionDialog
 from version import APP_NAME, VERSION
@@ -66,8 +66,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(make_icon())
-        self.resize(420, 490)
-        self.setMinimumHeight(400)
+        self.resize(420, 420)
+        self.setMinimumHeight(340)
         self.native = Windows()
         self.session = ExecutionSession(self.native)
         self.dirty = False
@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
         self.script_editor = None
         self._profile_switching = False
         self._selected_identity = {}
+        self._cursor_text = '—, —'
         self.data_dir = Path(data_dir or BASE).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.store = ProfileStore(self.data_dir)
@@ -127,12 +128,6 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(root)
         layout.setContentsMargins(8, 8, 8, 6)
         layout.setSpacing(6)
-        self.profile_panel = ProfilePanel(self)
-        self.profile_panel.setFixedWidth(384)
-        self.profile_panel.opening.connect(self.refresh_profiles)
-        self.profile_panel.selected.connect(self.switch_profile)
-        self.profile_panel.expanded.connect(self.expand_profile_info)
-        layout.addWidget(self.profile_panel, 0, Qt.AlignmentFlag.AlignLeft)
         target_box = self.target_box = QGroupBox("대상 앱")
         target_box.setFixedWidth(384)
         target_outer = QVBoxLayout(target_box)
@@ -225,7 +220,6 @@ class MainWindow(QMainWindow):
                          + table.MEMO_MIN_WIDTH + table.verticalHeader().width() + table.frameWidth() * 2)
         # Stretching the memo column must not move controls or resize the window.
         self.target_box.setFixedWidth(content_width)
-        self.profile_panel.setFixedWidth(content_width)
         self.toolbar_panel.setFixedWidth(content_width)
         width = content_width + margins.left() + margins.right()
         if table.verticalScrollBar().maximum() > 0:
@@ -244,31 +238,31 @@ class MainWindow(QMainWindow):
         bar = self.menuBar()
         bar.setObjectName('appMenuBar')
         bar.setAccessibleName('앱 메뉴')
-        bar.setFixedHeight(28)
+        bar.setFixedHeight(0)
+        bar.hide()
         menu = self.main_menu = bar.addMenu('메뉴')
         menu.setObjectName('appMenu')
         menu.setMinimumWidth(210)
         menu.menuAction().setToolTip('메뉴')
         bar.removeAction(menu.menuAction())
+        self.profile_menu = menu.addMenu('프로필 선택')
+        self.profile_menu.setObjectName('appMenu')
+        self.profile_menu.setMaximumWidth(420)
+        self.profile_menu.setToolTipsVisible(True)
+        self.profile_menu.aboutToShow.connect(self.refresh_profiles)
+        menu.addSeparator()
         for text, callback in (("새 프로필…", self.new_profile), ("불러오기…", self.open_profile),
                                ("복제…", self.duplicate_profile), ("이름 변경…", self.rename_profile),
                                ("폴더 열기", self.open_profile_folder)):
-            self.profile_panel.menu.addAction(text, callback)
+            menu.addAction(text, callback)
         for group in (
             (("환경설정", self.settings_dialog), ("프로필 해상도 변환…", self.convert_dialog)),
-            (("앱 정보", self.about_dialog), ("오류 로그", self.error_log_dialog)),
+            (("현재 프로필 정보", self.profile_info_dialog), ("앱 정보", self.about_dialog), ("오류 로그", self.error_log_dialog)),
         ):
             if menu.actions():
                 menu.addSeparator()
             for text, callback in group:
                 menu.addAction(text, callback)
-        self.cursor_label = QLabel("— , —")
-        self.cursor_label.setObjectName("cursor")
-        self.cursor_label.setFixedWidth(152)
-        self.cursor_label.setContentsMargins(6, 0, 8, 0)
-        self.cursor_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.cursor_label.setAccessibleName("실시간 커서 좌표")
-        self.menuBar().setCornerWidget(self.cursor_label, Qt.Corner.TopRightCorner)
 
     def build_tray(self):
         self.tray = QSystemTrayIcon(self.windowIcon(), self)
@@ -297,12 +291,10 @@ class MainWindow(QMainWindow):
         self.pause_button.setFixedWidth(max(106, self.pause_button.sizeHint().width()))
         self.pin_button.setIcon(make_pin_icon(colors.muted, colors.accent))
         self.delete_button.setIcon(make_trash_icon(colors.muted))
-        self.profile_panel.set_icon_color(colors.muted)
         if self.script_editor is not None:
             self.script_editor.highlighter.apply_theme(colors)
 
     def update_labels(self):
-        name = self.path.stem if self.path else "새 프로필"
         shortcut = QKeySequence(qt_hotkey(self.settings.pause_hk), QKeySequence.SequenceFormat.PortableText)
         shortcut_text = shortcut.toString(QKeySequence.SequenceFormat.NativeText).replace('Control', 'Ctrl')
         self.pause_button.setText(shortcut_text.replace('&', '&&'))
@@ -310,8 +302,8 @@ class MainWindow(QMainWindow):
         self.pause_button.setAccessibleName(f'{action} ({shortcut_text})')
         self.pause_button.set_running(self.armed)
         self.pause_button.setFixedWidth(max(106, self.pause_button.sizeHint().width()))
-        self.setWindowTitle(f"{'● ' if self.dirty else ''}{name} — {APP_NAME}")
-        self.update_profile_info()
+        self.update_title()
+        self.update_profile_checks()
         if hasattr(self, "tray"):
             self.tray.setToolTip(APP_NAME + " · " + ("작동 중" if self.armed else "일시정지"))
 
@@ -526,7 +518,6 @@ class MainWindow(QMainWindow):
                 self.rebuild(rid)
             dialog.deleteLater()
         dialog.finished.connect(finished)
-        dialog.editor.textChanged.connect(self.update_profile_info)
         dialog.show()
         dialog.editor.setFocus()
 
@@ -899,6 +890,7 @@ class MainWindow(QMainWindow):
                 self.profile.target_program = identity
                 self.changed()
         self.update_target_info()
+        self.set_cursor_position()
 
     def tick(self):
         try:
@@ -918,16 +910,16 @@ class MainWindow(QMainWindow):
                 self.target_info.hide()
             coordinate_target = self.script_editor.target if self.script_editor is not None else self.target
             if not coordinate_target:
-                self.cursor_label.setText('— , —')
+                self.set_cursor_position()
             else:
                 x, y = self.native.cursor(coordinate_target)
-                self.cursor_label.setText(f"{x:>5}, {y:>5}")
+                self.set_cursor_position((x, y))
         except WindowSizeUnavailable:
             self.update_target_info(state='최소화')
-            self.cursor_label.setText('— , —')
+            self.set_cursor_position()
         except OSError:
             self.target_info.setText("창 상태 확인 중")
-            self.cursor_label.setText("— , —")
+            self.set_cursor_position()
 
     @editing_dialog(hooks=True)
     def edit_key(self, rid):
@@ -1099,25 +1091,41 @@ class MainWindow(QMainWindow):
         directory = self.path.parent if self.path is not None else self.data_dir
         try:
             entries = profile_entries(directory, self.path, self.settings.recent_profiles)
-            self.profile_panel.set_paths(entries, self.path)
+            menu = self.profile_menu
+            menu.clear()
+            previous_group = None
+            for path, group in entries:
+                if group != previous_group:
+                    menu.addSection(group)
+                    previous_group = group
+                action = menu.addAction(path.stem.replace('&', '&&'))
+                action.setData(str(path))
+                action.setToolTip(str(path))
+                action.setCheckable(True)
+                action.triggered.connect(lambda checked=False, selected=path: self.switch_profile(selected))
+            if not entries:
+                menu.addAction('프로필 없음').setEnabled(False)
+            self.update_profile_checks()
         except OSError as error:
             self.statusBar().show_error(f'프로필 목록을 불러오지 못했습니다: {error}')
 
-    def update_profile_info(self):
-        panel = self.profile_panel
-        panel.set_current(self.path)
-        identity = self.profile.target_program
-        app = identity.get('title') or identity.get('exe') or identity.get('class') or '없음'
-        basis = '%d×%d' % self.profile.resolution if self.profile.resolution else '알 수 없음'
-        panel.set_summary(app, basis)
-        if panel.summary.isChecked():
-            panel.set_details(self.profile_details())
+    def update_profile_checks(self):
+        if not hasattr(self, 'profile_menu'):
+            return
+        for action in self.profile_menu.actions():
+            if action.data() is not None:
+                action.setChecked(self.path is not None and Path(action.data()) == self.path.resolve())
 
-    def expand_profile_info(self, expanded):
-        if expanded:
-            self.update_profile_info()
-        if self.script_editor is not None:
-            QTimer.singleShot(0, self.script_editor, self.script_editor.sync_to_parent)
+    def update_title(self):
+        name = self.path.stem if self.path else '새 프로필'
+        basis = '%d×%d' % self.profile.resolution if self.profile.resolution else '알 수 없음'
+        title = f"{'● ' if self.dirty else ''}{name} — {basis} — {self._cursor_text}"
+        if self.windowTitle() != title:
+            self.setWindowTitle(title)
+
+    def set_cursor_position(self, point=None):
+        self._cursor_text = f'{point[0]}, {point[1]}' if point is not None else '—, —'
+        self.update_title()
 
     def update_target_info(self, size=None, *, state=''):
         warning = bool(self.target and self._selected_identity and self.profile.target_program
@@ -1185,7 +1193,7 @@ class MainWindow(QMainWindow):
     def switch_profile(self, path):
         path = Path(path).resolve()
         if self.path is not None and path == self.path.resolve():
-            self.profile_panel.set_current(self.path)
+            self.update_profile_checks()
             return True
         def change():
             # Reject invalid destinations before asking to discard an editor draft.
@@ -1456,6 +1464,11 @@ class MainWindow(QMainWindow):
             ('자동 변환', conversion),
             ('저장 상태', state),
         ]
+
+    @editing_dialog(hooks=False, pause=False)
+    def profile_info_dialog(self):
+        with managed_dialog(ProfileInfoDialog(self.profile_details(), self)) as dialog:
+            dialog.exec()
 
     def persist_settings(self, *, recover=False):
         self.commit_settings(self.settings, recover=recover)

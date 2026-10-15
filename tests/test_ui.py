@@ -19,9 +19,9 @@ class UiTests(unittest.TestCase):
     def test_profile_menu_actions_and_rename_preserve_editor_draft(self):
         from profile_dialogs import RenameProfileDialog
         w = self.window
-        items = [action.text() for action in w.profile_panel.menu.actions()]
+        items = [action.text() for action in w.main_menu.actions()]
         self.assertIn('이름 변경…', items)
-        self.assertTrue(w.profile_panel.summary.isCheckable())
+        self.assertIn('현재 프로필 정보', items)
         w.edit_script(w.profile.rows[0].id)
         editor = w.script_editor
         editor.editor.setPlainText('sleep 123')
@@ -94,10 +94,9 @@ class UiTests(unittest.TestCase):
             self.assertEqual(details['현재 크기'], '1280 × 720')
             self.assertIn('<Game>', details['지정 앱'])
             self.assertIn('1920 × 1080 → 1280 × 720', details['자동 변환'])
-            with patch.object(w, 'save') as save:
-                w.profile_panel.summary.setChecked(True)
-                self.assertIn('파일 위치', w.profile_panel.values)
-                self.assertEqual(w.profile_panel.values['동작 수'].text(), details['동작 수'])
+            from profile_dialogs import ProfileInfoDialog
+            with patch.object(w, 'save') as save, patch.object(ProfileInfoDialog, 'exec', return_value=QDialog.DialogCode.Accepted):
+                w.profile_info_dialog()
             save.assert_not_called()
         self.assertIs(w.session.plan, plan)
         self.assertEqual(w.profile.export(), before)
@@ -334,7 +333,8 @@ class UiTests(unittest.TestCase):
         self.assertEqual(dialog.geometry(), dialog.parent_area())
         self.assertFalse(dialog.isWindow())
         self.assertFalse(hasattr(dialog, "titlebar"))
-        self.assertGreater(dialog.y(), w.menuBar().geometry().bottom())
+        self.assertEqual(dialog.y(), 0)
+        self.assertIs(w.caption_menu.menu, w.main_menu)
         self.assertTrue(dialog.validation.isHidden())
         self.assertFalse(hasattr(dialog, 'position'))
         self.assertNotIn('드래그로 이동', [label.text() for label in dialog.findChildren(QLabel)])
@@ -436,13 +436,13 @@ class UiTests(unittest.TestCase):
         with patch.object(w.native, 'cursor', return_value=(123, 456)), patch.object(w.native,'exists',return_value=True), patch.object(w.native,'size',return_value=(1280,720)), patch.object(w.native,'active',return_value=True):
             w.tick()
         self.assertFalse(hasattr(dialog, 'cursor_label'))
-        self.assertIs(w.menuBar().cornerWidget(Qt.Corner.TopRightCorner), w.cursor_label)
-        self.assertIn('123', w.cursor_label.text())
-        position = w.cursor_label.mapToGlobal(QPoint())
+        self.assertIsNone(w.menuBar().cornerWidget(Qt.Corner.TopRightCorner))
+        self.assertIn('123, 456', w.windowTitle())
+        title = w.windowTitle()
         dialog.reject()
         self.qt.processEvents()
         self.assertTrue(w.timer.isActive())
-        self.assertEqual(w.cursor_label.mapToGlobal(QPoint()), position)
+        self.assertEqual(w.windowTitle(), title)
         dialog.deleteLater()
 
     def test_remember_target_restore_and_missing_window(self):
@@ -683,7 +683,7 @@ class UiTests(unittest.TestCase):
         self.qt.processEvents()
         positions = (w.pin_button.pos(), w.pause_button.pos())
         w.resize(900, 340)
-        w.cursor_label.setText("-99999, -99999")
+        w.set_cursor_position((-99999, -99999))
         self.qt.processEvents()
         self.assertEqual((w.pin_button.pos(), w.pause_button.pos()), positions)
 
@@ -2020,7 +2020,7 @@ class UiTests(unittest.TestCase):
         cursor.assert_not_called()
         convert.assert_not_called()
         self.assertEqual(w.profile.export(), before)
-        self.assertEqual(w.cursor_label.text(), '— , —')
+        self.assertTrue(w.windowTitle().endswith(' — —, —'))
 
 
     def test_unselected_script_editor_does_not_capture_external_clicks(self):

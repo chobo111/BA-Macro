@@ -17,10 +17,10 @@ from app import MainWindow
 from domain import Profile, Settings, atomic_json, read_json, WindowSizeUnavailable
 from execution_plan import ExecutionPlan
 from persistence import SaveResult
-from profile_panel import profile_entries, recent_profiles
+from profile_catalog import profile_entries, recent_profiles
 
 
-class ProfilePanelTests(unittest.TestCase):
+class ProfileMenuTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.qt = QApplication.instance() or QApplication([])
@@ -57,26 +57,28 @@ class ProfilePanelTests(unittest.TestCase):
         self.w.script_editor.editor.setPlainText(text)
         return self.w.script_editor
 
-    def test_profile_actions_move_out_of_main_menu(self):
-        self.assertEqual([a.text() for a in self.w.profile_panel.menu.actions()],
-                         ['새 프로필…', '불러오기…', '복제…', '이름 변경…', '폴더 열기'])
+    def test_profile_actions_are_in_titlebar_menu(self):
         self.assertEqual([a.text() for a in self.w.main_menu.actions() if not a.isSeparator()],
-                         ['환경설정', '프로필 해상도 변환…', '앱 정보', '오류 로그'])
+                         ['프로필 선택', '새 프로필…', '불러오기…', '복제…', '이름 변경…', '폴더 열기',
+                          '환경설정', '프로필 해상도 변환…', '현재 프로필 정보', '앱 정보', '오류 로그'])
+        self.assertFalse(hasattr(self.w, 'profile_panel'))
+        self.assertFalse(hasattr(self.w, 'cursor_label'))
+        self.assertFalse(self.w.menuBar().isVisible())
 
-    def test_dropdown_refreshes_on_open_and_marks_current_profile(self):
+    def test_menu_refreshes_on_open_and_marks_current_profile(self):
         w = self.w
         w.refresh_profiles()
         other = self.other()
-        combo = w.profile_panel.selector
-        self.assertEqual(combo.findData(str(other)), -1)
-        w.profile_panel.opening.emit()
-        self.assertGreaterEqual(combo.findData(str(other)), 0)
-        self.assertEqual(combo.itemData(combo.currentIndex()), str(w.path))
-        self.assertEqual(combo.itemData(combo.currentIndex(), Qt.ItemDataRole.CheckStateRole), Qt.CheckState.Checked)
-        combo.setCurrentIndex(combo.findData(str(other)))
-        w.profile_panel.choose(combo.currentIndex())
+        self.assertFalse(any(a.data() == str(other) for a in w.profile_menu.actions()))
+        w.profile_menu.aboutToShow.emit()
+        current = next(a for a in w.profile_menu.actions() if a.data() == str(w.path))
+        destination = next(a for a in w.profile_menu.actions() if a.data() == str(other))
+        self.assertTrue(current.isChecked())
+        self.assertFalse(destination.isChecked())
+        destination.trigger()
         self.assertEqual(w.path, other)
-        self.assertEqual(combo.currentData(), str(other))
+        self.assertTrue(destination.isChecked())
+        self.assertFalse(current.isChecked())
         self.assertFalse(w.armed)
 
     def test_catalog_filters_unrelated_json_and_deduplicates_recent_paths(self):
@@ -87,7 +89,7 @@ class ProfilePanelTests(unittest.TestCase):
         self.assertEqual([p for p, _ in entries], [self.w.path, other])
         self.assertEqual(recent_profiles([str(other), str(other)], self.w.path), [str(self.w.path), str(other)])
 
-    def test_summary_keeps_saved_basis_separate_from_runtime_state(self):
+    def test_title_keeps_saved_basis_separate_from_runtime_state(self):
         w = self.w
         w.profile.resolution = (1920,1080)
         w.profile.target_program = {'exe': 'Game.exe', 'class': 'Unity', 'title': 'Game'}
@@ -97,7 +99,8 @@ class ProfilePanelTests(unittest.TestCase):
         w.update_labels()
         with patch.object(w.native, 'exists', return_value=True), patch.object(w.native, 'size', return_value=(1280,720)), patch.object(w.native, 'cursor', return_value=(4,5)):
             w.tick()
-            self.assertIn('1920×1080', w.profile_panel.summary.text())
+            self.assertIn('1920×1080', w.windowTitle())
+            self.assertTrue(w.windowTitle().endswith(' — 4, 5'))
             self.assertEqual(w.target_info.text(), '현재 1280 × 720')
             w.session.start(ExecutionPlan(123, (1920,1080), (1280,720), automatic=True))
             w.tick()
@@ -128,7 +131,8 @@ class ProfilePanelTests(unittest.TestCase):
         self.assertEqual(w.profile.rows[0].memo, 'unsaved')
         self.assertTrue(w.dirty)
         self.assertFalse(w.armed)
-        self.assertEqual(w.profile_panel.selector.currentData(), str(old_path))
+        w.refresh_profiles()
+        self.assertEqual([a.data() for a in w.profile_menu.actions() if a.isChecked()], [str(old_path)])
         self.assertIn('disk full', w.statusBar().currentMessage())
 
     def test_switch_waits_for_autosave_without_blocking_gui_or_allowing_reentry(self):
@@ -260,7 +264,7 @@ class ProfilePanelTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 Settings.read({'recent_profiles': value})
 
-    def test_long_names_and_expanded_info_keep_width_and_editor_below_profile(self):
+    def test_long_names_keep_width_and_editor_covers_body(self):
         w = self.w
         self.assertTrue(w.switch_profile(self.other('short.json')))
         self.qt.processEvents()
@@ -270,19 +274,42 @@ class ProfilePanelTests(unittest.TestCase):
         w.profile.target_program = {'exe':'Game.exe', 'class':'Unity', 'title':'아주 긴 게임 이름'*20}
         w.profile.resolution = (1920,1080)
         w.update_labels()
-        w.profile_panel.summary.setChecked(True)
         editor = self.draft()
         self.qt.processEvents()
         self.assertEqual(w.width(), width)
-        self.assertEqual(w.profile_panel.width(), w.target_box.width())
-        self.assertIn('1920×1080', w.profile_panel.summary.text())
-        self.assertIn('…', w.profile_panel.summary.text())
-        self.assertEqual(w.profile_panel.values['파일 위치'].text(), str(other))
-        bottom = w.profile_panel.mapTo(w, QPoint(0,w.profile_panel.height())).y()
-        self.assertGreaterEqual(editor.y(), bottom)
-        w.profile_panel.summary.setChecked(False)
+        self.assertIn(other.stem + ' — 1920×1080', w.windowTitle())
+        self.assertEqual(editor.geometry(), w.rect())
+        w.resize(w.width()+50,w.height()+50)
         self.qt.processEvents()
-        self.assertEqual(editor.geometry(), editor.parent_area())
+        self.assertEqual(editor.geometry(), w.rect())
+        self.assertIs(w.caption_menu.menu, w.main_menu)
+
+    def test_title_updates_coordinates_only_when_changed(self):
+        w = self.w
+        w.profile.resolution = (1920,1080)
+        w.update_labels()
+        self.assertEqual(w.windowTitle(), 'macro — 1920×1080 — —, —')
+        changes = []
+        w.windowTitleChanged.connect(changes.append)
+        w.set_cursor_position((-123,456))
+        w.set_cursor_position((-123,456))
+        self.assertEqual(changes, ['macro — 1920×1080 — -123, 456'])
+        w.profile.resolution = None
+        w.dirty = True
+        w.update_labels()
+        self.assertEqual(w.windowTitle(), '● macro — 알 수 없음 — -123, 456')
+        w.set_cursor_position()
+        self.assertTrue(w.windowTitle().endswith(' — —, —'))
+
+    def test_menu_switch_failure_keeps_current_check(self):
+        w = self.w
+        old, other = w.path, self.other()
+        w.refresh_profiles()
+        destination = next(a for a in w.profile_menu.actions() if a.data() == str(other))
+        with patch.object(w, 'prepare_profile_change', return_value=False):
+            destination.trigger()
+        self.assertEqual(w.path,old)
+        self.assertEqual([a.data() for a in w.profile_menu.actions() if a.isChecked()], [str(old)])
 
     def test_folder_action_uses_current_profile_directory(self):
         with patch('app.QDesktopServices.openUrl', return_value=True) as open_url:

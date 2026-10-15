@@ -1,7 +1,7 @@
 """Embedded script editor that leaves the main title bar and menus accessible."""
 import re
 from threading import Event
-from PySide6.QtCore import Qt, QEvent, Signal, QTimer, QPoint
+from PySide6.QtCore import Qt, QEvent, Signal, QTimer
 from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QWidget, QDialog, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizeGrip, QApplication
 from mouse_hook import CoordinateHook
@@ -225,9 +225,7 @@ class ScriptEditor(QDialog):
 
     def parent_area(self):
         parent = self.parentWidget()
-        panel = parent.profile_panel
-        top = panel.mapTo(parent, QPoint(0, panel.height())).y() + 6
-        return parent.rect().adjusted(0, top, 0, 0)
+        return parent.rect()
 
     def sync_to_parent(self):
         self.syncing_geometry = True
