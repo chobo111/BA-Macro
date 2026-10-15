@@ -10,7 +10,7 @@ from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolyg
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QHeaderView, QAbstractItemView,
     QSpinBox, QLineEdit, QDialog, QFormLayout, QDialogButtonBox, QCheckBox, QKeySequenceEdit,
-    QStyledItemDelegate, QStatusBar, QTabWidget, QWidget, QFrame, QApplication,
+    QStyledItemDelegate, QStatusBar, QTabWidget, QWidget, QApplication,
 )
 
 from theme import LIGHT
@@ -391,7 +391,7 @@ class SettingsDialog(QDialog):
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
         forms = {}
-        for label in ("일반", "동작 / 스크립트"):
+        for label in ("일반", "스크립트"):
             page = QWidget()
             form_layout = QFormLayout(page)
             form_layout.setFormAlignment(Qt.AlignmentFlag.AlignTop)
@@ -408,8 +408,7 @@ class SettingsDialog(QDialog):
         form.addRow(guide)
         self.times = {}
         self.checks = {}
-        for name, label in (("move_to_click_delay_ms", "이동 후 클릭 대기시간"), ("click_hold_ms", "클릭 유지 시간"),
-                            ("cursor_return_delay_ms", "클릭 후 커서 복귀 대기시간"),
+        for name, label in (("click_hold_ms", "클릭 유지 시간"),
                             ("drag_segment_duration_ms", "curve 드래그 시간")):
             spin = QSpinBox()
             spin.setRange(1 if name == "click_hold_ms" else 0, 99999)
@@ -423,20 +422,7 @@ class SettingsDialog(QDialog):
             field_layout.addWidget(spin)
             field_layout.addWidget(QLabel("ms"))
             field_layout.addStretch()
-            action_form = forms["동작 / 스크립트"]
-            if name == "cursor_return_delay_ms":
-                return_cursor = QCheckBox("클릭 후 원래 커서 위치로 복귀")
-                return_cursor.setChecked(settings.return_cursor)
-                return_cursor.toggled.connect(field.setEnabled)
-                field.setEnabled(settings.return_cursor)
-                self.checks["return_cursor"] = return_cursor
-                action_form.addRow(return_cursor)
-            if name == "drag_segment_duration_ms":
-                separator = QFrame()
-                separator.setFrameShape(QFrame.Shape.HLine)
-                separator.setFrameShadow(QFrame.Shadow.Sunken)
-                action_form.addRow(separator)
-            action_form.addRow(label, field)
+            forms["스크립트"].addRow(label, field)
         for name, label in (("exclusive_hook", "처리한 단축키를 다른 앱에 전달하지 않기"),
                             ("auto_pause", "설정·편집 창을 열거나 변경할 때 자동 정지"),
                             ("auto_convert_on_start", "창 크기가 다르면 묻지 않고 자동 변환")):

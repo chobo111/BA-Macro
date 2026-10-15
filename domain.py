@@ -11,7 +11,6 @@ from shortcuts import hotkey, validate_hotkeys, ShortcutError
 from script_language import coordinate_tokens
 
 MODES = {
-    "move_and_click": "좌표 클릭",
     "move_only": "커서 이동",
     "script": "스크립트 실행",
 }
@@ -105,7 +104,7 @@ class Profile:
     def default(cls, reserved=()):
         # Keep three presets, leaving only keys owned by global shortcuts blank.
         reserved = {hotkey(key) for key in reserved}
-        return cls([Row(move_hk="" if k in reserved else k, action_mode="move_and_click")
+        return cls([Row(move_hk="" if k in reserved else k)
                     for k in ("q", "w", "e")])
 
     @classmethod
@@ -150,10 +149,7 @@ class Profile:
 class Settings:
     capture_hk: str = "ctrl+s"
     pause_hk: str = "ctrl+`"
-    move_to_click_delay_ms: int = 15
     click_hold_ms: int = 50
-    cursor_return_delay_ms: int = 50
-    return_cursor: bool = True
     resize_convert_profile: bool = True
     drag_segment_duration_ms: int = 10
     exclusive_hook: bool = True
@@ -175,9 +171,9 @@ class Settings:
         if not obj.pause_hk or not obj.capture_hk or obj.pause_hk == obj.capture_hk:
             raise ShortcutError("캡처와 작동/정지 단축키는 서로 다르게 지정하세요.")
         validate_hotkeys((obj.pause_hk, obj.capture_hk))
-        for name in ("move_to_click_delay_ms", "click_hold_ms", "cursor_return_delay_ms", "drag_segment_duration_ms"):
+        for name in ("click_hold_ms", "drag_segment_duration_ms"):
             setattr(obj, name, bounded_int(data.get(name, getattr(obj, name)), 1 if name == "click_hold_ms" else 0, 99999, name))
-        for name in ("exclusive_hook", "auto_pause", "return_cursor", "resize_convert_profile", "auto_convert_on_start"):
+        for name in ("exclusive_hook", "auto_pause", "resize_convert_profile", "auto_convert_on_start"):
             value = data.get(name, getattr(obj, name))
             if not isinstance(value, bool):
                 raise ValueError(f"{name}: 참/거짓 값이 필요합니다.")

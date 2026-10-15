@@ -17,7 +17,7 @@ class InputPreflightTests(unittest.TestCase):
         self.native = FakeWindows()
         self.entered, self.proceed = threading.Event(), threading.Event()
         self.errors = []
-        self.command = Command(1, 0, 0, 'script', 'q', 0, 1,
+        self.command = Command(1, 0, 0, 'script', 'q', 1,
                                script='click 10,20', expected_size=(1920, 1080))
 
     def blocked(self):

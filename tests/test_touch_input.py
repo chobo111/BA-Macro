@@ -35,7 +35,7 @@ class TouchTests(unittest.TestCase):
         self.native.point_belongs_to = Mock(return_value=True)
         self.device = Device()
         self.adapter = TouchScriptInput(self.native, lambda: self.device)
-        self.command = Command(1, 30, 40, 'script', 'q', 0, 1)
+        self.command = Command(1, 30, 40, 'script', 'q', 1)
         self.runtime = ScriptRuntime(self.adapter, lambda c: None, lambda ms, c: None, lambda k: False)
 
     def run_script(self, source):
@@ -45,7 +45,7 @@ class TouchTests(unittest.TestCase):
 
     def test_curve_and_click_send_touch_without_moving_real_cursor(self):
         with patch.object(self.native, 'move', side_effect=AssertionError('physical cursor moved')), \
-             patch.object(self.native, 'button', side_effect=AssertionError('physical mouse clicked')):
+             patch.object(self.native, 'button', create=True, side_effect=AssertionError('physical mouse clicked')):
             self.run_script('curve 10,20 30,40\nclick mouse')
         self.assertEqual(self.device.events, [
             ((10, 20), DOWN | INRANGE | INCONTACT),
@@ -297,7 +297,7 @@ class TouchTests(unittest.TestCase):
         engine = Engine(self.native, lambda key: False, report)
         try:
             with patch.object(self.native, 'move', side_effect=AssertionError('physical movement')), \
-                 patch.object(self.native, 'button', side_effect=AssertionError('physical click')):
+                 patch.object(self.native, 'button', create=True, side_effect=AssertionError('physical click')):
                 engine.submit(replace(self.command, script='click 10,20\nkey_press a'))
                 self.assertTrue(reported.wait(1))
             self.assertEqual(len(errors), 1)

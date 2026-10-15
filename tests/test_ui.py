@@ -348,6 +348,13 @@ class UiTests(unittest.TestCase):
         dialog.reject()
         dialog.deleteLater()
 
+    def test_only_cursor_move_and_script_modes_are_available(self):
+        self.assertEqual(MODES, {'move_only': '커서 이동', 'script': '스크립트 실행'})
+        for index, row in enumerate(self.window.profile.rows):
+            combo = self.window.table.cellWidget(index, 3)
+            self.assertEqual([combo.itemData(i) for i in range(combo.count())], ['move_only', 'script'])
+            self.assertEqual(row.action_mode, 'move_only')
+
     def test_current_settings_options(self):
         from dataclasses import asdict
         from domain import Settings
@@ -358,7 +365,7 @@ class UiTests(unittest.TestCase):
         self.assertNotIn('auto_fire', asdict(settings))
         self.assertNotIn('show_realtime', asdict(settings))
         dialog = SettingsDialog(settings, self.window)
-        self.assertEqual(set(dialog.checks), {'auto_pause', 'exclusive_hook', 'return_cursor', 'auto_convert_on_start'})
+        self.assertEqual(set(dialog.checks), {'auto_pause', 'exclusive_hook', 'auto_convert_on_start'})
         dialog.checks['auto_pause'].setChecked(False)
         self.assertFalse(dialog.value().auto_pause)
         dialog.deleteLater()
@@ -1194,17 +1201,13 @@ class UiTests(unittest.TestCase):
 
 
 
-    def test_settings_units_are_outside_inputs_and_return_option_controls_delay(self):
+    def test_settings_only_expose_script_timing_with_units_outside_inputs(self):
         dialog = SettingsDialog(self.window.settings, self.window)
         for spin in dialog.times.values():
             self.assertEqual(spin.suffix(), '')
             self.assertNotIn('ms', spin.text())
-        self.assertTrue(dialog.value().return_cursor)
-        dialog.checks['return_cursor'].setChecked(False)
-        self.assertFalse(dialog.times['cursor_return_delay_ms'].isEnabled())
-        self.assertFalse(dialog.value().return_cursor)
-        dialog.checks['return_cursor'].setChecked(True)
-        self.assertTrue(dialog.times['cursor_return_delay_ms'].isEnabled())
+        self.assertEqual([dialog.tabs.tabText(i) for i in range(dialog.tabs.count())], ['일반', '스크립트'])
+        self.assertEqual(set(dialog.times), {'click_hold_ms', 'drag_segment_duration_ms'})
         self.assertIn('자동 정지', dialog.checks['auto_pause'].text())
         dialog.close()
 
@@ -1820,7 +1823,7 @@ class UiTests(unittest.TestCase):
         self.assertEqual([row.move_hk for row in saved.rows[1:]], ['1', '3', '2'])
         dialog.deleteLater()
 
-    def test_script_to_click_keeps_columns_and_buttons_stable(self):
+    def test_script_to_move_keeps_columns_and_buttons_stable(self):
         w = self.window
         for row in w.profile.rows:
             row.action_mode = 'script'
@@ -1830,7 +1833,7 @@ class UiTests(unittest.TestCase):
                   w.target_box.size(), w.toolbar_panel.size(),
                   w.pin_button.pos(), w.pause_button.pos(),
                   w.table.cellWidget(1, 1).size())
-        w.set_value(w.profile.rows[0].id, 'action_mode', 'move_and_click')
+        w.set_value(w.profile.rows[0].id, 'action_mode', 'move_only')
         self.qt.processEvents()
         self.qt.processEvents()
         after = ([w.table.columnWidth(i) for i in range(5)], w.size(),

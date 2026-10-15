@@ -2,6 +2,7 @@ from dataclasses import replace
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from engine import Engine, Command, Cancelled
 
 
@@ -37,12 +38,12 @@ class FakeWindows:
         self.position = (x, y)
         self.events.append(("move", x, y))
 
-    def button(self, down):
-        self.events.append(("button", down))
+    def mouse_button(self, button, down):
+        self.events.append(('mouse', button, down))
         if down:
             self.down.set()
             if self.fail_down:
-                raise OSError("injected failure")
+                raise OSError('injected failure')
 
 
 class EngineTests(unittest.TestCase):
@@ -59,7 +60,7 @@ class EngineTests(unittest.TestCase):
         self.native = FakeWindows()
         self.errors = []
         self.engine = Engine(self.native, lambda key: False, self.errors.append)
-        self.command = Command(1, 30, 40, "move_and_click", "q", 0, 1)
+        self.command = Command(1, 30, 40, "move_only", "q", 1)
 
     def tearDown(self):
         self.engine.shutdown()
@@ -75,92 +76,36 @@ class EngineTests(unittest.TestCase):
         self.fail("worker did not finish")
 
     def test_worker_error_keeps_submitted_profile_and_row_context(self):
-        from unittest.mock import patch
-        with patch.object(self.native, 'point_belongs_to', return_value=False):
+        with patch.object(self.native, 'move', side_effect=OSError('move failed')):
             self.engine.submit(replace(self.command, error_context='raid.json · 2행 · Q'))
             self.wait_idle()
-        self.assertEqual(len(self.errors), 1)
-        self.assertTrue(self.errors[0].startswith('raid.json · 2행 · Q\n'))
-        self.assertIn('가려졌습니다', self.errors[0])
+        self.assertEqual(self.errors, ['raid.json · 2행 · Q\nmove failed'])
 
-    def test_coordinate_modes(self):
+    def test_coordinate_action_moves_without_click_or_restore(self):
         self.engine.execute(self.command)
-        self.assertEqual(self.native.events, [("move", 30, 40), ("button", True), ("button", False), ("move", 200, 300)])
-        self.native.events.clear()
-        self.engine.execute(replace(self.command, mode="move_only"))
-        self.assertEqual(self.native.events, [("move", 30, 40)])
-        self.native.events.clear()
-        self.native.position = (200, 300)
-        self.engine.execute(replace(self.command, mode="move_and_click"))
-        self.assertEqual(self.native.position, (200, 300))
-        self.assertEqual(sum(e == ("button", True) for e in self.native.events), 1)
+        self.assertEqual(self.native.events, [('move', 30, 40)])
+        self.assertEqual(self.native.position, (30, 40))
 
-    def test_pause_releases_button_and_clears_pending_switch(self):
-        self.assertTrue(self.engine.submit(replace(self.command, click_hold_ms=5000)))
+    def test_pause_releases_script_touch_and_clears_pending_switch(self):
+        self.assertTrue(self.engine.submit(self.held_click()))
         self.assertTrue(self.native.down.wait(1))
         start = time.monotonic()
         self.engine.stop()
         self.wait_idle()
         self.assertLess(time.monotonic() - start, .5)
-        self.assertIn(("button", False), self.native.events)
+        self.assertIn(('mouse', 'left', False), self.native.events)
         self.assertEqual(self.native.position, (200, 300))
         self.assertEqual(self.errors, [])
 
-    def test_focus_loss_releases_button_without_second_click(self):
-        self.engine.submit(replace(self.command, click_hold_ms=5000))
+    def test_focus_loss_releases_script_touch_without_second_click(self):
+        self.engine.submit(self.held_click())
         self.assertTrue(self.native.down.wait(1))
         self.native.active_value = False
         self.wait_idle()
-        self.assertEqual(self.native.events[-2:], [("button", False), ("move", 200, 300)])
-        self.assertEqual(sum(e == ("button", True) for e in self.native.events), 1)
-
-    def test_returns_to_original_screen_point_outside_target(self):
-        self.native.position = (-2200, -100)
-        self.engine.execute(self.command)
-        self.assertEqual(self.native.position, (-2200, -100))
-        self.assertEqual(self.native.events[-2:], [("button", False), ("move", -2200, -100)])
-
-    def test_cursor_return_wait_occurs_after_release_before_restore(self):
-        from unittest.mock import patch
-        def record_wait(milliseconds, command):
-            self.native.events.append(("wait", milliseconds))
-        with patch.object(self.engine, 'wait', side_effect=record_wait):
-            self.engine.execute(replace(self.command, cursor_return_delay_ms=80))
-        self.assertEqual(self.native.events, [
-            ("move", 30, 40), ("wait", 0), ("button", True), ("wait", 1),
-            ("button", False), ("wait", 80), ("move", 200, 300)])
-        self.native.events.clear()
-        with patch.object(self.engine, 'wait') as wait:
-            self.engine.execute(replace(self.command, mode='move_only'))
-            wait.assert_not_called()
-
-    def test_cursor_return_wait_can_be_cancelled_without_holding_button(self):
-        from unittest.mock import patch
-        entered = threading.Event()
-        original_wait = self.engine.wait
-        def wait(milliseconds, command):
-            if milliseconds == 5000:
-                entered.set()
-            original_wait(milliseconds, command)
-        with patch.object(self.engine, 'wait', side_effect=wait):
-            self.engine.submit(replace(self.command, cursor_return_delay_ms=5000))
-            self.assertTrue(entered.wait(1))
-            self.assertEqual(self.native.events[-1], ("button", False))
-            start = time.monotonic()
-            self.engine.stop()
-            self.wait_idle()
-            self.assertLess(time.monotonic() - start, .5)
+        self.assertEqual(self.native.events[-1], ('mouse', 'left', False))
+        self.assertEqual(self.native.events.count(('mouse', 'left', True)), 1)
         self.assertEqual(self.native.position, (200, 300))
-        self.assertEqual(self.errors, [])
 
-    def test_disabled_cursor_return_skips_restore_and_return_wait(self):
-        from unittest.mock import patch
-        with patch.object(self.engine, 'wait') as wait, patch.object(self.native, 'cursor_screen', wraps=self.native.cursor_screen) as cursor:
-            self.engine.execute(replace(self.command, return_cursor=False, cursor_return_delay_ms=5000))
-            cursor.assert_called_once()  # Read only to hit-test the click, not to restore it.
-        self.assertEqual([call.args[0] for call in wait.call_args_list], [0, 1])
-        self.assertEqual(self.native.events, [("move", 30, 40), ("button", True), ("button", False)])
-        self.assertEqual(self.native.position, (30, 40))
 
     def test_inactive_window_never_receives_input(self):
         self.native.active_value = False
@@ -173,31 +118,30 @@ class EngineTests(unittest.TestCase):
             self.engine.execute(replace(self.command, x=1920))
         self.assertEqual(self.native.events, [])
 
-    def test_release_attempted_when_send_fails(self):
+    def test_script_release_attempted_when_send_fails(self):
         self.native.fail_down = True
-        with self.assertRaises(OSError):
-            self.engine.execute(self.command)
-        self.assertIn(("button", False), self.native.events)
+        self.engine.submit(self.held_click())
+        self.wait_idle()
+        self.assertIn(('mouse', 'left', False), self.native.events)
         self.assertEqual(self.native.position, (200, 300))
+        self.assertEqual(self.errors, ['injected failure'])
 
-    def test_held_coordinate_key_clicks_only_once(self):
+    def test_held_coordinate_key_moves_only_once(self):
         self.engine.held = lambda key: True
         self.engine.submit(self.command)
         self.wait_idle()
-        self.assertEqual(sum(e == ("button", True) for e in self.native.events), 1)
+        self.assertEqual(self.native.events, [('move', 30, 40)])
 
 
-
-    def test_resize_during_click_releases_button_and_restores_cursor(self):
-        from unittest.mock import patch
+    def test_resize_during_script_click_releases_touch(self):
         with patch.object(self.native, 'size', return_value=(1920,1080)) as size:
-            self.engine.submit(replace(self.command, click_hold_ms=5000, expected_size=(1920,1080)))
+            self.engine.submit(self.held_click(expected_size=(1920,1080)))
             self.assertTrue(self.native.down.wait(1))
             size.return_value = (1280,720)
             self.wait_idle()
-        self.assertIn(('button', False), self.native.events)
+        self.assertIn(('mouse', 'left', False), self.native.events)
         self.assertEqual(self.native.position, (200,300))
-        self.assertEqual(sum(event == ('button',True) for event in self.native.events), 1)
+        self.assertEqual(self.native.events.count(('mouse', 'left', True)), 1)
         self.assertEqual(len(self.errors), 1)
         self.assertIn('창 크기', self.errors[0])
         self.assertIsNone(self.engine.pending)
@@ -208,78 +152,43 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.native.events, [])
         self.assertEqual(len(self.errors), 1)
 
-    def test_minimize_during_click_releases_without_resize_error(self):
+    def test_minimize_during_script_click_releases_without_resize_error(self):
         from domain import WindowSizeUnavailable
-        from unittest.mock import patch
         with patch.object(self.native, 'size', return_value=(1920,1080)) as size:
-            self.engine.submit(replace(self.command, click_hold_ms=5000, expected_size=(1920,1080)))
+            self.engine.submit(self.held_click(expected_size=(1920,1080)))
             self.assertTrue(self.native.down.wait(1))
             size.side_effect = WindowSizeUnavailable()
             self.wait_idle()
-        self.assertIn(('button', False), self.native.events)
+        self.assertIn(('mouse', 'left', False), self.native.events)
         self.assertEqual(self.native.position, (200,300))
         self.assertEqual(self.errors, [])
 
     def test_unselected_command_is_rejected_without_input(self):
-        for mode in ('move_only', 'move_and_click', 'script'):
+        for mode in ('move_only', 'script'):
             self.engine.submit(replace(self.command, hwnd=None, mode=mode, script='click 10,20'))
             self.wait_idle()
-        self.assertEqual(self.errors, ['앱을 선택하세요.'] * 3)
+        self.assertEqual(self.errors, ['앱을 선택하세요.'] * 2)
         self.assertEqual(self.native.events, [])
 
-    def test_covered_coordinate_never_clicks_and_restores_cursor(self):
-        from unittest.mock import patch
-        with patch.object(self.native,'point_belongs_to',return_value=False) as hit:
-            self.engine.submit(self.command)
-            self.wait_idle()
-        hit.assert_called_once_with(1,30,40)
-        self.assertEqual(self.native.events,[('move',30,40),('move',200,300)])
-        self.assertEqual(len(self.errors),1)
-        self.assertIn('가려졌습니다',self.errors[0])
 
-    def test_hit_test_uses_actual_cursor_after_click_delay(self):
-        from unittest.mock import patch
-        def moved_during_delay(milliseconds, command):
-            self.native.position=(900,500)
-        with patch.object(self.engine,'wait',side_effect=moved_during_delay), patch.object(self.native,'point_belongs_to',return_value=False) as hit:
-            with self.assertRaisesRegex(ValueError,'가려졌습니다'):
-                self.engine.execute(self.command)
-        hit.assert_called_once_with(1,900,500)
-        self.assertFalse(any(event[0]=='button' for event in self.native.events))
-        self.assertEqual(self.native.position,(200,300))
-
-    def test_cursor_moved_within_target_during_delay_cancels_click(self):
-        from unittest.mock import patch
-        for restore in (True, False):
-            with self.subTest(return_cursor=restore):
-                self.native.events.clear()
-                self.native.position = (200, 300)
-                def move_cursor(milliseconds, command):
-                    self.native.position = (900, 500)
-                with patch.object(self.engine, 'wait', side_effect=move_cursor):
-                    with self.assertRaisesRegex(ValueError, '위치가 변경'):
-                        self.engine.execute(replace(self.command, return_cursor=restore))
-                self.assertFalse(any(event[0] == 'button' for event in self.native.events))
-                self.assertEqual(self.native.position, (200, 300) if restore else (900, 500))
-
-    def test_target_moved_during_delay_cancels_click(self):
-        from unittest.mock import patch
-        with patch.object(self.native, 'screen', side_effect=[(30, 40), (130, 140)]):
-            with self.assertRaisesRegex(ValueError, '위치가 변경'):
-                self.engine.execute(self.command)
-        self.assertFalse(any(event[0] == 'button' for event in self.native.events))
-        self.assertEqual(self.native.position, (200, 300))
-
-    def test_click_validates_screen_coordinates_on_negative_monitor(self):
-        from unittest.mock import patch
+    def test_move_on_negative_monitor(self):
         with patch.object(self.native, 'screen', return_value=(-1890, -160)):
             self.engine.execute(self.command)
-        self.assertEqual(self.native.events, [
-            ('move', -1890, -160), ('button', True), ('button', False), ('move', 200, 300)])
+        self.assertEqual(self.native.events, [('move', -1890, -160)])
 
-    def test_move_only_still_moves_without_click_hit_test(self):
-        from unittest.mock import patch
-        with patch.object(self.native,'point_belongs_to',return_value=False) as hit:
-            self.engine.execute(replace(self.command,mode='move_only'))
+    def test_move_does_not_need_click_hit_test(self):
+        with patch.object(self.native, 'point_belongs_to', return_value=False) as hit:
+            self.engine.execute(self.command)
         hit.assert_not_called()
-        self.assertEqual(self.native.events,[('move',30,40)])
+        self.assertEqual(self.native.events, [('move',30,40)])
+
+    def held_click(self, **kwargs):
+        return replace(self.command, mode='script', script='click 30,40', click_hold_ms=5000, **kwargs)
+
+    def test_shutdown_releases_latched_script_touch(self):
+        self.engine.submit(replace(self.command, mode='script', script='mouse_switch left'))
+        self.wait_idle()
+        self.assertTrue(self.native.down.is_set())
+        self.engine.shutdown()
+        self.assertEqual(self.native.events[-1], ('mouse', 'left', False))
+        self.assertEqual(self.native.position, (200,300))

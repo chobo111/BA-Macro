@@ -930,7 +930,7 @@ class StartChecks(unittest.TestCase):
              patch.object(w.native,'cursor',side_effect=[(900,600),(300,450)]), \
              patch.object(w,'convert_dialog') as conversion:
             for row,mode,expected in zip(w.profile.rows[:2],
-                    ('move_and_click','move_only'), ((600,400),(200,300))):
+                    ('move_only','move_only'), ((600,400),(200,300))):
                 row.action_mode = mode
                 w.capture(row.id)
                 self.assertEqual((row.x,row.y), expected)

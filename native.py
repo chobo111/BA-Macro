@@ -5,30 +5,7 @@ from ctypes import wintypes as W
 from domain import target_identity, same_program, WindowSizeUnavailable
 
 U = C.WinDLL("user32", use_last_error=True)
-ULONG_PTR = C.c_size_t
 SWP_ASYNCWINDOWPOS = 0x4000
-
-
-class MouseInput(C.Structure):
-    _fields_ = [("dx", W.LONG), ("dy", W.LONG), ("mouseData", W.DWORD),
-                ("dwFlags", W.DWORD), ("time", W.DWORD), ("dwExtraInfo", ULONG_PTR)]
-
-
-class KeyboardInput(C.Structure):
-    _fields_ = [("wVk", W.WORD), ("wScan", W.WORD), ("dwFlags", W.DWORD),
-                ("time", W.DWORD), ("dwExtraInfo", ULONG_PTR)]
-
-
-class HardwareInput(C.Structure):
-    _fields_ = [("uMsg", W.DWORD), ("wParamL", W.WORD), ("wParamH", W.WORD)]
-
-
-class Payload(C.Union):
-    _fields_ = [("mi", MouseInput), ("ki", KeyboardInput), ("hi", HardwareInput)]
-
-
-class Input(C.Structure):
-    _fields_ = [("type", W.DWORD), ("payload", Payload)]
 
 
 def bind(name, args, result):
@@ -46,7 +23,6 @@ to_screen = bind("ClientToScreen", [W.HWND, C.POINTER(W.POINT)], W.BOOL)
 to_client = bind("ScreenToClient", [W.HWND, C.POINTER(W.POINT)], W.BOOL)
 get_cursor = bind("GetCursorPos", [C.POINTER(W.POINT)], W.BOOL)
 set_cursor = bind("SetCursorPos", [C.c_int, C.c_int], W.BOOL)
-send_input = bind("SendInput", [W.UINT, C.POINTER(Input), C.c_int], W.UINT)
 get_title = bind("GetWindowTextW", [W.HWND, W.LPWSTR, C.c_int], C.c_int)
 get_class = bind("GetClassNameW", [W.HWND, W.LPWSTR, C.c_int], C.c_int)
 K = C.WinDLL('kernel32', use_last_error=True)
@@ -226,10 +202,6 @@ class Windows:
 
     def move(self, x, y):
         check(set_cursor(x, y))
-
-    def button(self, down):
-        packet = Input(type=0, payload=Payload(mi=MouseInput(0, 0, 0, 0x2 if down else 0x4, 0, 0)))
-        check(send_input(1, C.byref(packet), C.sizeof(Input)))
 
     def size(self, hwnd):
         require_target(hwnd)

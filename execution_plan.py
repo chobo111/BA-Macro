@@ -49,9 +49,7 @@ class ExecutionPlan:
             x, y = scaled_point((x, y), *transform)
         return Command(
             hwnd=self.target, x=x, y=y, mode=row.action_mode, key=row.move_hk,
-            move_to_click_delay_ms=settings.move_to_click_delay_ms,
             click_hold_ms=settings.click_hold_ms, script=row.script,
             drag_segment_duration_ms=settings.drag_segment_duration_ms, program=program,
-            cursor_return_delay_ms=settings.cursor_return_delay_ms,
-            return_cursor=settings.return_cursor, expected_size=self.expected_size,
+            expected_size=self.expected_size,
         )

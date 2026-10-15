@@ -18,13 +18,10 @@ class Command:
     y: int
     mode: str
     key: str
-    move_to_click_delay_ms: int
     click_hold_ms: int
     script: str = ''
     drag_segment_duration_ms: int = 10
     program: Program | None = None
-    cursor_return_delay_ms: int = 50
-    return_cursor: bool = True
     expected_size: tuple[int, int] | None = None
     error_context: str = ''
 
@@ -101,42 +98,15 @@ class Engine:
             remaining -= step
             self.guard(command)
 
-    def click(self, command):
-        self.guard(command)
-        point = self.native.cursor_screen()
-        if not self.native.point_belongs_to(command.hwnd, *point):
-            raise ValueError('클릭 위치가 다른 창에 가려졌습니다. 대상 앱이 보이도록 창을 옮겨 주세요.')
-        expected = self.native.screen(command.hwnd, command.x, command.y)
-        if point != expected:
-            raise ValueError('클릭 전 커서 또는 앱 위치가 변경되었습니다. 다시 실행하세요.')
-        try:
-            self.native.button(True)
-            self.wait(command.click_hold_ms, command)
-        finally:
-            self.native.button(False)
-
     def execute(self, c):
         self.guard(c)
+        if c.mode != "move_only":
+            raise ValueError('지원하지 않는 실행 모드입니다.')
         left, top, right, bottom = self.native.bounds(c.hwnd)
         if not left <= c.x < right or not top <= c.y < bottom:
             raise ValueError("저장 좌표가 대상 영역 밖에 있습니다. 좌표를 다시 캡처하세요.")
         self.guard(c)
-        destination = self.native.screen(c.hwnd, c.x, c.y)
-        if c.mode != "move_and_click":
-            self.native.move(*destination)
-            return
-        origin = self.native.cursor_screen() if c.return_cursor else None
-        try:
-            self.native.move(*destination)
-            self.wait(c.move_to_click_delay_ms, c)
-            self.click(c)
-            if c.return_cursor:
-                self.wait(c.cursor_return_delay_ms, c)
-        finally:
-            # Restore physical screen coordinates even after cancellation or focus loss.
-            # click() releases the button before this cleanup runs.
-            if origin is not None:
-                self.native.move(*origin)
+        self.native.move(*self.native.screen(c.hwnd, c.x, c.y))
 
     def close_script_input(self):
         self.runtime.native.close()

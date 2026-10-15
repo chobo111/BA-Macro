@@ -19,7 +19,7 @@ class DomainTests(unittest.TestCase):
         sources += ['curve mouse 0,0', 'CLICK\t-10, 20 // note',
                     'loop 2\nloop 3\nclick 0,0\nloop_end\nloop_end',
                     'click mouse\nrelease_actions\nrelease 0,0']
-        for mode in ('script', 'move_only', 'move_and_click'):
+        for mode in ('script', 'move_only'):
             for source in sources:
                 with self.subTest(mode=mode, source=source):
                     self.assertTrue(Profile([Row(action_mode=mode, script=source)]).has_fixed_coordinates())
@@ -63,7 +63,7 @@ class DomainTests(unittest.TestCase):
             self.assertEqual(profile.export()['target_resolution'], size)
 
     def test_current_profile_roundtrip(self):
-        profile = Profile([Row(move_hk='q', x=123, y=456, memo='스킬', action_mode='move_and_click')], (1920, 1080))
+        profile = Profile([Row(move_hk='q', x=123, y=456, memo='스킬', action_mode='move_only')], (1920, 1080))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "프로필.json"
             atomic_json(path, profile.export())
@@ -107,7 +107,7 @@ class DomainTests(unittest.TestCase):
 
     def test_bad_values(self):
         for data in ({"click_hold_ms": -1}, {"auto_pause": "yes"},
-                     {"capture_hk": "ctrl+s", "pause_hk": "ctrl+s"}, {"move_to_click_delay_ms": 1.5}):
+                     {"capture_hk": "ctrl+s", "pause_hk": "ctrl+s"}, {"drag_segment_duration_ms": 1.5}):
             with self.subTest(data=data), self.assertRaises(ValueError):
                 Settings.read(data)
         for coords in ("x, y", "1, 2, 3", "100001, 0"):
@@ -120,21 +120,21 @@ class DomainTests(unittest.TestCase):
 
     def test_removed_settings_names_are_rejected(self):
         for name in ('click_delay', 'click_duration', 'curve_duration', 'after_action_delay',
-                     'return_delay', 'auto_fire', 'show_realtime', 'warn_app_mismatch'):
+                     'return_delay', 'auto_fire', 'show_realtime', 'warn_app_mismatch',
+                     'move_to_click_delay_ms', 'cursor_return_delay_ms', 'return_cursor'):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, name):
                 Settings.read({name: 10})
         from dataclasses import asdict
-        values = asdict(Settings(move_to_click_delay_ms=7, click_hold_ms=83, drag_segment_duration_ms=19))
+        values = asdict(Settings(click_hold_ms=83, drag_segment_duration_ms=19))
         self.assertEqual(asdict(Settings.read(values)), values)
         self.assertEqual(Settings.read({}), Settings())
 
-    def test_cursor_return_delay_default_and_range(self):
-        self.assertEqual(Settings.read({}).cursor_return_delay_ms, 50)
-        self.assertEqual(Settings.read({'cursor_return_delay_ms': 0}).cursor_return_delay_ms, 0)
-        self.assertEqual(Settings.read({'cursor_return_delay_ms': 99999}).cursor_return_delay_ms, 99999)
-        for value in (-1, 100000, 1.5):
-            with self.assertRaises(ValueError):
-                Settings.read({'cursor_return_delay_ms': value})
+    def test_removed_coordinate_click_mode_is_rejected(self):
+        data = Profile.default().export()
+        data['macros'][0]['action_mode'] = 'move_and_click'
+        with self.assertRaisesRegex(ValueError, '실행 모드'):
+            Profile.read(data)
+
 
 
 if __name__ == "__main__":

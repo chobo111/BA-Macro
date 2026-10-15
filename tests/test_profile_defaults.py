@@ -29,7 +29,7 @@ class DefaultProfileTests(unittest.TestCase):
                 profile.validate(reserved)
                 self.assertEqual([r.move_hk for r in profile.rows], expected)
                 self.assertTrue(all(not r.memo and not r.script and r.x == r.y == 0
-                                    and r.action_mode == 'move_and_click' for r in profile.rows))
+                                    and r.action_mode == 'move_only' for r in profile.rows))
                 self.assertEqual(len({r.id for r in profile.rows}), 3)
 
     def load(self, contents=None):

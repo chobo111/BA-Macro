@@ -46,7 +46,7 @@ class TableSyncTests(unittest.TestCase):
         row.x, row.y = 123, 456
         w.rebuild()
         unchanged, previous = self.controls(0), self.controls(1)
-        t.cellWidget(1, 3).setCurrentIndex(2)
+        t.cellWidget(1, 3).setCurrentIndex(t.cellWidget(1, 3).findData('script'))
         self.qt.processEvents()
         self.assertEqual(self.controls(0), unchanged)
         for col in (0, 3, 4):
@@ -54,7 +54,7 @@ class TableSyncTests(unittest.TestCase):
         self.assertEqual(t.columnSpan(1, 1), 2)
         self.assertIsInstance(t.cellWidget(1, 1), QPushButton)
         self.assertIsNone(t.cellWidget(1, 2))
-        t.cellWidget(1, 3).setCurrentIndex(0)
+        t.cellWidget(1, 3).setCurrentIndex(t.cellWidget(1, 3).findData('move_only'))
         self.qt.processEvents()
         self.assertEqual(t.columnSpan(1, 1), 1)
         self.assertIsInstance(t.cellWidget(1, 1), NoWheelSpinBox)
@@ -100,7 +100,9 @@ class TableSyncTests(unittest.TestCase):
             t.cellWidget(0, 1).click()
         edit.assert_called_once_with(rows[0].id)
         w.move_row(0, 2)
-        t.cellWidget(0, 3).setCurrentIndex(1)
+        t.cellWidget(0, 3).setCurrentIndex(t.cellWidget(0, 3).findData('script'))
+        self.assertEqual(rows[1].action_mode, 'script')
+        t.cellWidget(0, 3).setCurrentIndex(t.cellWidget(0, 3).findData('move_only'))
         self.qt.processEvents()
         self.assertEqual(rows[1].action_mode, 'move_only')
         self.assertEqual(rows[0].action_mode, 'script')
@@ -140,7 +142,7 @@ class TableSyncTests(unittest.TestCase):
 
     def test_queued_mode_refresh_after_profile_replacement_uses_new_data(self):
         w, t = self.window, self.window.table
-        t.cellWidget(0, 3).setCurrentIndex(2)
+        t.cellWidget(0, 3).setCurrentIndex(t.cellWidget(0, 3).findData('script'))
         w.profile = Profile([Row(x=12, y=34, memo='replacement')])
         w.rebuild()
         controls = self.controls(0)
@@ -176,7 +178,7 @@ class TableSyncTests(unittest.TestCase):
         w, t = self.window, self.window.table
         spin = t.cellWidget(0, 1)
         spin.lineEdit().setText('-')
-        t.cellWidget(1, 3).setCurrentIndex(2)
+        t.cellWidget(1, 3).setCurrentIndex(t.cellWidget(1, 3).findData('script'))
         self.qt.processEvents()
         self.assertIs(t.cellWidget(0, 1), spin)
         self.assertEqual(spin.lineEdit().text(), '-')

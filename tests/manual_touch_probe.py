@@ -81,7 +81,7 @@ class Probe(QWidget):
             target = candidates[0]
             width, height = self.native.size(target)
             script = f'click {round(267 * width / 1280)},{round(24 * height / 720)}'
-        command = Command(target, 0, 0, 'script', 'q', 0, 20,
+        command = Command(target, 0, 0, 'script', 'q', 20,
                           script=script,
                           drag_segment_duration_ms=100)
         self.started = time.monotonic()
