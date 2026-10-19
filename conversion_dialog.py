@@ -1,6 +1,6 @@
 """Validate and save a converted profile without mutating the source."""
 from pathlib import Path
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, QSignalBlocker
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox,
     QComboBox, QPushButton, QGroupBox, QDialogButtonBox)
 from conversion_jobs import ConversionJobs
@@ -14,6 +14,7 @@ class ResolutionInput(QGroupBox):
         self.mode = QComboBox()
         self.mode.addItems(['직접 입력', '16:9', '4:3'])
         self.presets = QComboBox()
+        self.presets.setPlaceholderText('프리셋 선택')
         self.presets.hide()
         layout.addWidget(self.mode)
         layout.addWidget(self.presets)
@@ -42,9 +43,14 @@ class ResolutionInput(QGroupBox):
         self.presets.setVisible(not custom)
         for spin in self.spins:
             spin.setEnabled(custom)
-        self.presets.clear()
-        for size in ResizeDialog.PRESETS.get(mode, []):
-            self.presets.addItem('%d × %d' % size, size)
+        current = self.value()
+        with QSignalBlocker(self.presets):
+            self.presets.clear()
+            for size in ResizeDialog.PRESETS.get(mode, []):
+                self.presets.addItem('%d × %d' % size, size)
+            match = next((i for i in range(self.presets.count())
+                          if self.presets.itemData(i) == current), -1)
+            self.presets.setCurrentIndex(match)
 
     def select_preset(self, index):
         size = self.presets.itemData(index)

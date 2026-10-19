@@ -1,11 +1,12 @@
 import os
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from dataclasses import asdict
+from math import floor
 import tempfile
 import unittest
-from unittest.mock import patch
-from PySide6.QtCore import Qt, QMimeData, QPointF
-from PySide6.QtGui import QInputMethodEvent, QDragEnterEvent, QDropEvent
+from unittest.mock import Mock, patch
+from PySide6.QtCore import Qt, QMimeData, QPoint, QPointF, QRect, QCoreApplication, QEvent
+from PySide6.QtGui import QContextMenuEvent, QInputMethodEvent, QDragEnterEvent, QDropEvent, QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 from app import MainWindow
@@ -358,15 +359,222 @@ class CoordinateEditTests(unittest.TestCase):
             prompt.assert_not_called()
         self.assertEqual(editor.editor.toPlainText(),'click 640,360')
 
-    def test_unselected_row_and_script_input_cannot_establish_coordinates(self):
-        w=self.w;w.target=None
-        original=w.profile.export()
+    def test_right_click_inside_editor_reverse_captures_at_existing_insertion_point(self):
+        editor = self.editor('click \nsleep 5')
+        field = editor.editor
+        cursor = field.textCursor()
+        cursor.setPosition(6)
+        field.setTextCursor(cursor)
+        point = field.viewport().rect().bottomRight()
+        before = self.w.profile.export()
+        with patch.object(self.w.native, 'local_point', return_value=(960,540)) as capture, \
+                patch.object(self.w.native, 'bounds', return_value=(0,0,1920,1080)), \
+                patch('app.ManualCoordinateDialog') as prompt, \
+                patch.object(field, 'createStandardContextMenu') as menu:
+            QTest.mouseClick(field.viewport(), Qt.MouseButton.RightButton, pos=point)
+            event = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, point, field.viewport().mapToGlobal(point))
+            QApplication.sendEvent(field.viewport(), event)
+            capture.assert_called_once()
+            self.assertEqual(capture.call_args.args[0], 123)
+            prompt.assert_not_called()
+            menu.assert_not_called()
+        self.assertEqual(field.toPlainText(), 'click 640,360\nsleep 5')
+        self.assertEqual(editor.capture_resolution, (1280,720))
+        self.assertEqual(self.w.profile.export(), before)
+        field.undo()
+        self.assertEqual(field.toPlainText(), 'click \nsleep 5')
+
+    def test_right_click_inside_editor_keeps_coordinates_when_sizes_match(self):
+        self.size.return_value = (1280,720)
+        editor = self.editor()
+        with patch.object(self.w.native, 'local_point', return_value=(640,360)), \
+                patch.object(self.w.native, 'bounds', return_value=(0,0,1280,720)):
+            QTest.mouseClick(editor.editor.viewport(), Qt.MouseButton.RightButton)
+        self.assertEqual(editor.editor.toPlainText(), 'click 640,360')
+
+    def test_completion_right_click_uses_same_inverse_capture_and_app_bounds(self):
+        for point, expected in (((960,540), 'cu640,360\nsleep 5'), ((-1,540), 'cu\nsleep 5')):
+            with self.subTest(point=point):
+                editor = self.editor('cu\nsleep 5')
+                field = editor.editor
+                cursor = field.textCursor()
+                cursor.setPosition(2)
+                field.setTextCursor(cursor)
+                field.setFocus()
+                self.qt.processEvents()
+                field.show_completions(explicit=True)
+                popup = field.completions
+                self.assertTrue(popup.isVisible())
+                with patch.object(self.w.native, 'local_point', return_value=point) as capture, \
+                        patch.object(self.w.native, 'bounds', return_value=(0,0,1920,1080)):
+                    QTest.mouseClick(popup.viewport(), Qt.MouseButton.RightButton,
+                                     pos=popup.visualItemRect(popup.item(1)).center())
+                    capture.assert_called_once()
+                    self.assertEqual(capture.call_args.args[0], 123)
+                self.assertEqual(field.toPlainText(), expected)
+                self.assertFalse(popup.isVisible())
+
+    def test_editor_right_click_outside_app_does_not_insert_or_change_capture_basis(self):
+        editor = self.editor()
+        with patch.object(self.w.native, 'local_point', return_value=(-1,540)), \
+                patch.object(self.w.native, 'bounds', return_value=(0,0,1920,1080)):
+            QTest.mouseClick(editor.editor.viewport(), Qt.MouseButton.RightButton)
+        self.assertEqual(editor.editor.toPlainText(), 'click ')
+        self.assertIsNone(editor.capture_resolution)
+        self.assertTrue(editor.validation.property('error'))
+
+    def test_editor_right_click_without_app_has_no_menu_or_capture(self):
+        self.w.target = None
+        editor = self.editor()
+        with patch.object(self.w.native, 'local_point') as capture, \
+                patch.object(editor.editor, 'createStandardContextMenu') as menu:
+            QTest.mouseClick(editor.editor.viewport(), Qt.MouseButton.RightButton)
+            point = editor.editor.rect().center()
+            editor.editor.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Reason.Keyboard,
+                                                             point, editor.editor.mapToGlobal(point)))
+            capture.assert_not_called()
+            menu.assert_not_called()
+        self.assertEqual(editor.editor.toPlainText(), 'click ')
+
+    def test_editor_capture_respects_modal_popup_and_hidden_state(self):
+        editor = self.editor()
+        with patch.object(editor, 'pick_coordinate') as capture:
+            for query in ('activeModalWidget', 'activePopupWidget'):
+                with patch.object(QApplication, query, return_value=self.w):
+                    editor.editor.coordinate_requested.emit(QPointF(100,100))
+                    capture.assert_not_called()
+            editor.hide()
+            editor.editor.coordinate_requested.emit(QPointF(100,100))
+            capture.assert_not_called()
+
+    def test_queued_right_click_uses_event_position_without_resampling_cursor(self):
+        editor = self.editor()
+        field = editor.editor
+        screen = Mock()
+        screen.geometry.return_value = QRect(0,0,1920,1080)
+        screen.devicePixelRatio.return_value = 1.0
+        event = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(field.viewport().rect().center()),
+                            QPointF(960,540), Qt.MouseButton.RightButton,
+                            Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier)
+        with patch.object(QApplication, 'screenAt', return_value=screen), \
+                patch.object(self.w.native, 'cursor', return_value=(100,100)) as cursor, \
+                patch.object(self.w.native, 'local_point', side_effect=lambda hwnd,x,y: (x,y)) as local, \
+                patch.object(self.w.native, 'bounds', return_value=(0,0,1920,1080)):
+            QCoreApplication.postEvent(field.viewport(), event)
+            cursor.return_value = (500,400)
+            self.qt.processEvents()
+            cursor.assert_not_called()
+            local.assert_called_once_with(123,960,540)
+        self.assertEqual(field.toPlainText(), 'click 640,360')
+
+    def test_editor_capture_scales_event_point_about_clicked_monitor_origin(self):
+        editor = self.editor()
+        for origin, ratio, position, expected in (
+                ((0,0), 1.0, (100,200), (100,200)),
+                ((1920,0), 1.25, (2000,160), (2020,200)),
+                ((-1920,-200), 1.5, (-1840,-40), (-1800,40)),
+                ((1920,0), 1.25, (1920 + 101/1.25, 203/1.25), (2021,203)),
+                ((-1920,-200), 1.5, (-1920 + 101/1.5, -200 + 203/1.5), (-1819,3)),
+                ((0,-1080), 2.0, (80,-920), (160,-760))):
+            with self.subTest(ratio=ratio, origin=origin):
+                screen = Mock()
+                screen.geometry.return_value = QRect(*origin,1280,720)
+                screen.devicePixelRatio.return_value = ratio
+                with patch.object(QApplication, 'screenAt', return_value=screen) as lookup, \
+                        patch.object(self.w, 'screen', side_effect=AssertionError('wrong monitor')), \
+                        patch.object(editor, 'capture_screen_point') as capture:
+                    editor.capture_editor_point(QPointF(*position))
+                    lookup.assert_called_once_with(QPoint(floor(position[0]),floor(position[1])))
+                    capture.assert_called_once_with(*expected)
+
+    def test_subpixel_screen_lookup_does_not_round_into_neighbouring_monitor(self):
+        editor = self.editor()
+        with patch.object(QApplication, 'screenAt', return_value=None) as lookup, \
+                patch.object(editor, 'capture_screen_point') as capture:
+            editor.capture_editor_point(QPointF(-0.2,-0.2))
+            lookup.assert_called_once_with(QPoint(-1,-1))
+            capture.assert_not_called()
+        self.assertTrue(editor.validation.property('error'))
+
+    def test_removing_captured_coordinates_allows_save_after_app_closes(self):
+        for source in ('sleep 5', 'click mouse // 640,360'):
+            with self.subTest(source=source):
+                self.exists.return_value = True
+                editor = self.editor()
+                with patch.object(self.w.native, 'bounds', return_value=(0,0,1920,1080)):
+                    editor.pick_coordinate((960,540))
+                basis, identity = self.w.profile.resolution, dict(self.w.profile.target_program)
+                editor.editor.setPlainText(source)
+                self.exists.return_value = False
+                with patch.object(self.w, 'confirm_coordinate_app', side_effect=AssertionError('stale capture')):
+                    editor.save()
+                self.assertIsNone(self.w.script_editor)
+                self.w.flush_pending_saves()
+                saved = Profile.read(read_json(self.w.path))
+                self.assertEqual((saved.rows[0].script,saved.resolution,saved.target_program),
+                                 (source,basis,identity))
+
+    def test_discarded_first_capture_does_not_establish_profile_basis_or_app(self):
+        self.w.profile.resolution = None
+        self.w.profile.target_program = {}
+        editor = self.editor()
+        with patch.object(self.w.native, 'bounds', return_value=(0,0,1920,1080)):
+            editor.pick_coordinate((960,540))
+        self.assertEqual(editor.capture_resolution, (1920,1080))
+        editor.editor.setPlainText('sleep 5')
+        editor.save()
+        self.w.flush_pending_saves()
+        saved = Profile.read(read_json(self.w.path))
+        self.assertEqual((saved.resolution,saved.target_program), (None,{}))
+
+    def test_undo_restored_captured_coordinates_still_require_original_app(self):
+        editor = self.editor()
+        with patch.object(self.w.native, 'bounds', return_value=(0,0,1920,1080)):
+            editor.pick_coordinate((960,540))
+        editor.editor.selectAll()
+        editor.editor.insertPlainText('sleep 5')
+        editor.editor.undo()
+        self.assertEqual(editor.editor.toPlainText(), 'click 640,360')
+        self.exists.return_value = False
+        editor.save()
+        self.assertIs(self.w.script_editor, editor)
+        self.assertTrue(editor.validation.property('error'))
+        self.assertEqual(editor.capture_resolution, (1280,720))
+
+    def test_offline_table_and_script_edit_preserve_profile_basis_and_app(self):
+        w = self.w
+        w.target = None
+        identity = dict(w.profile.target_program)
         w.table.cellWidget(0,1).setValue(900)
-        self.assertEqual(w.profile.export(),original)
-        editor=self.editor()
-        QTest.keyClick(editor.editor,Qt.Key.Key_9)
-        self.assertEqual(editor.editor.toPlainText(),'click ')
-        self.assertEqual(w.profile.resolution,(1280,720))
+        w.flush_pending_saves()
+        saved = Profile.read(read_json(w.path))
+        self.assertEqual((saved.rows[0].x, saved.resolution, saved.target_program),
+                         (900, (1280,720), identity))
+        editor = self.editor()
+        with patch.object(w.native, 'size', side_effect=AssertionError('offline size lookup')), \
+             patch.object(w, 'confirm_coordinate_app', side_effect=AssertionError('offline app prompt')):
+            QTest.keyClicks(editor.editor, '900,400')
+            self.assertEqual(editor.editor.toPlainText(), 'click 900,400')
+            editor.save()
+        self.assertIsNone(w.script_editor)
+        w.flush_pending_saves()
+        saved = Profile.read(read_json(w.path))
+        self.assertEqual((saved.rows[0].script, saved.resolution, saved.target_program),
+                         ('click 900,400', (1280,720), identity))
+
+    def test_offline_unknown_basis_stays_unknown_after_direct_input(self):
+        w = self.w
+        w.target = None
+        w.profile.resolution = None
+        w.profile.target_program = {}
+        w.table.cellWidget(0,1).setValue(900)
+        editor = self.editor()
+        QTest.keyClicks(editor.editor, '900,400')
+        editor.save()
+        w.flush_pending_saves()
+        saved = Profile.read(read_json(w.path))
+        self.assertEqual((saved.resolution, saved.target_program), (None, {}))
+        self.assertEqual(saved.rows[0].script, 'click 900,400')
 
     def test_zero_execution_target_is_rejected_and_fullscreen_is_absent(self):
         w=self.w
@@ -436,21 +644,22 @@ class CoordinateEditTests(unittest.TestCase):
         self.assertEqual((w.profile.export(),w.path.read_bytes()),original)
         self.assertEqual(w.table.cellWidget(0,1).value(),300)
 
-    def test_context_cut_and_delete_cannot_change_mismatched_coordinates(self):
+    def test_keyboard_cut_and_delete_cannot_change_mismatched_coordinates(self):
         clipboard=QApplication.clipboard()
         old_clipboard=clipboard.text()
         try:
-            for action_name in ('edit-cut','edit-delete'):
-                with self.subTest(action=action_name):
+            for key, modifier in ((Qt.Key.Key_X, Qt.KeyboardModifier.ControlModifier),
+                                  (Qt.Key.Key_Delete, Qt.KeyboardModifier.NoModifier),
+                                  (Qt.Key.Key_Delete, Qt.KeyboardModifier.ShiftModifier)):
+                with self.subTest(key=key, modifier=modifier):
                     editor=self.editor('click 640,360')
                     cursor=editor.editor.textCursor()
                     cursor.setPosition(6)
                     cursor.setPosition(7,cursor.MoveMode.KeepAnchor)
                     editor.editor.setTextCursor(cursor)
-                    menu=editor.editor.createStandardContextMenu()
                     with patch('app.ManualCoordinateDialog') as prompt:
                         prompt.return_value.choice.return_value='cancel'
-                        next(action for action in menu.actions() if action.objectName()==action_name).trigger()
+                        QTest.keyClick(editor.editor, key, modifier)
                         prompt.assert_called_once()
                         self.assertEqual(editor.editor.toPlainText(),'click 640,360')
                         QTest.keyClick(editor.editor,Qt.Key.Key_Y,Qt.KeyboardModifier.ControlModifier)
@@ -458,7 +667,6 @@ class CoordinateEditTests(unittest.TestCase):
                     editor.save()
                     self.w.flush_pending_saves()
                     self.assertEqual(Profile.read(read_json(self.w.path)).rows[0].script,'click 640,360')
-                    menu.deleteLater()
         finally:
             clipboard.setText(old_clipboard)
 
@@ -501,18 +709,19 @@ class CoordinateEditTests(unittest.TestCase):
             self.assertEqual(editor.editor.toPlainText(),'click 640,360')
             prompt.assert_called_once()
 
-    def test_context_paste_and_non_bmp_text_preserve_original_on_cancel(self):
+    def test_keyboard_paste_and_non_bmp_text_preserve_original_on_cancel(self):
         clipboard=QApplication.clipboard();old=clipboard.text()
         try:
-            editor=self.editor('// 🐈 메모\nclick ')
             clipboard.setText('960,540')
-            menu=editor.editor.createStandardContextMenu()
-            with patch('app.ManualCoordinateDialog') as prompt:
-                prompt.return_value.choice.return_value='cancel'
-                next(action for action in menu.actions() if action.objectName()=='edit-paste').trigger()
-                prompt.assert_called_once()
-            self.assertEqual(editor.editor.toPlainText(),'// 🐈 메모\nclick ')
-            menu.deleteLater()
+            for key, modifier in ((Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier),
+                                  (Qt.Key.Key_Insert, Qt.KeyboardModifier.ShiftModifier)):
+                with self.subTest(key=key):
+                    editor=self.editor('// 🐈 메모\nclick ')
+                    with patch('app.ManualCoordinateDialog') as prompt:
+                        prompt.return_value.choice.return_value='cancel'
+                        QTest.keyClick(editor.editor, key, modifier)
+                        prompt.assert_called_once()
+                    self.assertEqual(editor.editor.toPlainText(),'// 🐈 메모\nclick ')
         finally:
             clipboard.setText(old)
 

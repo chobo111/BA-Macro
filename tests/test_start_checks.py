@@ -440,12 +440,12 @@ class StartChecks(unittest.TestCase):
         w.tick()
         self.assertTrue(w.armed)
         self.assertEqual(w.run_size, (1280,720))
-        self.assertIn('최소화', w.target_info.text())
-        self.assertNotIn('0 × 0', w.target_info.text())
+        self.assertIn('최소화', w.resize_button.text())
+        self.assertNotIn('0 × 0', w.resize_button.text())
         self.size.side_effect = None
         w.tick()
         self.assertTrue(w.armed)
-        self.assertNotIn('최소화', w.target_info.text())
+        self.assertNotIn('최소화', w.resize_button.text())
         self.assertTrue(w.check_running_size())
 
     def test_restore_to_different_size_stops_after_minimized_wait(self):
@@ -664,7 +664,7 @@ class StartChecks(unittest.TestCase):
     def test_auto_conversion_preference_failure_stops_and_preserves_settings(self):
         w = self.window
         self.size.return_value = (1920,1080)
-        with patch('app.SizeMismatchDialog') as prompt, patch.object(w.store,'settings',side_effect=OSError('save failed')), patch.object(w,'error') as error:
+        with patch('app.SizeMismatchDialog') as prompt, patch.object(w.store,'settings_async',side_effect=OSError('save failed')), patch.object(w,'error') as error:
             prompt.return_value.choice.return_value = 'auto'
             prompt.return_value.skip_warning.isChecked.return_value = True
             w.toggle()

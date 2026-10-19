@@ -34,7 +34,7 @@ class ScriptTests(unittest.TestCase):
         self.runtime.run(compile_script(source), self.command)
 
     def test_parser_errors_are_localized(self):
-        for source in ('sleep -1', 'loop until_release\nclick mouse\nloop_end', 'release_actions\nloop\nclick mouse\nloop_end', 'loop 2\nclick mouse', 'loop_end', 'loop 1\nrelease_actions\nloop_end',
+        for source in ('sleep -1', 'release_actions\nloop\nclick mouse\nloop_end', 'loop 2\nclick mouse', 'loop_end', 'loop 1\nrelease_actions\nloop_end',
                        'joystick_press a', 'press 1,2 3,4', 'enter_staring', 'click 100000,0',
                        'text nope', 'key_press badkey', 'import os', 'loop 0\nclick mouse\nloop_end'):
             with self.subTest(source=source), self.assertRaises(ScriptError):
@@ -126,6 +126,19 @@ class ScriptTests(unittest.TestCase):
         self.assertIn(('move', 30, 40), self.native.events)
         self.assertEqual(self.native.events[-1], ('mouse', 'left', False))
 
+    def test_keyword_arguments_are_case_insensitive(self):
+        source = ('loop until_release\ncurve_last_time untilcmd\ncurve 10,20 mouse\n'
+                  'loop_end\nrelease_actions\nmouse_release left')
+        expected = compile_script(source)
+        for variant in (source.upper(), source.title()):
+            with self.subTest(source=variant):
+                self.assertEqual(compile_script(variant), expected)
+        self.run_script('CURVE_LAST_TIME UNTILCMD\nCURVE 10,20 30,40\nCURVE_RELEASE')
+        self.assertEqual(self.native.events[-1], ('mouse', 'left', False))
+        for argument in ('UNTILCMD extra', 'until_cmd'):
+            with self.subTest(argument=argument), self.assertRaises(ScriptError):
+                compile_script(f'curve_last_time {argument}')
+
     def test_cancel_long_sleep_releases_contact(self):
         errors = []
         engine = Engine(self.native, lambda key: True, errors.append)
@@ -143,10 +156,27 @@ class ScriptTests(unittest.TestCase):
             engine.shutdown()
 
     def test_until_release(self):
-        ticks = iter([True, True, False])
-        self.runtime.held = lambda key: next(ticks)
-        self.run_script('loop\nclick mouse\nloop_end')
-        self.assertEqual(self.native.events.count(('mouse', 'left', True)), 2)
+        for syntax in ('loop', 'loop until_release', 'LOOP UNTIL_RELEASE // comment'):
+            with self.subTest(syntax=syntax):
+                self.native.events.clear()
+                ticks = iter([True, True, False])
+                self.runtime.held = lambda key: next(ticks)
+                self.run_script(f'{syntax}\nclick mouse\nloop_end')
+                self.assertEqual(self.native.events.count(('mouse', 'left', True)), 2)
+
+    def test_until_release_alias_matches_bare_loop_and_keeps_validation(self):
+        body = '\nloop 2\nclick mouse\nloop_end\nloop_end'
+        self.assertEqual(compile_script('loop' + body),
+                         compile_script('loop until_release' + body))
+        for syntax in ('loop', 'loop until_release', 'LOOP UNTIL_RELEASE'):
+            for source in (f'release_actions\n{syntax}\nclick mouse\nloop_end',
+                           f'{syntax}\nloop_end', f'{syntax}\nclick mouse',
+                           (syntax + '\n') * 9 + 'click mouse\n' + 'loop_end\n' * 9):
+                with self.subTest(source=source), self.assertRaises(ScriptError):
+                    compile_script(source)
+        for arg in ('until_release 2', 'until_released'):
+            with self.subTest(arg=arg), self.assertRaises(ScriptError):
+                compile_script(f'loop {arg}\nclick mouse\nloop_end')
 
     def test_runtime_failure_releases_contact(self):
         with self.assertRaises(ScriptError):

@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 
 from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent, QSignalBlocker, QKeyCombination, QPersistentModelIndex, QRectF
-from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QPolygon, QPen, QValidator
+from PySide6.QtGui import QColor, QPalette, QIcon, QKeySequence, QPainter, QPixmap, QPolygon, QPen, QValidator
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QHeaderView, QAbstractItemView,
     QSpinBox, QLineEdit, QDialog, QFormLayout, QDialogButtonBox, QCheckBox, QKeySequenceEdit,
@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 
 from theme import LIGHT
 from domain import Settings
-from shortcuts import hotkey, qt_hotkey, SHORTCUT_GUIDE
+from shortcuts import hotkey, qt_hotkey, SHORTCUT_GUIDE, ShortcutError
 from row_drag import AnimatedRowsTable
 
 
@@ -147,6 +147,16 @@ def make_trash_icon(color):
     return QIcon(pixmap)
 
 
+class ElidedLabel(QLabel):
+    """Keep the full accessible text while fitting a single display line."""
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        rect = self.contentsRect()
+        text = self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, rect.width())
+        self.style().drawItemText(painter, rect, int(self.alignment()), self.palette(),
+                                 self.isEnabled(), text, self.foregroundRole())
+
+
 class NoWheelCombo(QComboBox):
     def wheelEvent(self, event):
         event.ignore()
@@ -160,8 +170,32 @@ class NoWheelSpinBox(QSpinBox):
 class TargetCombo(NoWheelCombo):
     opening = Signal()
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName('targetSelector')
+        self.setMaxVisibleItems(8)
+        self.setItemDelegate(QStyledItemDelegate(self))
+        self.view().setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.view().setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        # The flat drop-down subcontrol has no native bevel or arrow.
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        group = QPalette.ColorGroup.Active if self.isEnabled() else QPalette.ColorGroup.Disabled
+        color = self.palette().color(group, self.foregroundRole())
+        painter.setPen(QPen(color, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        x, y = self.width() - 13, self.height() // 2
+        painter.drawLine(x - 3, y - 1, x, y + 2)
+        painter.drawLine(x, y + 2, x + 3, y - 1)
+
     def showPopup(self):
         self.opening.emit()
+        for index in range(self.count()):
+            self.setItemData(index, self.itemText(index), Qt.ItemDataRole.ToolTipRole)
+        # Limit the popup container itself; the view alone cannot constrain it.
+        self.view().window().setFixedWidth(self.width())
         super().showPopup()
 
 
@@ -232,7 +266,7 @@ class RowsTable(AnimatedRowsTable):
         delegate = MemoDelegate(self)
         delegate.closeEditor.connect(lambda *_: QTimer.singleShot(0, self, self.update_memo_tooltips))
         self.setItemDelegateForColumn(4, delegate)
-        for column, width in ((0, 72), (1, 60), (2, 60), (3, 122), (4, 70)):
+        for column, width in ((0, 72), (1, 60), (2, 60), (3, 96), (4, 70)):
             self.setColumnWidth(column, width)
 
     def mousePressEvent(self, event):
@@ -387,11 +421,14 @@ class KeyDialog(QDialog):
 
 
 class SettingsDialog(QDialog):
+    validation_failed = Signal(str)
+
     def __init__(self, settings, parent):
         super().__init__(parent)
         self.setWindowTitle("환경설정")
         self.setMinimumWidth(470)
         self.original = settings
+        self.validate_settings = None
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
@@ -439,12 +476,35 @@ class SettingsDialog(QDialog):
         self.theme.addItems(["Dark", "Light", "System"])
         self.theme.setCurrentText(settings.theme)
         form.addRow("테마", self.theme)
+        self.validation = QLabel()
+        self.validation.setObjectName('scriptLog')
+        self.validation.setProperty('error', True)
+        self.validation.setTextFormat(Qt.TextFormat.PlainText)
+        self.validation.setWordWrap(True)
+        self.validation.hide()
+        layout.addWidget(self.validation)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Save).setText('저장')
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('취소')
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def show_validation_error(self, message):
+        self.validation.setText(str(message))
+        self.validation.show()
+        self.tabs.setCurrentIndex(0)
+
+    def accept(self):
+        try:
+            settings = self.value()
+            if self.validate_settings is not None:
+                self.validate_settings(settings)
+        except ShortcutError as error:
+            self.show_validation_error(error)
+            self.validation_failed.emit(str(error))
+            return
+        super().accept()
 
     def value(self):
         data = asdict(self.original)

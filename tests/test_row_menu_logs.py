@@ -59,6 +59,24 @@ class RowMenuLogTests(unittest.TestCase):
             self.w.row_context_menu(self.w.table.visualRect(self.w.table.model().index(row, 4)).center())
         return actions
 
+    def test_add_row_inserts_after_selection_or_appends_without_selection(self):
+        w = self.w
+        for selected in ((0,), (1,), (), (0, 2)):
+            with self.subTest(selected=selected):
+                original = list(w.profile.rows)
+                # Clearing selection leaves a current cell: it must not affect append.
+                w.table.setCurrentCell(0, 0)
+                self.select(*selected)
+                position = selected[-1] + 1 if selected else len(original)
+                w.add_row()
+                w.flush_pending_saves()
+                self.assertEqual(w.profile.rows[:position], original[:position])
+                self.assertEqual(w.profile.rows[position + 1:], original[position:])
+                self.assertNotIn(w.profile.rows[position].id, [row.id for row in original])
+                self.assertEqual(w.profile.rows[position].memo, '')
+                self.assertEqual(w.table.currentRow(), position)
+                self.assertEqual(Profile.read(read_json(w.path)).export(), w.profile.export())
+
     def test_menu_preserves_multi_selection_and_targets_unselected_row(self):
         self.select(0, 2)
         self.assertEqual(self.menu(2), ['2개 행 단축키 해제', '2개 행 복제', '2개 행 삭제'])

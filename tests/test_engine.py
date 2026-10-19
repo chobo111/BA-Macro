@@ -32,6 +32,7 @@ class FakeWindows:
     def cursor(self, hwnd=None): return self.position
     def cursor_screen(self): return self.position
     def screen(self, hwnd, x, y): return x, y
+    def local_point(self, hwnd, x, y): return x, y
     def point_belongs_to(self, hwnd, x, y): return True
 
     def move(self, x, y):

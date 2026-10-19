@@ -14,6 +14,11 @@ destroy_icon = user32.DestroyIcon
 destroy_icon.argtypes = [W.HICON]
 destroy_icon.restype = W.BOOL
 
+set_dwm_attribute = C.WinDLL('dwmapi').DwmSetWindowAttribute
+set_dwm_attribute.argtypes = [W.HWND, W.DWORD, C.c_void_p, W.DWORD]
+set_dwm_attribute.restype = C.c_long
+DWMWA_TEXT_COLOR = 36
+
 
 class TRACKMOUSEEVENT(C.Structure):
     _fields_ = [('cbSize', W.DWORD), ('dwFlags', W.DWORD), ('hwndTrack', W.HWND), ('dwHoverTime', W.DWORD)]
@@ -33,7 +38,18 @@ class CaptionMenu:
         self.menu_open = False
         self.menu.aboutToShow.connect(self.menu_shown)
         self.menu.aboutToHide.connect(self.menu_hidden)
-        self.install_icon()
+        self.refresh()
+
+    def apply_text_color(self):
+        if QApplication.platformName() != 'windows':
+            return False
+        # An explicit DWM text color also applies to an inactive caption. Keep
+        # native activation/focus behavior; only the coordinate text stays vivid.
+        dark = QApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
+        color = W.DWORD(0xF0F0F0 if dark else 0x202020)
+        # Older Windows versions can reject this optional Windows 11 attribute.
+        return set_dwm_attribute(int(self.window.winId()), DWMWA_TEXT_COLOR,
+                                 C.byref(color), C.sizeof(color)) >= 0
 
     def install_icon(self):
         if QApplication.platformName() != 'windows':
@@ -92,13 +108,14 @@ class CaptionMenu:
                 self.pending = True
                 QTimer.singleShot(0, self.show)
             return True
-        if message.message in (0x001A, 0x02E0):  # Settings / DPI changes.
+        if message.message in (0x001A, 0x02E0, 0x031A):  # Settings / DPI / theme changes.
             QTimer.singleShot(0, self.refresh)
         return False
 
     def refresh(self):
         if not self.window.closing:
             self.install_icon()
+            self.apply_text_color()
 
     def show(self):
         self.pending = False

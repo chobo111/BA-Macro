@@ -118,13 +118,16 @@ class ProfileStore:
         return destination
 
     def rename(self, source, destination, settings):
+        return self.rename_async(source, destination, settings).result()
+
+    def rename_async(self, source, destination, settings):
         """Rename after queued writes, then update the startup profile reference."""
         with self.queue_lock:
             if self.closed:
                 raise RuntimeError('Profile store is closed')
             self.queued_save = None
             future = self.executor.submit(self._rename, Path(source), Path(destination), deepcopy(settings))
-        return future.result()
+        return future
 
     def _rename(self, source, destination, settings):
         try:
@@ -261,10 +264,13 @@ class ProfileStore:
             return batch.future
 
     def settings(self, path, settings, *, recover=False):
+        return self.settings_async(path, settings, recover=recover).result()
+
+    def settings_async(self, path, settings, *, recover=False):
         with self.queue_lock:
             self.queued_save = None
             future = self.executor.submit(self._settings, path, deepcopy(settings), recover=recover)
-        return future.result()
+        return future
 
     def flush(self):
         with self.queue_lock:

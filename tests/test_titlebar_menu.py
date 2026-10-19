@@ -9,7 +9,7 @@ class CaptionMenuTests(unittest.TestCase):
         self.window, self.menu = Mock(), Mock()
         self.window.closing = False
         self.window.winId.return_value = 123
-        with patch.object(CaptionMenu, 'install_icon'):
+        with patch.object(CaptionMenu, 'install_icon'), patch.object(CaptionMenu, 'apply_text_color'):
             self.caption = CaptionMenu(self.window, self.menu)
 
     def test_icon_and_alt_space_open_once_and_double_click_does_not_close(self):
@@ -81,3 +81,36 @@ class CaptionMenuTests(unittest.TestCase):
             self.assertFalse(self.caption.handle(wintypes.MSG(message=0xA0,wParam=3)))
             track.assert_not_called()
             redraw.assert_not_called()
+
+    def test_explicit_text_color_uses_system_caption_theme(self):
+        from PySide6.QtCore import Qt
+        for scheme, expected in ((Qt.ColorScheme.Light, 0x202020), (Qt.ColorScheme.Dark, 0xF0F0F0)):
+            with self.subTest(scheme=scheme), patch('titlebar_menu.QApplication.platformName', return_value='windows'), patch('titlebar_menu.QApplication.styleHints') as hints, patch('titlebar_menu.set_dwm_attribute', return_value=0) as apply:
+                hints.return_value.colorScheme.return_value = scheme
+                self.assertTrue(self.caption.apply_text_color())
+                hwnd, attribute, color, size = apply.call_args.args
+                self.assertEqual((hwnd, attribute, color._obj.value, size), (123, 36, expected, 4))
+
+    def test_text_color_does_not_override_native_deactivation(self):
+        with patch.object(self.caption, 'install_icon'), patch.object(self.caption, 'apply_text_color') as apply:
+            self.caption.refresh()
+            self.assertFalse(self.caption.handle(wintypes.MSG(message=0x86, wParam=0)))
+            self.assertFalse(self.caption.handle(wintypes.MSG(message=0x86, wParam=1)))
+            apply.assert_called_once()
+        self.window.activateWindow.assert_not_called()
+
+    def test_text_color_skips_non_windows_and_tolerates_unsupported_attribute(self):
+        with patch('titlebar_menu.QApplication.platformName', return_value='offscreen'), patch('titlebar_menu.set_dwm_attribute') as apply:
+            self.assertFalse(self.caption.apply_text_color())
+            apply.assert_not_called()
+        with patch('titlebar_menu.QApplication.platformName', return_value='windows'), patch('titlebar_menu.QApplication.styleHints'), patch('titlebar_menu.set_dwm_attribute', return_value=-2147024809):
+            self.assertFalse(self.caption.apply_text_color())
+
+    def test_theme_change_refreshes_caption_color_and_icon(self):
+        with patch('titlebar_menu.QTimer.singleShot') as schedule:
+            self.assertFalse(self.caption.handle(wintypes.MSG(message=0x031A)))
+            schedule.assert_called_once_with(0, self.caption.refresh)
+        with patch.object(self.caption, 'install_icon') as icon, patch.object(self.caption, 'apply_text_color') as color:
+            self.caption.refresh()
+            icon.assert_called_once()
+            color.assert_called_once()

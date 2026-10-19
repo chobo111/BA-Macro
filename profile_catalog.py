@@ -1,37 +1,74 @@
-"""On-demand profile file discovery and bounded recent history."""
+"""On-demand profile discovery in the current folder."""
+from collections import OrderedDict
 from pathlib import Path
+from stat import S_ISREG
 from domain import read_json
 
 
-def recent_profiles(paths, current):
-    """Keep a small ordered history without changing or scanning other folders."""
-    result = []
-    for value in ([current] if current is not None else []) + list(paths):
-        path = Path(value).resolve()
-        if path not in result:
-            result.append(path)
-    return [str(path) for path in result[:10]]
+class ProfileCatalog:
+    """Bounded metadata cache for menu discovery, never for loading profiles."""
+    def __init__(self, max_entries=256):
+        if max_entries < 1:
+            raise ValueError('Cache capacity must be positive')
+        self.max_entries = max_entries
+        self._entries = OrderedDict()
 
+    @staticmethod
+    def _signature(path):
+        info = path.stat()
+        if not S_ISREG(info.st_mode):
+            raise OSError('Not a regular file')
+        return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
-def profile_entries(directory, current, recent):
-    """Refresh only on demand; malformed unrelated JSON is not a profile entry."""
-    result, seen = [], set()
-    def add(path, group):
-        path = Path(path).resolve()
-        if path in seen or not path.is_file() or path.suffix.lower() != '.json':
-            return
+    def is_profile(self, path):
         try:
-            data = read_json(path)
-        except (OSError, ValueError):
+            signature = self._signature(path)
+            cached = self._entries.get(path)
+            if cached is not None and cached[0] == signature:
+                self._entries.move_to_end(path)
+                return cached[1]
+            self._entries.pop(path, None)
+            try:
+                data = read_json(path)
+                valid = isinstance(data, dict) and isinstance(data.get('macros'), list)
+            except (ValueError, RecursionError):
+                valid = False
+            # Do not cache a read that raced another app's file write/replacement.
+            if self._signature(path) == signature:
+                self._entries[path] = signature, valid
+                while len(self._entries) > self.max_entries:
+                    self._entries.popitem(last=False)
+            return valid
+        except OSError:
+            # Access failures may be transient; retry on the next menu opening.
+            self._entries.pop(path, None)
+            return False
+
+    def filter_profiles(self, paths):
+        """Check cached files before misses can evict them during a folder scan."""
+        present = set(paths)
+        for path in list(self._entries):
+            if path not in present:
+                del self._entries[path]
+        cached = [path for path in paths if path in self._entries]
+        uncached = [path for path in paths if path not in self._entries]
+        valid = {path for path in cached + uncached if self.is_profile(path)}
+        return [path for path in paths if path in valid]
+
+
+def profile_entries(directory, *, cache=None):
+    """Refresh file metadata on demand, parsing only changed/uncached files."""
+    cache = cache if cache is not None else ProfileCatalog()
+    result, seen = [], set()
+    def add(path):
+        try:
+            path = Path(path).resolve()
+        except OSError:
             return
-        if not isinstance(data, dict) or not isinstance(data.get('macros'), list):
+        if path in seen or path.suffix.lower() != '.json':
             return
         seen.add(path)
-        result.append((path, group))
-    if current is not None:
-        add(current, '최근 사용')
-    for path in recent:
-        add(path, '최근 사용')
+        result.append(path)
     for path in sorted(Path(directory).glob('*.json'), key=lambda path: path.name.casefold()):
-        add(path, '이 폴더')
-    return result
+        add(path)
+    return cache.filter_profiles(result)

@@ -117,9 +117,7 @@ def _compile_cached(source):
         if command == 'loop':
             if len(stack) >= 8:
                 raise ScriptError(line_no, '루프 중첩은 8단계까지 지원합니다.')
-            if arg == 'until_release':
-                raise ScriptError(line_no, 'loop until_release는 삭제된 문법입니다. loop만 입력하세요.')
-            count = 'until_release' if not arg else number(arg, line_no, 1, 10000)
+            count = 'until_release' if arg.lower() in ('', 'until_release') else number(arg, line_no, 1, 10000)
             if count == 'until_release' and section:
                 raise ScriptError(line_no, '키를 뗀 뒤에는 loop에 반복 횟수를 지정하세요.')
             body = []
@@ -142,7 +140,7 @@ def _compile_cached(source):
             if command == 'curve' and len(args) < 2:
                 raise ScriptError(line_no, 'curve에는 최소 두 좌표가 필요합니다.')
         elif command in ('sleep', 'curve_first_time', 'curve_last_time'):
-            args = ('untilcmd',) if command == 'curve_last_time' and arg == 'untilcmd' else (number(arg, line_no),)
+            args = ('untilcmd',) if command == 'curve_last_time' and arg.lower() == 'untilcmd' else (number(arg, line_no),)
         elif command in ('curve_release', 'release_all'):
             if arg:
                 raise ScriptError(line_no, '이 명령에는 인수가 없습니다.')

@@ -14,7 +14,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QTableWidgetItem, QSpinBox, QFileDialog, QMessageBox, QDialog,
-    QSystemTrayIcon, QMenu, QGroupBox, QSizePolicy, QFrame,
+    QSystemTrayIcon, QMenu, QSizePolicy, QFrame, QGridLayout, QToolButton,
 )
 
 from domain import MODES, Profile, Row, read_json, same_program, WindowSizeUnavailable
@@ -31,8 +31,8 @@ from script_editor import ScriptEditor
 from persistence import ProfileStore
 from profile_saves import ProfileSaves
 from profile_dialogs import RenameProfileDialog, ProfileInfoDialog
-from profile_catalog import profile_entries, recent_profiles
-from profile_wait import wait_for_saves
+from profile_catalog import ProfileCatalog, profile_entries
+from profile_wait import wait_for_saves, wait_for_write
 from conversion_dialog import ConversionDialog, BaselineResolutionDialog
 from version import APP_NAME, VERSION
 from theme import DARK, LIGHT, palette, stylesheet
@@ -42,7 +42,7 @@ from single_instance import SingleInstance
 from titlebar_menu import CaptionMenu
 from startup_dialogs import AppMismatchDialog, SizeMismatchDialog, CoordinateAppDialog, ManualCoordinateDialog
 from widgets import (managed_dialog, make_icon, RunButton, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
-                     BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog, NoWheelCombo, NoWheelSpinBox)
+                     BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog, NoWheelCombo, NoWheelSpinBox, ElidedLabel)
 
 BASE = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
 
@@ -70,20 +70,22 @@ class MainWindow(QMainWindow):
         self.native = Windows()
         self.session = ExecutionSession(self.native)
         self.dirty = False
+        self._profile_save_failed = False
         self.rebuilding = False
         self.script_editor = None
         self._profile_switching = False
+        self._waiting_for_write = False
         self._selected_identity = {}
         self.data_dir = Path(data_dir or BASE).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.store = ProfileStore(self.data_dir)
         self.settings_path = self.store.settings_path
         self.profile_saves = ProfileSaves()
+        self.profile_catalog = ProfileCatalog()
         self.settings_error = ""
         self.hook_enabled = hook_enabled
         loaded = self.store.load()
         self.settings, self.profile, self.path = loaded.settings, loaded.profile, loaded.path
-        self.settings.recent_profiles = recent_profiles(self.settings.recent_profiles, self.path)
         self.load_error = loaded.warning
         self._validated_shortcuts = None
         self.bridge = Bridge()
@@ -126,44 +128,97 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(root)
         layout.setContentsMargins(8, 8, 8, 6)
         layout.setSpacing(6)
-        target_box = self.target_box = QGroupBox("대상 앱")
+        target_box = self.target_box = QFrame()
+        target_box.setObjectName('targetBox')
         target_box.setFixedWidth(384)
         target_outer = QVBoxLayout(target_box)
-        target_outer.setContentsMargins(6, 10, 6, 4)
-        target_outer.setSpacing(3)
-        target_layout = QHBoxLayout()
-        target_layout.setSpacing(6)
+        target_outer.setContentsMargins(1, 1, 1, 1)
+        target_outer.setSpacing(0)
+        self.target_toggle = QToolButton()
+        self.target_toggle.setObjectName('targetToggle')
+        self.target_toggle.setText('대상 앱')
+        self.target_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.target_toggle.setCheckable(True)
+        self.target_toggle.setFixedHeight(30)
+        self.target_toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.collapsed_profile = ElidedLabel()
+        self.collapsed_profile.setObjectName('muted')
+        self.collapsed_profile.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.collapsed_profile.setTextFormat(Qt.TextFormat.PlainText)
+        self.collapsed_profile.setMinimumWidth(0)
+        self.collapsed_profile.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.profile_unsaved = QLabel('미저장')
+        self.collapsed_unsaved = QLabel('미저장')
+        for badge in (self.profile_unsaved, self.collapsed_unsaved):
+            badge.setObjectName('profileUnsaved')
+            badge.setToolTip('프로필 변경사항이 저장되지 않았습니다.')
+            badge.hide()
+        collapsed_line = QHBoxLayout(self.target_toggle)
+        collapsed_line.setContentsMargins(92, 0, 10, 0)
+        collapsed_line.setSpacing(6)
+        collapsed_line.addWidget(self.collapsed_profile, 1)
+        self.collapsed_status = QLabel()
+        self.collapsed_status.setObjectName('targetStatus')
+        self.collapsed_status.hide()
+        collapsed_line.addWidget(self.collapsed_status)
+        collapsed_line.addWidget(self.collapsed_unsaved)
+        for label in (self.collapsed_profile, self.collapsed_unsaved):
+            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        target_outer.addWidget(self.target_toggle)
+        self.target_content = QWidget()
+        target_grid = QGridLayout(self.target_content)
+        target_grid.setContentsMargins(10, 2, 10, 10)
+        target_grid.setHorizontalSpacing(8)
+        target_grid.setVerticalSpacing(6)
+        target_grid.setColumnStretch(0, 1)
         self.targets = TargetCombo()
         self.targets.opening.connect(self.refresh_windows)
-        self.targets.setFixedWidth(170)
+        self.targets.setMinimumWidth(0)
         self.targets.setMinimumContentsLength(10)
         self.targets.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.targets.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.targets.view().setMinimumWidth(360)
+        self.targets.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.targets.currentIndexChanged.connect(self.change_target)
-        target_layout.addWidget(self.targets)
         self.targets.setFixedHeight(30)
-        self.resize_button = self.button("창 크기", self.resize_dialog)
-        self.resize_button.setFixedSize(68, 30)
-        target_layout.addWidget(self.resize_button)
-        target_layout.addStretch()
-        target_outer.addLayout(target_layout)
+        target_grid.addWidget(self.targets, 0, 0)
+        self.resize_button = self.button('미실행', self.resize_dialog)
+        self.resize_button.setFixedSize(136, 30)
+        self.resize_button.setAccessibleName('앱 해상도 · 창 크기 조절')
+        self.resize_button.setToolTip('창 크기 변경')
+        self.resize_button.setEnabled(False)
+        target_grid.addWidget(self.resize_button, 0, 1)
+        self.profile_name = ElidedLabel()
+        self.profile_name.setObjectName('profileName')
+        self.profile_name.setTextFormat(Qt.TextFormat.PlainText)
+        self.profile_name.setAccessibleName('현재 프로필')
+        self.profile_name.setMinimumWidth(0)
+        self.profile_name.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.profile_resolution = QLabel()
+        self.profile_resolution.setObjectName('muted')
+        self.profile_resolution.setAccessibleName('프로필 앱 기준 해상도')
+        self.profile_resolution.setMinimumWidth(0)
+        self.profile_resolution.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.profile_resolution.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.profile_resolution.setFixedHeight(24)
+        profile_line = QHBoxLayout()
+        profile_line.setSpacing(6)
+        profile_caption = QLabel('프로필')
+        profile_caption.setObjectName('muted')
+        profile_line.addWidget(profile_caption)
+        profile_line.addWidget(self.profile_name, 1)
+        profile_line.addWidget(self.profile_unsaved)
+        target_grid.addLayout(profile_line, 1, 0)
+        target_grid.addWidget(self.profile_resolution, 1, 1)
         self.target_info = QLabel()
-        self.target_info.setObjectName("targetStatus")
+        self.target_info.setObjectName('targetStatus')
         self.target_info.setMinimumWidth(0)
         self.target_info.setTextFormat(Qt.TextFormat.PlainText)
         self.target_info.setWordWrap(True)
         self.target_info.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        target_footer = QHBoxLayout()
-        target_footer.setSpacing(6)
-        target_footer.addWidget(self.target_info, 1)
-        self.cursor_label = QLabel('—, —')
-        self.cursor_label.setObjectName('cursor')
-        self.cursor_label.setAccessibleName('실시간 커서 좌표')
-        self.cursor_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.cursor_label.setFixedWidth(128)
-        target_footer.addWidget(self.cursor_label, 0, Qt.AlignmentFlag.AlignBottom)
-        target_outer.addLayout(target_footer)
+        self.target_info.hide()
+        target_grid.addWidget(self.target_info, 2, 0, 1, 2)
+        target_outer.addWidget(self.target_content)
+        self.target_toggle.toggled.connect(self.set_target_expanded)
+        self.target_toggle.setChecked(True)
         layout.addWidget(target_box, 0, Qt.AlignmentFlag.AlignLeft)
 
         toolbar_panel = self.toolbar_panel = QWidget()
@@ -202,6 +257,10 @@ class MainWindow(QMainWindow):
         self.pause_button.setIconSize(QSize(16, 16))
         toolbar.addWidget(self.pause_button)
         layout.addWidget(toolbar_panel, 0, Qt.AlignmentFlag.AlignLeft)
+        self._fit_timer = QTimer(self)
+        self._fit_timer.setSingleShot(True)
+        self._fit_timer.setInterval(0)
+        self._fit_timer.timeout.connect(self.fit_content_width)
         self.table = RowsTable()
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.row_context_menu)
@@ -214,8 +273,17 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.table, 1)
         self.update_labels()
 
+    def set_target_expanded(self, expanded):
+        self.target_content.setVisible(expanded)
+        self.target_toggle.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        self.target_toggle.setAccessibleName('대상 앱 접기' if expanded else '대상 앱 펼치기')
+        self.target_toggle.setText('대상 앱' if expanded else '')
+        self.target_toggle.layout().setContentsMargins(92 if expanded else 26, 0, 10, 0)
+        self.update_profile_summary()
+
     def queue_fit_content_width(self, *_):
-        QTimer.singleShot(0, self.fit_content_width)
+        if not self.closing and not self._fit_timer.isActive():
+            self._fit_timer.start()
 
     def fit_content_width(self):
         if self.closing:
@@ -293,8 +361,6 @@ class MainWindow(QMainWindow):
         self.theme_colors = colors = DARK if dark else LIGHT
         self.setPalette(palette(colors))
         self.setStyleSheet(stylesheet(colors))
-        self.cursor_label.ensurePolished()
-        self.cursor_label.setFixedWidth(self.cursor_label.fontMetrics().horizontalAdvance('-99999, -99999') + 8)
         self.pause_button.apply_theme(colors)
         self.pause_button.setFixedWidth(max(106, self.pause_button.sizeHint().width()))
         self.pin_button.setIcon(make_pin_icon(colors.muted, colors.accent))
@@ -310,7 +376,7 @@ class MainWindow(QMainWindow):
         self.pause_button.setAccessibleName(f'{action} ({shortcut_text})')
         self.pause_button.set_running(self.armed)
         self.pause_button.setFixedWidth(max(106, self.pause_button.sizeHint().width()))
-        self.update_title()
+        self.update_profile_summary()
         self.update_profile_checks()
         if hasattr(self, "tray"):
             self.tray.setToolTip(APP_NAME + " · " + ("작동 중" if self.armed else "일시정지"))
@@ -469,9 +535,12 @@ class MainWindow(QMainWindow):
         """
         target, profile, path = self.target, self.profile, self.path
         original_basis = profile.resolution
-        if not target or not self.native.exists(target):
+        if target is None:
+            # Offline edits use the stored basis; never infer a desktop size/app.
+            return basis or profile.resolution, dict(profile.target_program)
+        if not self.native.exists(target):
             self.stop()
-            self.statusBar().showMessage('좌표를 직접 입력하려면 앱을 선택하세요.')
+            self.statusBar().showMessage('대상 앱이 닫혔습니다. 앱 선택을 해제한 뒤 다시 입력하세요.')
             return None
         try:
             size = tuple(self.native.size(target))
@@ -512,6 +581,7 @@ class MainWindow(QMainWindow):
         self.pause_for_configuration()
         profile = self.profile
         dialog = ScriptEditor(row.script, self.native, self.target, self)
+        dialog.set_row_context(row, self.profile.rows.index(row) + 1)
         self.script_editor = dialog
         self.session.editor_open = True
         def finished(result):
@@ -540,7 +610,7 @@ class MainWindow(QMainWindow):
         return self.script_editor is None
 
     def eligible(self, action):
-        if self._profile_switching:
+        if self._profile_switching or self._waiting_for_write:
             return False
         return self.session.eligible(action, self.settings.auto_pause)
 
@@ -572,7 +642,7 @@ class MainWindow(QMainWindow):
             self.update_labels()
 
     def toggle(self):
-        if self._profile_switching:
+        if self._profile_switching or self._waiting_for_write:
             return
         if self.armed:
             self.stop()
@@ -746,11 +816,11 @@ class MainWindow(QMainWindow):
         """Save the approved candidate before changing the current profile/app."""
         self.flush_pending_saves()
         self.validate_profile_shortcuts(candidate)
-        result = self.store.save(path, candidate.export(), asdict(self.settings_for_path(path))).result()
+        result = wait_for_write(self.store.save(path, candidate.export(), asdict(self.settings)), self)
         if not result.profile_saved:
             raise OSError(f'프로필 저장 실패: {result.error}')
         self.path, self.dirty = path, False
-        self.settings.recent_profiles = recent_profiles(self.settings.recent_profiles, path)
+        self._profile_save_failed = False
         self.settings_error = result.error
         if result.recent_name:
             self.settings.last_profile = result.recent_name
@@ -860,10 +930,15 @@ class MainWindow(QMainWindow):
         except Exception as error:
             self.on_engine_error(str(error))
 
+    def unselected_target_text(self):
+        identity = self.profile.target_program
+        name = identity.get('title') or identity.get('exe') or '지정 앱 없음'
+        return name
+
     def refresh_windows(self, *, restore_saved=False):
         self.targets.blockSignals(True)
         self.targets.clear()
-        self.targets.addItem("미선택", None)
+        self.targets.setPlaceholderText(self.unselected_target_text())
         try:
             windows = self.native.windows(os.getpid())
             for hwnd, title in windows:
@@ -871,9 +946,10 @@ class MainWindow(QMainWindow):
             index = self.targets.findData(self.target)
             if restore_saved and (self.target is None or index < 0):
                 restored = self.native.find_target(self.profile.target_program, windows)
-                index = self.targets.findData(restored) if restored else 0
-            self.targets.setCurrentIndex(max(0, index))
+                index = self.targets.findData(restored) if restored else -1
+            self.targets.setCurrentIndex(index)
         except Exception as error:
+            self.targets.setCurrentIndex(-1)
             self.statusBar().show_error(str(error))
         self.targets.blockSignals(False)
         self.change_target(remember=False)
@@ -898,6 +974,7 @@ class MainWindow(QMainWindow):
                 self.profile.target_program = identity
                 self.changed()
         self.update_target_info()
+        self.update_profile_summary()
         self.set_cursor_position()
 
     def tick(self):
@@ -906,16 +983,17 @@ class MainWindow(QMainWindow):
                 self.stop()
                 self.target = None
                 self.targets.blockSignals(True)
-                self.targets.setCurrentIndex(0)
+                self.targets.setCurrentIndex(-1)
                 self.targets.blockSignals(False)
+                self.update_profile_summary()
                 self.statusBar().showMessage("대상 앱이 닫혔습니다. 새 창을 선택하세요.")
             if self.target:
                 w, h = self.native.size(self.target)
                 self.check_running_size((w, h))
                 self.update_target_info((w, h))
             else:
-                self.target_info.clear()
-            coordinate_target = self.script_editor.target if self.script_editor is not None else self.target
+                self.update_target_info()
+            coordinate_target = self.target
             if not coordinate_target:
                 self.set_cursor_position()
             else:
@@ -925,7 +1003,7 @@ class MainWindow(QMainWindow):
             self.update_target_info(state='최소화')
             self.set_cursor_position()
         except OSError:
-            self.target_info.setText("창 상태 확인 중")
+            self.update_target_info(state="창 상태 확인 중")
             self.set_cursor_position()
 
     @editing_dialog(hooks=True)
@@ -958,6 +1036,7 @@ class MainWindow(QMainWindow):
                             raise
                         self.profile_saves.begin()
                         self.dirty = True
+                        self._profile_save_failed = True
                         self.update_labels()
                         self.block_conflicting_shortcuts(error)
                         self.rebuild(rid)
@@ -1062,12 +1141,9 @@ class MainWindow(QMainWindow):
             dialog.exec()
 
     def add_row(self):
-        if len(self.profile.rows) >= 200:
-            return
-        row = Row()
-        self.profile.rows.append(row)
-        self.changed()
-        self.rebuild(row.id)
+        selected = self.selected_row_indexes()
+        position = selected[-1] + 1 if selected else len(self.profile.rows)
+        self.insert_row(position)
 
     def delete_rows(self):
         selected = {index.row() for index in self.table.selectionModel().selectedRows()}
@@ -1090,21 +1166,14 @@ class MainWindow(QMainWindow):
         self.changed()
         self.rebuild(row.id)
 
-    def settings_for_path(self, path, settings=None):
-        settings = self.settings if settings is None else settings
-        return replace(settings, recent_profiles=recent_profiles(settings.recent_profiles, path))
-
     def refresh_profiles(self):
         directory = self.path.parent if self.path is not None else self.data_dir
         try:
-            entries = profile_entries(directory, self.path, self.settings.recent_profiles)
+            entries = profile_entries(directory, cache=self.profile_catalog)
             menu = self.profile_menu
             menu.clear()
-            previous_group = None
-            for path, group in entries:
-                if group != previous_group:
-                    menu.addSection(group)
-                    previous_group = group
+            menu.addAction('이 폴더').setEnabled(False)
+            for path in entries:
                 action = menu.addAction(path.stem.replace('&', '&&'))
                 action.setData(str(path))
                 action.setToolTip(str(path))
@@ -1119,41 +1188,62 @@ class MainWindow(QMainWindow):
     def update_profile_checks(self):
         if not hasattr(self, 'profile_menu'):
             return
+        current = self.path.resolve() if self.path is not None else None
         for action in self.profile_menu.actions():
             if action.data() is not None:
-                action.setChecked(self.path is not None and Path(action.data()) == self.path.resolve())
+                action.setChecked(current is not None and Path(action.data()) == current)
 
-    def update_title(self):
+    def update_profile_summary(self):
         name = self.path.stem if self.path else '새 프로필'
         basis = '%d×%d' % self.profile.resolution if self.profile.resolution else '알 수 없음'
-        title = f"{'● ' if self.dirty else ''}{name} — {basis}"
-        if self.windowTitle() != title:
-            self.setWindowTitle(title)
+        self.profile_name.setText(name)
+        self.profile_name.setToolTip(name)
+        self.profile_resolution.setText(f'기준 {basis}')
+        self.profile_resolution.setToolTip(f'기준 {basis}')
+        placeholder = self.unselected_target_text()
+        self.targets.setPlaceholderText(placeholder)
+        if self.target is None:
+            self.targets.setToolTip(placeholder)
+        app_name = self.targets.currentText() if self.target else placeholder
+        summary = f'{app_name} / {name}'
+        self.collapsed_profile.setText(summary)
+        expanded = self.target_toggle.isChecked()
+        self.collapsed_profile.setVisible(not expanded)
+        self.collapsed_status.setVisible(not expanded and bool(self.collapsed_status.text()))
+        self.target_toggle.setToolTip('' if expanded else summary)
+        self.profile_unsaved.setVisible(self._profile_save_failed)
+        self.collapsed_unsaved.setVisible(not expanded and self._profile_save_failed)
 
     def set_cursor_position(self, point=None):
         text = f'{point[0]}, {point[1]}' if point is not None else '—, —'
-        if self.cursor_label.text() != text:
-            self.cursor_label.setText(text)
+        if self.windowTitle() != text:
+            self.setWindowTitle(text)
 
     def update_target_info(self, size=None, *, state=''):
         warning = bool(self.target and self._selected_identity and self.profile.target_program
                        and not same_program(self.profile.target_program, self._selected_identity))
-        if self.target is None:
-            text = ''
-        elif state:
-            text = state
-        else:
-            text = '현재 %d × %d' % size if size else ''
+        resolution = '미실행'
+        text = ''
+        if self.target is not None:
+            resolution = state or ('현재 %d×%d' % size if size else '현재 —')
             if warning:
-                text += (' · ' if text else '') + '지정 앱과 다름'
+                text = '지정 앱과 다름'
             elif self.armed and self.coordinate_transform is not None:
-                text += (' · ' if text else '') + '자동 변환 사용 중'
+                text = '자동 변환 사용 중'
+        if self.resize_button.text() != resolution:
+            self.resize_button.setText(resolution)
+        self.resize_button.setEnabled(self.target is not None and not state)
         if self.target_info.text() != text:
             self.target_info.setText(text)
-        if self.target_info.property('warning') != warning:
-            self.target_info.setProperty('warning', warning)
-            self.target_info.style().unpolish(self.target_info)
-            self.target_info.style().polish(self.target_info)
+        self.target_info.setVisible(bool(text))
+        self.collapsed_status.setText('앱 불일치' if warning else ('자동 변환' if text else ''))
+        self.collapsed_status.setToolTip(text)
+        self.collapsed_status.setVisible(not self.target_toggle.isChecked() and bool(text))
+        for label in (self.target_info, self.collapsed_status):
+            if label.property('warning') != warning:
+                label.setProperty('warning', warning)
+                label.style().unpolish(label)
+                label.style().polish(label)
 
     def prepare_profile_change(self):
         """Do not leave the current profile until its latest edits are saved."""
@@ -1183,7 +1273,7 @@ class MainWindow(QMainWindow):
         return not self.dirty
 
     def run_profile_change(self, operation):
-        if self._profile_switching or self.closing:
+        if self._profile_switching or self._waiting_for_write or self.closing:
             return False
         self._profile_switching = True
         self.stop()
@@ -1211,6 +1301,7 @@ class MainWindow(QMainWindow):
             self.validate_profile_shortcuts(profile)
             self.finish_script_editor()
             self.profile, self.path, self.dirty = profile, path, False
+            self._profile_save_failed = False
             self.target = None
             self.refresh_windows(restore_saved=True)
             self.rebuild()
@@ -1338,18 +1429,19 @@ class MainWindow(QMainWindow):
         revision = self.profile_saves.begin()
         try:
             self.validate_profile_shortcuts(self.profile)
-            future = self.store.save(self.path, self.profile.export(), asdict(self.settings_for_path(self.path)), coalesce=automatic)
+            future = self.store.save(self.path, self.profile.export(), asdict(self.settings), coalesce=automatic)
             self.profile_saves.register(revision, self.path, future)
             self.dirty = True
             self.update_labels()
             if automatic:
                 future.add_done_callback(lambda done: self.bridge.saved.emit(revision, done.result()))
                 return True
-            result = future.result()
+            result = wait_for_write(future, self)
             self.save_completed(revision, result)
             return result.profile_saved
         except Exception as error:
             self.dirty = True
+            self._profile_save_failed = True
             self.update_labels()
             self.statusBar().show_save_result(f'저장 실패: {error}', failed=True)
             return False
@@ -1358,8 +1450,7 @@ class MainWindow(QMainWindow):
         if not self.profile_saves.complete(revision, self.path):
             return
         self.dirty = not result.profile_saved
-        if result.profile_saved:
-            self.settings.recent_profiles = recent_profiles(self.settings.recent_profiles, self.path)
+        self._profile_save_failed = not result.profile_saved
         self.settings_error = result.error if result.profile_saved else ''
         if result.recent_name:
             self.settings.last_profile = result.recent_name
@@ -1373,7 +1464,7 @@ class MainWindow(QMainWindow):
 
     def flush_pending_saves(self):
         for revision, future in self.profile_saves.pending():
-            self.save_completed(revision, future.result())
+            self.save_completed(revision, wait_for_write(future, self, protect_ui=False))
 
     @editing_dialog(hooks=False)
     def save_as(self):
@@ -1418,11 +1509,11 @@ class MainWindow(QMainWindow):
                 self.flush_pending_saves()
                 if self.dirty:
                     return
-            result = self.store.rename(original, destination, asdict(self.settings_for_path(destination)))
+            result = wait_for_write(
+                self.store.rename_async(original, destination, asdict(self.settings)), self)
             if not result.profile_saved:
                 raise OSError(result.error)
             self.path = destination
-            self.settings.recent_profiles = recent_profiles(self.settings.recent_profiles, destination)
             self.settings_error = result.error
             if result.recent_name:
                 self.settings.last_profile = result.recent_name
@@ -1465,7 +1556,7 @@ class MainWindow(QMainWindow):
             ('파일 위치', str(self.path.resolve()) if self.path else '저장되지 않음'),
             ('지정 앱', app_name),
             ('기준 크기', size_text(self.profile.resolution)),
-            ('현재 선택', self.targets.currentText()),
+            ('현재 선택', self.targets.currentText() or '미선택'),
             ('현재 크기', current_size),
             ('동작 수', f'총 {len(self.profile.rows)}개 · {counts}'),
             ('자동 변환', conversion),
@@ -1483,14 +1574,17 @@ class MainWindow(QMainWindow):
     def commit_settings(self, settings, *, recover=False):
         """Persist a candidate before exposing it to input hooks or the runtime."""
         self.flush_pending_saves()
-        candidate = self.settings_for_path(self.path, settings)
-        candidate.last_profile = self.store.settings(self.path, asdict(candidate), recover=recover)
+        candidate = replace(settings)
+        candidate.last_profile = wait_for_write(
+            self.store.settings_async(self.path, asdict(candidate), recover=recover), self)
         self.settings = candidate
         self.settings_error = ''
 
     @editing_dialog(hooks=True)
     def settings_dialog(self):
         with managed_dialog(SettingsDialog(self.settings, self)) as dialog:
+            dialog.validate_settings = lambda settings: self.validate_profile_shortcuts(self.profile, settings)
+            dialog.validation_failed.connect(lambda text: self.record_error('환경설정', text))
             while dialog.exec() == QDialog.DialogCode.Accepted:
                 try:
                     settings = dialog.value()
@@ -1505,7 +1599,7 @@ class MainWindow(QMainWindow):
                     break
                 except ShortcutError as error:
                     self.statusBar().show_error(str(error))
-                    break
+                    dialog.show_validation_error(error)
                 except Exception as error:
                     self.error(str(error))
 
@@ -1537,7 +1631,7 @@ class MainWindow(QMainWindow):
                     QTimer.singleShot(0, dialog, dialog.apply)
                 accepted = dialog.exec() == QDialog.DialogCode.Accepted
                 convert = not profile_size and dialog.convert_profile.isChecked()
-                if not profile_size and convert != self.settings.resize_convert_profile:
+                if accepted and not profile_size and convert != self.settings.resize_convert_profile:
                     self.commit_settings(replace(self.settings, resize_convert_profile=convert))
                 if accepted:
                     message = ('창 크기를 변경했습니다. 다시 시작을 눌러 주세요.' if profile_size else
@@ -1587,11 +1681,11 @@ class MainWindow(QMainWindow):
             if self.path and path.resolve() == self.path.resolve():
                 raise ValueError('원본을 보존하려면 다른 파일명을 지정하세요. 덮어쓰려면 현재 프로필에 적용을 사용하세요.')
         self.validate_profile_shortcuts(profile)
-        result = self.store.save(path, profile.export(), asdict(self.settings_for_path(path))).result()
+        result = wait_for_write(self.store.save(path, profile.export(), asdict(self.settings)), self)
         if not result.profile_saved:
             raise ValueError(result.error)
         self.profile, self.path, self.dirty = profile, path, False
-        self.settings.recent_profiles = recent_profiles(self.settings.recent_profiles, path)
+        self._profile_save_failed = False
         self.settings_error = result.error
         if result.recent_name:
             self.settings.last_profile = result.recent_name
@@ -1656,6 +1750,7 @@ class MainWindow(QMainWindow):
         self.closing = True
         self.finish_script_editor()
         self.timer.stop()
+        self._fit_timer.stop()
         self.stop()
         self.hooks.close()
         self.engine.shutdown()
@@ -1665,6 +1760,9 @@ class MainWindow(QMainWindow):
         self.caption_menu.close()
 
     def closeEvent(self, event):
+        if self._waiting_for_write:
+            event.ignore()
+            return
         if self.closing:
             event.accept()
             return

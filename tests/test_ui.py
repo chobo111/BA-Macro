@@ -16,6 +16,80 @@ from execution_plan import ExecutionPlan
 
 
 class UiTests(unittest.TestCase):
+    def test_resolution_category_preserves_values_until_preset_selected(self):
+        from conversion_dialog import ResolutionInput
+        from unittest.mock import Mock
+        changed = Mock()
+        field = ResolutionInput('기준 해상도', (1920, 1080), changed, self.window)
+        field.mode.setCurrentText('16:9')
+        self.assertEqual(field.value(), (1920, 1080))
+        self.assertEqual(field.presets.currentData(), (1920, 1080))
+        changed.assert_not_called()
+        field.mode.setCurrentText('4:3')
+        self.assertEqual(field.value(), (1920, 1080))
+        self.assertEqual(field.presets.currentIndex(), -1)
+        changed.assert_not_called()
+        field.presets.setCurrentIndex(ResizeDialog.PRESETS['4:3'].index((1024, 768)))
+        self.assertEqual(field.value(), (1024, 768))
+        field.mode.setCurrentText('직접 입력')
+        self.assertEqual(field.value(), (1024, 768))
+        field.set_value((1835, 1032))
+        field.mode.setCurrentText('16:9')
+        self.assertEqual(field.value(), (1835, 1032))
+        self.assertEqual(field.presets.currentIndex(), -1)
+        field.deleteLater()
+
+    def test_settings_shortcut_error_keeps_open_draft_then_accepts_correction(self):
+        from PySide6.QtGui import QKeySequence
+        from PySide6.QtTest import QSignalSpy
+        w = self.window
+        dialog = SettingsDialog(w.settings, w)
+        dialog.validate_settings = lambda settings: w.validate_profile_shortcuts(w.profile, settings)
+        dialog.times['click_hold_ms'].setValue(123)
+        dialog.theme.setCurrentText('Light')
+        dialog.checks['auto_pause'].setChecked(False)
+        dialog.keys['pause_hk'].setKeySequence(QKeySequence('Q'))
+        accepted = QSignalSpy(dialog.accepted)
+        failed = QSignalSpy(dialog.validation_failed)
+        dialog.show()
+        dialog.accept()
+        self.assertTrue(dialog.isVisible())
+        self.assertEqual(accepted.count(), 0)
+        self.assertEqual(failed.count(), 1)
+        self.assertTrue(dialog.validation.isVisible())
+        self.assertTrue(dialog.validation.text())
+        self.assertEqual(dialog.times['click_hold_ms'].value(), 123)
+        self.assertEqual(dialog.theme.currentText(), 'Light')
+        self.assertFalse(dialog.checks['auto_pause'].isChecked())
+        dialog.keys['pause_hk'].setKeySequence(QKeySequence('Ctrl+F9'))
+        dialog.accept()
+        self.assertEqual(accepted.count(), 1)
+        self.assertEqual(dialog.value().click_hold_ms, 123)
+        self.assertEqual(dialog.value().pause_hk, 'ctrl+f9')
+        self.assertFalse(dialog.isVisible())
+        dialog.deleteLater()
+
+    def test_script_context_identifies_row_and_preserves_stored_coordinates(self):
+        w = self.window
+        row = w.profile.rows[1]
+        row.x, row.y = -99999, 99999
+        row.memo = '<메모> ' * 80
+        row.move_hk = ''
+        width = w.width()
+        w.edit_script(row.id)
+        self.qt.processEvents()
+        editor = w.script_editor
+        self.assertTrue(editor.row_context.isVisible())
+        self.assertEqual(editor.row_identity.text(), '2행 · ' + row.memo)
+        self.assertEqual(editor.row_coordinates.text(), '커서 이동: -99999,99999')
+        self.assertEqual(w.width(), width)
+        self.assertEqual(editor.editor.toPlainText(), row.script)
+        w.finish_script_editor()
+        row.move_hk = 'ctrl+q'
+        w.edit_script(row.id)
+        self.assertEqual(w.script_editor.row_identity.text(), 'CTRL+Q · ' + row.memo)
+        w.finish_script_editor()
+
     def test_profile_menu_actions_and_rename_preserve_editor_draft(self):
         from profile_dialogs import RenameProfileDialog
         w = self.window
@@ -217,11 +291,12 @@ class UiTests(unittest.TestCase):
         help_dialog = ScriptHelpDialog(editor)
         text = help_dialog.findChild(QTextBrowser).toPlainText()
         for command in ('move', 'click', 'press', 'release', 'switch', 'mouse_press',
-                        'mouse_release', 'mouse_switch', 'key_press', 'key_release', 'key_switch',
-                        'text', 'sleep', 'curve', 'curve_first_time', 'curve_last_time',
+                        'mouse_release', 'mouse_switch', 'sleep', 'curve', 'curve_first_time', 'curve_last_time',
                         'curve_release', 'release_all', 'loop', 'loop_end', 'release_actions'):
             self.assertIn(command, text)
-        self.assertIn('각 좌표 명령 실행 시', text)
+        self.assertIn('명령을 실행할 때마다 위치를 읽으므로 반복 중에도 갱신된다.', text)
+        self.assertIn('loop until_release', text)
+        self.assertNotIn('삭제된 문법', text)
         help_dialog.deleteLater()
         editor.reject()
         editor.deleteLater()
@@ -333,24 +408,31 @@ class UiTests(unittest.TestCase):
         self.assertEqual(dialog.geometry(), dialog.parent_area())
         self.assertFalse(dialog.isWindow())
         self.assertFalse(hasattr(dialog, "titlebar"))
-        self.assertGreaterEqual(dialog.y(), w.target_box.mapTo(w, QPoint(0,w.target_box.height())).y())
+        self.assertEqual(dialog.geometry(), w.rect())
         self.assertIs(w.caption_menu.menu, w.main_menu)
         self.assertTrue(dialog.validation.isHidden())
         self.assertFalse(hasattr(dialog, 'position'))
         self.assertNotIn('드래그로 이동', [label.text() for label in dialog.findChildren(QLabel)])
+        save = dialog.findChild(QPushButton, 'scriptSaveButton')
+        geometry = (dialog.editor.geometry(), save.geometry())
         dialog.log_timer.setInterval(20)
-        dialog.log('오류 안내', error=True)
+        dialog.log('오류 안내 ' * 40, error=True)
+        self.qt.processEvents()
+        self.assertEqual((dialog.editor.geometry(), save.geometry()), geometry)
         self.assertFalse(dialog.validation.isHidden())
         for _ in range(50):
             if dialog.validation.isHidden():
                 break
             QTest.qWait(20)
         self.assertTrue(dialog.validation.isHidden())
+        self.qt.processEvents()
+        self.assertEqual((dialog.editor.geometry(), save.geometry()), geometry)
         dialog.reject()
         dialog.deleteLater()
 
     def test_only_cursor_move_and_script_modes_are_available(self):
-        self.assertEqual(MODES, {'move_only': '커서 이동', 'script': '스크립트 실행'})
+        self.assertEqual(MODES, {'move_only': '커서 이동', 'script': '스크립트'})
+        self.assertEqual(self.window.table.columnWidth(3), 96)
         for index, row in enumerate(self.window.profile.rows):
             combo = self.window.table.cellWidget(index, 3)
             self.assertEqual([combo.itemData(i) for i in range(combo.count())], ['move_only', 'script'])
@@ -416,6 +498,22 @@ class UiTests(unittest.TestCase):
         self.assertIn('저장', [b.text() for b in dialog.findChildren(QPushButton)])
         dialog.deleteLater()
 
+    def test_template_replacement_is_one_undo_step_and_preserves_prior_history(self):
+        dialog = ScriptEditor('click 100,200 // 원본 😀', self.window.native, 0, self.window)
+        dialog.editor.moveCursor(dialog.editor.textCursor().MoveOperation.End)
+        dialog.editor.insertPlainText('\nsleep 7')
+        previous = dialog.editor.toPlainText()
+        dialog.insert_template(1)
+        example = dialog.editor.toPlainText()
+        QTest.keyClick(dialog.editor, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(dialog.editor.toPlainText(), previous)
+        QTest.keyClick(dialog.editor, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(dialog.editor.toPlainText(), example)
+        dialog.editor.undo()
+        dialog.editor.undo()
+        self.assertEqual(dialog.editor.toPlainText(), 'click 100,200 // 원본 😀')
+        dialog.deleteLater()
+
     def test_editor_resize_sync_and_live_coordinates(self):
         w = self.window
         w.target = 99
@@ -437,8 +535,8 @@ class UiTests(unittest.TestCase):
             w.tick()
         self.assertFalse(hasattr(dialog, 'cursor_label'))
         self.assertIsNone(w.menuBar().cornerWidget(Qt.Corner.TopRightCorner))
-        self.assertEqual(w.cursor_label.text(), '123, 456')
-        self.assertGreaterEqual(dialog.y(), w.target_box.mapTo(w, QPoint(0,w.target_box.height())).y())
+        self.assertEqual(w.windowTitle(), '123, 456')
+        self.assertEqual(dialog.geometry(), w.rect())
         title = w.windowTitle()
         dialog.reject()
         self.qt.processEvents()
@@ -463,7 +561,7 @@ class UiTests(unittest.TestCase):
             w.refresh_windows(restore_saved=True)
             self.assertEqual(w.target, 456)
             self.assertFalse(w.armed)
-            w.targets.setCurrentIndex(0)
+            w.targets.setCurrentIndex(-1)
         self.assertEqual(Profile.read(self.saved(w.path)).target_program, identity)
         # Changing selection alone must not erase the comparison baseline.
 
@@ -620,7 +718,7 @@ class UiTests(unittest.TestCase):
             w.targets.showPopup()
             windows.assert_called_once()
             self.assertEqual(w.targets.currentData(), 10)
-            self.assertEqual(w.targets.count(), 3)
+            self.assertEqual(w.targets.count(), 2)
             w.targets.hidePopup()
 
     def test_memo_width_and_pin(self):
@@ -700,7 +798,7 @@ class UiTests(unittest.TestCase):
 
     def test_fixed_controls_ignore_window_and_coordinate_width(self):
         w = self.window
-        self.assertEqual(w.targets.currentText(), "미선택")
+        self.assertEqual(w.targets.placeholderText(), "지정 앱 없음")
         w.resize(480, 340)
         self.qt.processEvents()
         positions = (w.pin_button.pos(), w.pause_button.pos())
@@ -1041,6 +1139,7 @@ class UiTests(unittest.TestCase):
         self.assertEqual(dialog.source.value(),(0,0))
         dialog.source.set_value((1920,1080))
         dialog.destination.mode.setCurrentText('4:3')
+        dialog.destination.presets.setCurrentIndex(0)
         dialog.refresh()
         self.wait_for_conversion(dialog)
         self.assertEqual(dialog.destination.value(),(640,480))
@@ -1320,6 +1419,7 @@ class UiTests(unittest.TestCase):
         w=self.window
         w.target=99
         for accepted,convert,expected in ((True,False,False),(True,True,True),(False,False,False)):
+            previous = w.settings.resize_convert_profile
             with patch('app.ResizeDialog') as dialog, \
                  patch.object(w.native,'exists',return_value=True), \
                  patch.object(w.native,'size',return_value=(1920,1080)), \
@@ -1330,8 +1430,9 @@ class UiTests(unittest.TestCase):
                 dialog.return_value.refresh_notice=''
                 w.resize_dialog()
                 self.assertEqual(conversion.called,expected)
-                self.assertEqual(w.settings.resize_convert_profile,convert)
-                self.assertEqual(read_json(w.settings_path)['resize_convert_profile'],convert)
+                remembered = convert if accepted else previous
+                self.assertEqual(w.settings.resize_convert_profile,remembered)
+                self.assertEqual(read_json(w.settings_path)['resize_convert_profile'],remembered)
 
     def test_script_editor_leaves_menu_accessible_and_settings_preserve_draft(self):
         w=self.window
@@ -1513,7 +1614,7 @@ class UiTests(unittest.TestCase):
         candidate = replace(w.settings, click_hold_ms=9876, capture_hk='ctrl+g',
                             theme='Light')
         with patch('app.SettingsDialog') as factory, \
-             patch.object(w.store, 'settings', side_effect=OSError('settings unavailable')), \
+             patch.object(w.store, 'settings_async', side_effect=OSError('settings unavailable')), \
              patch.object(w, 'error') as error, patch.object(w, 'apply_theme') as theme:
             dialog = factory.return_value
             dialog.exec.side_effect = [QDialog.DialogCode.Accepted, QDialog.DialogCode.Rejected]
@@ -1534,7 +1635,7 @@ class UiTests(unittest.TestCase):
         w = self.window
         old = w.settings
         candidate = replace(old, click_hold_ms=9876, capture_hk='ctrl+g')
-        save = w.store.settings
+        save = w.store.settings_async
         attempts = []
         def write(*args, **kwargs):
             self.assertIs(w.settings, old)
@@ -1543,7 +1644,7 @@ class UiTests(unittest.TestCase):
                 raise OSError('temporary error')
             return save(*args, **kwargs)
         with patch('app.SettingsDialog') as factory, \
-             patch.object(w.store, 'settings', side_effect=write), patch.object(w, 'error') as error:
+             patch.object(w.store, 'settings_async', side_effect=write), patch.object(w, 'error') as error:
             dialog = factory.return_value
             dialog.exec.return_value = QDialog.DialogCode.Accepted
             dialog.value.return_value = candidate
@@ -1562,10 +1663,10 @@ class UiTests(unittest.TestCase):
         with patch('app.ResizeDialog') as factory, \
              patch.object(w.native, 'exists', return_value=True), \
              patch.object(w.native, 'size', return_value=(1920, 1080)), \
-             patch.object(w.store, 'settings', side_effect=OSError('write failed')), \
+             patch.object(w.store, 'settings_async', side_effect=OSError('write failed')), \
              patch.object(w, 'error') as error:
             dialog = factory.return_value
-            dialog.exec.return_value = QDialog.DialogCode.Rejected
+            dialog.exec.return_value = QDialog.DialogCode.Accepted
             dialog.convert_profile.isChecked.return_value = not before
             w.resize_dialog()
             error.assert_called_once_with('write failed')
@@ -1981,7 +2082,7 @@ class UiTests(unittest.TestCase):
         w.profile.rows[0].move_hk = 'alt+q'
         w.rebind()
         with patch('app.SettingsDialog') as factory, patch.object(w,'error') as error, patch.object(w,'commit_settings') as commit:
-            factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            factory.return_value.exec.side_effect = [QDialog.DialogCode.Accepted, QDialog.DialogCode.Rejected]
             factory.return_value.value.return_value = replace(original,pause_hk='alt')
             w.settings_dialog()
             commit.assert_not_called()
@@ -2030,7 +2131,7 @@ class UiTests(unittest.TestCase):
     def test_unselected_start_and_capture_do_not_fall_back_to_desktop(self):
         w = self.window
         self.assertIsNone(w.target)
-        self.assertEqual(w.targets.currentText(), '미선택')
+        self.assertEqual(w.targets.placeholderText(), '지정 앱 없음')
         before = w.profile.export()
         with patch.object(w.native, 'windows') as windows, patch.object(w.native, 'cursor') as cursor, patch.object(w, 'convert_dialog') as convert:
             w.toggle()
@@ -2042,7 +2143,7 @@ class UiTests(unittest.TestCase):
         cursor.assert_not_called()
         convert.assert_not_called()
         self.assertEqual(w.profile.export(), before)
-        self.assertEqual(w.cursor_label.text(), '—, —')
+        self.assertEqual(w.windowTitle(), '—, —')
 
 
     def test_unselected_script_editor_does_not_capture_external_clicks(self):
@@ -2074,7 +2175,9 @@ class UiTests(unittest.TestCase):
                 other = MainWindow(data_dir=folder, hook_enabled=False)
             try:
                 self.assertIsNone(other.target)
-                self.assertEqual(other.targets.currentText(), '미선택')
+                self.assertEqual(other.targets.placeholderText(), 'Game')
+                self.assertEqual(other.resize_button.text(), '미실행')
+                self.assertFalse(other.resize_button.isEnabled())
                 self.assertEqual(other.profile.target_program, identity)
             finally:
                 other.shutdown()
@@ -2112,7 +2215,7 @@ class UiTests(unittest.TestCase):
                         {'pause_hk': 'shift+/', 'capture_hk': 'shift+?'}):
             with self.subTest(changes=changes), patch('app.SettingsDialog') as factory, \
                  patch.object(w, 'error') as error, patch.object(w, 'commit_settings') as commit:
-                factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+                factory.return_value.exec.side_effect = [QDialog.DialogCode.Accepted, QDialog.DialogCode.Rejected]
                 factory.return_value.value.return_value = replace(original, **changes)
                 w.settings_dialog()
                 commit.assert_not_called()
@@ -2209,7 +2312,7 @@ class UiTests(unittest.TestCase):
                         other.edit_key(other.profile.rows[1].id)
                         self.assertEqual(other.profile.rows[1].move_hk, '')
                         self.assertTrue(other.dirty)
-                        self.assertIn('●', other.windowTitle())
+                        self.assertEqual(other.profile_name.text(), path.stem)
                         self.assertFalse(other.armed)
                         self.assertEqual(other.hooks.bindings, [])
                         self.assertIn('남은 충돌', other.statusBar().currentMessage())

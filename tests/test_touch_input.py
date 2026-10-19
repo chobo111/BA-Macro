@@ -389,3 +389,64 @@ class TouchTests(unittest.TestCase):
         retire.assert_called_once_with()
         self.assertIsNone(device.handle)
         self.assertIsNone(device.promotion_filter)
+
+    def test_implicit_contacts_reject_caption_and_client_edges(self):
+        for source in ('mouse_press left', 'mouse_switch left'):
+            for point in ((-1, 300), (1900, -20), (1920, 300), (200, 1080)):
+                with self.subTest(source=source, point=point):
+                    self.setUp()
+                    self.native.position = point
+                    with self.assertRaisesRegex(ScriptError, '내부 영역'):
+                        self.run_script(source)
+                    self.assertEqual(self.device.events, [])
+                    self.assertFalse(self.adapter.pressed)
+                    self.assertFalse(self.runtime.buttons)
+
+    def test_contact_bounds_use_client_coordinates_on_offset_monitor(self):
+        for point in ((0, 0), (1919, 1079)):
+            with self.subTest(point=point):
+                self.setUp()
+                self.native.position = point
+                with patch.object(self.native, 'screen', side_effect=lambda h, x, y: (x-1920, y-200)), patch.object(self.native, 'local_point', side_effect=lambda h, x, y: (x+1920, y+200)):
+                    self.run_script('mouse_press left')
+                expected = point[0]-1920, point[1]-200
+                self.assertEqual(self.device.events, [(expected, DOWN | INRANGE | INCONTACT), (expected, UP)])
+
+    def test_explicit_point_still_works_when_real_cursor_is_over_caption(self):
+        self.native.position = (1900, -20)
+        self.run_script('click 10,20')
+        self.assertEqual(self.device.events, [((10, 20), DOWN | INRANGE | INCONTACT), ((10, 20), UP)])
+        self.assertEqual(self.native.position, (1900, -20))
+
+    def test_contact_rechecks_client_bounds_after_device_initialization(self):
+        origin = [0, 0]
+        def factory():
+            origin[0] = 1000  # The window moves before the first input frame.
+            return self.device
+        self.adapter.device_factory = factory
+        with patch.object(self.native, 'local_point', side_effect=lambda h, x, y: (x-origin[0], y-origin[1])):
+            with self.assertRaisesRegex(ScriptError, '내부 영역'):
+                self.run_script('mouse_press left')
+        self.assertEqual(self.device.events, [])
+        self.assertTrue(self.device.closed)
+
+    def test_failed_drag_restores_last_point_and_allows_release(self):
+        self.adapter.begin(1)
+        self.adapter.move(10, 20)
+        self.adapter.mouse_button('left', True)
+        with self.assertRaisesRegex(ValueError, '내부 영역'):
+            self.adapter.move(-1, 20)
+        self.assertEqual(self.adapter.position, (10, 20))
+        self.adapter.mouse_button('left', False)
+        self.assertEqual(self.device.events, [((10, 20), DOWN | INRANGE | INCONTACT), ((10, 20), UP)])
+
+    def test_outside_heartbeat_is_blocked_but_release_still_sent(self):
+        self.adapter.begin(1)
+        self.adapter.mouse_button('left', True)
+        self.adapter.last_frame -= 1
+        with patch.object(self.native, 'local_point', return_value=(-1, 300)):
+            with self.assertRaisesRegex(ValueError, '내부 영역'):
+                self.adapter.keep_alive()
+            self.adapter.mouse_button('left', False)
+        self.assertEqual([flags for _, flags in self.device.events], [DOWN | INRANGE | INCONTACT, UP])
+        self.assertFalse(self.adapter.pressed)

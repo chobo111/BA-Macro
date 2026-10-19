@@ -81,10 +81,15 @@ def stylesheet(c):
         QWidget {{font-family: 'Segoe UI', 'Malgun Gothic'; font-size: 13px; color: {c.text};}}
         QLabel {{background: transparent;}}
         QLabel#muted {{color: {c.muted};}}
+        QLabel#profileName {{font-weight: 600;}}
+        QLabel#profileUnsaved {{color: {c.error_text}; background: {c.error_background}; border-radius: 3px; padding: 1px 4px;}}
         QLabel#targetStatus {{color: {c.muted};}}
         QLabel#targetStatus[warning="true"] {{color: {c.error_text};}}
+        QFrame#targetBox {{background: {c.panel}; border: 1px solid {c.border}; border-radius: 6px;}}
+        QToolButton#targetToggle {{background: transparent; border: none; border-radius: 5px; padding: 4px 8px; color: {c.muted}; text-align: left;}}
+        QToolButton#targetToggle:hover {{background: {c.alternate}; color: {c.text};}}
+        QToolButton#targetToggle:pressed {{background: {c.selection}; color: {c.selected_text};}}
         QFrame#toolbarSeparator {{background: {c.border}; border: none;}}
-        QLabel#cursor {{color: {c.accent}; font-family: Consolas; font-weight: 600;}}
         QTabWidget::pane {{border: 1px solid {c.border}; border-radius: 4px;}}
         QTabBar::tab {{background: {c.panel}; color: {c.muted}; padding: 7px 18px; border: 1px solid {c.border};}}
         QTabBar::tab:selected {{color: {c.text}; border-bottom: 2px solid {c.accent};}}
@@ -102,6 +107,12 @@ def stylesheet(c):
         QTableCornerButton::section {{background: {c.background}; border: none;}}
         QLineEdit, QSpinBox, QComboBox, QKeySequenceEdit {{background: {c.panel}; border: 1px solid {c.border}; border-radius: 4px; padding: 3px; selection-background-color: {c.selection}; selection-color: {c.selected_text};}}
         QComboBox QAbstractItemView {{background: {c.panel}; color: {c.text}; selection-background-color: {c.selection}; selection-color: {c.selected_text};}}
+        QComboBox#targetSelector {{padding: 4px 26px 4px 8px; combobox-popup: 0;}}
+        QComboBox#targetSelector:hover, QComboBox#targetSelector:focus {{border-color: {c.accent};}}
+        QComboBox#targetSelector::drop-down {{subcontrol-origin: padding; subcontrol-position: top right; width: 24px; border: none; background: transparent;}}
+        QComboBox#targetSelector QAbstractItemView {{border: 1px solid {c.border}; outline: none; padding: 2px;}}
+        QComboBox#targetSelector QAbstractItemView::item {{min-height: 26px; padding: 2px 6px;}}
+
         QMenuBar, QMenu, QStatusBar {{background: {c.background}; color: {c.muted};}}
         QMenu::item:selected, QMenuBar::item:selected {{background: {c.selection}; color: {c.selected_text};}}
         QMenu#appMenu {{background: {c.panel}; color: {c.text}; border: 1px solid {c.border}; border-radius: 6px; padding: 4px;}}
@@ -113,9 +124,15 @@ def stylesheet(c):
         QLabel#scriptLog {{background: {c.code_background}; color: {c.muted}; border: 1px solid {c.border}; border-radius: 4px; padding: 6px 8px;}}
         QLabel#scriptLog[error="true"] {{background: {c.error_background}; color: {c.error_text}; border-color: {c.error_border};}}
         QPlainTextEdit#codeEditor, QPlainTextEdit#errorLog, QTextBrowser#scriptHelp {{background: {c.code_background}; color: {c.text}; border: 1px solid {c.border}; padding: 10px; selection-background-color: {c.selection}; selection-color: {c.selected_text};}}
+        QListWidget#scriptCompletions {{background: {c.panel}; color: {c.text}; border: 1px solid {c.accent}; outline: none; selection-background-color: {c.selection}; selection-color: {c.selected_text};}}
+        QListWidget#scriptCompletions::item {{padding: 5px 8px;}}
+        QListWidget#scriptCompletions::item:selected {{background: {c.selection}; color: {c.selected_text};}}
         QPlainTextEdit#codeEditor {{font-family: Consolas, 'Malgun Gothic'; font-size: 15px;}}
         QDialog#scriptOverlay QPushButton, QDialog#scriptOverlay QComboBox {{padding: 7px 12px; border-radius: 5px;}}
         QDialog#scriptOverlay QPushButton#scriptHelpButton {{padding: 0; border-radius: 16px; font-weight: 700;}}
+        QDialog#scriptOverlay QPushButton#scriptSaveButton:enabled {{background: {c.accent}; color: {c.background}; border-color: {c.accent}; font-weight: 600;}}
+        QDialog#scriptOverlay QPushButton#scriptSaveButton:hover:enabled {{background: {c.text}; border-color: {c.text};}}
+        QDialog#scriptOverlay QPushButton#scriptSaveButton:pressed:enabled {{background: {c.muted}; border-color: {c.muted};}}
         QWidget:disabled, QLabel:disabled, QMenu::item:disabled {{color: {c.disabled_text};}}
         QPushButton:disabled, QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled, QKeySequenceEdit:disabled {{background: {c.disabled_background}; color: {c.disabled_text}; border-color: {c.disabled_border};}}
     """

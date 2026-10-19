@@ -12,7 +12,7 @@ from script_language import coordinate_tokens
 
 MODES = {
     "move_only": "커서 이동",
-    "script": "스크립트 실행",
+    "script": "스크립트",
 }
 
 
@@ -157,12 +157,13 @@ class Settings:
     auto_convert_on_start: bool = False
     theme: str = "Dark"
     last_profile: str = ""
-    recent_profiles: list[str] = field(default_factory=list)
 
     @classmethod
     def read(cls, data):
         if not isinstance(data, dict):
             raise ValueError("설정 형식이 잘못되었습니다.")
+        # Discard the removed menu history while preserving other settings.
+        data = {key: value for key, value in data.items() if key != "recent_profiles"}
         unknown = set(data) - {item.name for item in fields(cls)}
         if unknown:
             raise ValueError(f"지원하지 않는 설정 항목: {', '.join(sorted(unknown))}")
@@ -183,11 +184,6 @@ class Settings:
         if obj.theme not in ("Dark", "Light", "System"):
             raise ValueError("테마 값이 올바르지 않습니다.")
         obj.last_profile = str(data.get("last_profile", ""))
-        recent = data.get('recent_profiles', [])
-        if (not isinstance(recent, list) or len(recent) > 10
-                or any(not isinstance(path, str) or not path or not Path(path).is_absolute() for path in recent)):
-            raise ValueError('최근 프로필 목록에는 최대 10개의 파일 경로가 필요합니다.')
-        obj.recent_profiles = list(recent)
         return obj
 
 

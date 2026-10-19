@@ -183,6 +183,12 @@ class TouchScriptInput:
     def validate_pointer(self, target):
         if not self.native.active(self.target) or not self.native.point_belongs_to(self.target, *self.position):
             raise ValueError('터치 위치가 대상 앱에 가려졌거나 대상 앱이 비활성 상태입니다.')
+        # A title bar/border belongs to the same window but is not game content.
+        # Re-evaluate the client point: the window may move between input frames.
+        x, y = self.native.local_point(self.target, *self.position)
+        left, top, right, bottom = self.native.bounds(self.target)
+        if not left <= x < right or not top <= y < bottom:
+            raise ValueError('터치 위치가 대상 앱 내부 영역 밖에 있습니다.')
 
     def check_contact(self):
         if self.check_input is not None:

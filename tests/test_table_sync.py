@@ -54,6 +54,15 @@ class TableSyncTests(unittest.TestCase):
         self.assertEqual(t.columnSpan(1, 1), 2)
         self.assertIsInstance(t.cellWidget(1, 1), QPushButton)
         self.assertIsNone(t.cellWidget(1, 2))
+        script_button = t.cellWidget(1, 1)
+        before = (t.columnWidth(1), t.columnWidth(2), w.width())
+        for source in ('sleep 5', '  \n', ''):
+            row.script = source
+            w.rebuild(row.id)
+            self.qt.processEvents()
+            self.assertIs(t.cellWidget(1, 1), script_button)
+            self.assertEqual(script_button.text(), '스크립트 작성')
+            self.assertEqual((t.columnWidth(1), t.columnWidth(2), w.width()), before)
         t.cellWidget(1, 3).setCurrentIndex(t.cellWidget(1, 3).findData('move_only'))
         self.qt.processEvents()
         self.assertEqual(t.columnSpan(1, 1), 1)
@@ -133,12 +142,13 @@ class TableSyncTests(unittest.TestCase):
     def test_add_preserves_existing_controls_and_binds_new_row(self):
         w, t = self.window, self.window.table
         previous = [self.controls(i) for i in range(3)]
+        t.selectRow(0)
         w.add_row()
-        self.assertEqual([self.controls(i) for i in range(3)], previous)
+        self.assertEqual([self.controls(i) for i in (0, 2, 3)], previous)
         self.assertEqual(t.rowCount(), 4)
         with patch.object(w, 'edit_key') as edit:
-            t.cellWidget(3, 0).click()
-        edit.assert_called_once_with(w.profile.rows[3].id)
+            t.cellWidget(1, 0).click()
+        edit.assert_called_once_with(w.profile.rows[1].id)
 
     def test_queued_mode_refresh_after_profile_replacement_uses_new_data(self):
         w, t = self.window, self.window.table
@@ -161,18 +171,18 @@ class TableSyncTests(unittest.TestCase):
                 patch.object(w.engine, 'stop', wraps=w.engine.stop) as stop:
             w.live_memo_changed(0, 'new memo')
             self.assertEqual(labels.call_count, 1)
-            self.assertIn('●', w.windowTitle())
+            self.assertTrue(w.dirty)
             stop.assert_called_once()
             w.flush_pending_saves()
             self.assertEqual(labels.call_count, 2)
-        self.assertNotIn('●', w.windowTitle())
+        self.assertFalse(w.dirty)
         self.assertEqual(read_json(w.path)['macros'][0]['memo'], 'new memo')
 
-    def test_profile_refresh_updates_window_title(self):
+    def test_profile_refresh_updates_summary(self):
         w = self.window
         w.path = Path(self.directory.name) / 'different.json'
         w.rebuild()
-        self.assertIn('different', w.windowTitle())
+        self.assertEqual(w.profile_name.text(),'different')
 
     def test_unrelated_refresh_preserves_incomplete_numeric_input(self):
         w, t = self.window, self.window.table
@@ -204,7 +214,7 @@ class TableSyncTests(unittest.TestCase):
         finally:
             QTest.keyRelease(self.window.table, Qt.Key.Key_Control)
 
-    def test_failed_save_as_restores_title_and_autosave_path(self):
+    def test_failed_save_as_restores_profile_summary_and_autosave_path(self):
         from app import QFileDialog
         from persistence import SaveResult
         w = self.window
@@ -214,10 +224,37 @@ class TableSyncTests(unittest.TestCase):
                 patch.object(w.store, '_save', return_value=SaveResult(False, error='denied')):
             self.assertFalse(w.save_as())
         self.assertEqual(w.path, original)
-        self.assertIn('● ' + original.stem + ' —', w.windowTitle())
-        self.assertNotIn(destination.stem, w.windowTitle())
+        self.assertEqual(w.profile_name.text(),original.stem)
+        self.assertTrue(w.dirty)
+        self.assertNotIn(destination.stem,w.profile_name.text())
         self.assertIn('denied', w.statusBar().currentMessage())
         w.live_memo_changed(0, 'after failed save-as')
         w.flush_pending_saves()
         self.assertEqual(read_json(original)['macros'][0]['memo'], 'after failed save-as')
         self.assertFalse(destination.exists())
+
+    def test_width_requests_coalesce_and_use_final_column_sizes(self):
+        from PySide6.QtTest import QSignalSpy
+        w = self.window
+        self.qt.processEvents()
+        w.table.setColumnWidth(0, 91)
+        self.qt.processEvents()
+        self.qt.processEvents()
+        spy = QSignalSpy(w._fit_timer.timeout)
+        for _ in range(20):
+            w.queue_fit_content_width()
+        self.qt.processEvents()
+        self.assertEqual(spy.count(), 1)
+        expected = (sum(w.table.columnWidth(c) for c in range(4)) + w.table.MEMO_MIN_WIDTH
+                    + w.table.verticalHeader().width() + 2*w.table.frameWidth())
+        self.assertEqual(w.target_box.width(), expected)
+        self.assertEqual(w.toolbar_panel.width(), expected)
+
+    def test_shutdown_cancels_queued_width_request(self):
+        w = self.window
+        w.queue_fit_content_width()
+        self.assertTrue(w._fit_timer.isActive())
+        w.shutdown()
+        self.assertFalse(w._fit_timer.isActive())
+        w.queue_fit_content_width()
+        self.assertFalse(w._fit_timer.isActive())
