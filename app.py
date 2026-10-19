@@ -34,7 +34,7 @@ from profile_dialogs import RenameProfileDialog, ProfileInfoDialog
 from profile_catalog import ProfileCatalog, profile_entries
 from profile_wait import wait_for_saves, wait_for_write
 from conversion_dialog import ConversionDialog, BaselineResolutionDialog
-from version import APP_NAME, VERSION
+from version import APP_NAME, VERSION, REPOSITORY_URL
 from theme import DARK, LIGHT, palette, stylesheet
 from session import ExecutionSession, editing_dialog
 from shortcuts import ShortcutError, qt_hotkey
@@ -269,6 +269,7 @@ class MainWindow(QMainWindow):
         self.table.memo_notice.connect(self.statusBar().showMessage)
         self.table.moved.connect(self.move_row)
         self.table.horizontalHeader().sectionResized.connect(self.queue_fit_content_width)
+        self.table.verticalHeader().geometriesChanged.connect(self.queue_fit_content_width)
         self.table.verticalScrollBar().rangeChanged.connect(self.queue_fit_content_width)
         layout.addWidget(self.table, 1)
         self.update_labels()
@@ -290,18 +291,19 @@ class MainWindow(QMainWindow):
             return
         table = self.table
         margins = self.centralWidget().layout().contentsMargins()
-        content_width = (sum(table.columnWidth(column) for column in range(4))
-                         + table.MEMO_MIN_WIDTH + table.verticalHeader().width() + table.frameWidth() * 2)
-        # Stretching the memo column must not move controls or resize the window.
-        self.target_box.setFixedWidth(content_width)
-        self.toolbar_panel.setFixedWidth(content_width)
-        width = content_width + margins.left() + margins.right()
-        if table.verticalScrollBar().maximum() > 0:
-            width += table.verticalScrollBar().sizeHint().width()
+        content_width = (sum(table.columnWidth(column) for column in range(table.columnCount()))
+                         + table.verticalHeader().width() + table.frameWidth() * 2)
+        scroll_width = (table.verticalScrollBar().sizeHint().width()
+                        if table.verticalScrollBar().maximum() > 0 else 0)
+        width = content_width + scroll_width + margins.left() + margins.right()
         screen = self.screen()
         if screen:
             frame = max(0, self.frameGeometry().width() - self.geometry().width())
             width = min(width, screen.availableGeometry().width() - frame)
+        table_width = width - margins.left() - margins.right()
+        table.setFixedWidth(table_width)
+        self.target_box.setFixedWidth(table_width - scroll_width)
+        self.toolbar_panel.setFixedWidth(table_width - scroll_width)
         previous = getattr(self, "_content_width", None)
         self._content_width = width
         self.setMinimumWidth(400)
@@ -1742,7 +1744,17 @@ class MainWindow(QMainWindow):
 
     @editing_dialog(hooks=False)
     def about_dialog(self):
-        QMessageBox.information(self, '앱 정보', f'{APP_NAME}\n버전: {VERSION}')
+        with managed_dialog(QMessageBox(self)) as dialog:
+            dialog.setWindowTitle('앱 정보')
+            dialog.setTextFormat(Qt.TextFormat.RichText)
+            dialog.setText(f'<b>{APP_NAME}</b><br>버전: {VERSION}<br><br>'
+                           f'<a href="{REPOSITORY_URL}">GitHub · chobo111/BA-Macro</a>')
+            dialog.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+            dialog.setStandardButtons(QMessageBox.StandardButton.Close)
+            dialog.button(QMessageBox.StandardButton.Close).setText('닫기')
+            for label in dialog.findChildren(QLabel):
+                label.setOpenExternalLinks(True)
+            dialog.exec()
 
     def shutdown(self):
         if self.closing:

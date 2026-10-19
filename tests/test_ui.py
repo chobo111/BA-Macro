@@ -275,10 +275,17 @@ class UiTests(unittest.TestCase):
         self.assertIn('앱 정보', items)
         self.assertNotIn('도움말', items)
         self.assertNotIn('변경 기록', items)
-        with patch.object(QMessageBox, 'information') as about:
+        def check_about(dialog):
+            from PySide6.QtWidgets import QLabel
+            self.assertEqual(dialog.windowTitle(), '앱 정보')
+            self.assertIn(VERSION, dialog.text())
+            self.assertIn('href="https://github.com/chobo111/BA-Macro"', dialog.text())
+            self.assertEqual(dialog.textFormat(), Qt.TextFormat.RichText)
+            self.assertTrue(any(label.openExternalLinks() and 'href=' in label.text()
+                                for label in dialog.findChildren(QLabel)))
+            return QMessageBox.StandardButton.Close
+        with patch.object(QMessageBox, 'exec', check_about):
             w.about_dialog()
-        self.assertEqual(about.call_args.args[1], '앱 정보')
-        self.assertIn(VERSION, about.call_args.args[2])
         editor = ScriptEditor('', w.native, 0, w)
         editor.show()
         for width, height in ((500, 430), (700, 520)):
@@ -764,10 +771,19 @@ class UiTests(unittest.TestCase):
         w.resize(520,420)
         self.qt.processEvents()
         first_left, first_width = text_left(), w.table.columnWidth(4)
+        table_width = w.table.width()
         w.resize(900,420)
         self.qt.processEvents()
-        self.assertGreater(w.table.columnWidth(4),first_width)
+        self.assertEqual(w.table.columnWidth(4),first_width)
+        self.assertEqual(w.table.width(),table_width)
         self.assertEqual(text_left(),first_left)
+        w.table.setColumnWidth(4, first_width + 100)
+        self.qt.processEvents()
+        self.qt.processEvents()
+        self.assertEqual(w.table.width(), table_width + 100)
+        self.assertEqual(text_left(), first_left)
+        self.assertEqual(w.table.verticalHeader().defaultAlignment(), Qt.AlignmentFlag.AlignCenter)
+        self.assertGreaterEqual(w.table.verticalHeader().width(), 28)
 
     def test_resize_presets_and_custom_values(self):
         dialog = ResizeDialog((1234, 678), self.window)
