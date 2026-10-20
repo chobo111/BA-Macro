@@ -75,6 +75,8 @@ class UiTests(unittest.TestCase):
         row.x, row.y = -99999, 99999
         row.memo = '<메모> ' * 80
         row.move_hk = ''
+        w.rebuild(row.id)
+        self.qt.processEvents()
         width = w.width()
         w.edit_script(row.id)
         self.qt.processEvents()
@@ -372,28 +374,82 @@ class UiTests(unittest.TestCase):
         return read_json(path)
 
     def test_hotkey_dialog_duplicate_cancel_and_save(self):
+        from PySide6.QtGui import QKeySequence
         w = self.window
         row = w.profile.rows[0]
-        with patch('app.KeyDialog') as dialog, patch.object(QMessageBox, 'warning') as warning:
-            dialog.return_value.exec.return_value = QDialog.DialogCode.Accepted
-            dialog.return_value.value.return_value = 'w'
-            w.edit_key(row.id)
+        def duplicate_then_correct(dialog):
+            dialog.show()
+            dialog.editor.setKeySequence(QKeySequence('W'))
+            dialog.accept()
+            self.assertNotEqual(dialog.result(), QDialog.DialogCode.Accepted)
+            self.assertTrue(dialog.isVisible())
+            self.assertIn('중복', dialog.validation.text())
             self.assertEqual(row.move_hk, 'q')
-            self.assertIn('중복', w.statusBar().currentMessage())
-            warning.assert_not_called()
-            dialog.return_value.value.return_value = 'ctrl+r'
+            dialog.editor.setKeySequence(QKeySequence('Alt+R'))
+            self.assertTrue(dialog.validation.isHidden())
+            dialog.accept()
+            return dialog.result()
+        with patch.object(KeyDialog, 'exec', new=duplicate_then_correct), \
+                patch.object(w.statusBar(), 'show_error') as error:
             w.edit_key(row.id)
-            self.assertEqual(Profile.read(self.saved(w.path)).rows[0].move_hk, 'ctrl+r')
+            error.assert_not_called()
+        self.assertEqual(Profile.read(self.saved(w.path)).rows[0].move_hk, 'alt+r')
+        with patch('app.KeyDialog') as dialog:
             dialog.return_value.exec.return_value = QDialog.DialogCode.Rejected
-            dialog.return_value.value.return_value = 'ctrl+t'
+            dialog.return_value.value.return_value = 'alt+t'
             w.edit_key(row.id)
-            self.assertEqual(row.move_hk, 'ctrl+r')
+            self.assertEqual(row.move_hk, 'alt+r')
             dialog.return_value.exec.return_value = QDialog.DialogCode.Accepted
             dialog.return_value.value.return_value = ''
             w.edit_key(row.id)
             self.assertEqual(row.move_hk, '')
         self.assertIsInstance(w.table.cellWidget(0, 0), QPushButton)
         self.assertFalse(w.modal)
+
+    def test_ctrl_row_registration_rejected_in_popup_without_changing_profile(self):
+        from PySide6.QtGui import QKeySequence
+        w = self.window
+        self.assertTrue(w.save())
+        before = w.path.read_bytes()
+        row = w.profile.rows[0]
+        def reject_ctrl(dialog):
+            dialog.show()
+            for key in ('Ctrl+K', 'Ctrl+Alt+K', 'Ctrl+Shift+K'):
+                dialog.editor.setKeySequence(QKeySequence(key))
+                dialog.accept()
+                self.assertTrue(dialog.isVisible())
+                self.assertIn('Ctrl 조합', dialog.validation.text())
+                self.assertEqual(row.move_hk, 'q')
+            dialog.reject()
+            return dialog.result()
+        with patch.object(KeyDialog, 'exec', new=reject_ctrl), \
+                patch.object(w.statusBar(), 'show_error') as error:
+            w.edit_key(row.id)
+            error.assert_not_called()
+        self.assertEqual(w.path.read_bytes(), before)
+        self.assertEqual(w.settings.capture_hk, 'ctrl+s')
+        self.assertEqual(w.settings.pause_hk, 'ctrl+`')
+
+    def test_standalone_ctrl_popup_explains_global_conflict_then_allows_free_key(self):
+        from PySide6.QtGui import QKeySequence
+        w = self.window
+        row = w.profile.rows[0]
+        def check_ctrl(dialog):
+            dialog.show()
+            dialog.editor.setKeySequence(QKeySequence('Control'))
+            dialog.accept()
+            self.assertTrue(dialog.isVisible())
+            self.assertIn('단독', dialog.validation.text())
+            w.settings.capture_hk = 'f8'
+            w.settings.pause_hk = 'f9'
+            dialog.accept()
+            self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+            return dialog.result()
+        with patch.object(KeyDialog, 'exec', new=check_ctrl), \
+                patch.object(w.statusBar(), 'show_error') as error:
+            w.edit_key(row.id)
+            error.assert_not_called()
+        self.assertEqual(row.move_hk, 'ctrl')
 
     def test_log_expires_and_new_row_has_empty_memo(self):
         w = self.window
@@ -449,7 +505,9 @@ class UiTests(unittest.TestCase):
         from dataclasses import asdict
         from domain import Settings
         settings = Settings.read({})
-        self.assertTrue(settings.auto_pause)
+        self.assertFalse(settings.auto_pause)
+        self.assertEqual(settings.theme, 'System')
+        self.assertEqual(settings.last_profile, '')
         self.assertEqual(settings.pause_hk, 'ctrl+`')
         self.assertEqual(Settings.read({'pause_hk': 'ctrl+tab'}).pause_hk, 'ctrl+tab')
         self.assertNotIn('auto_fire', asdict(settings))
@@ -492,13 +550,17 @@ class UiTests(unittest.TestCase):
 
     def test_editor_templates_replace_and_validate_after_coordinates(self):
         dialog = ScriptEditor('old content', self.window.native, 0, self.window)
-        self.assertEqual(dialog.templates.count(), 4)
-        for index, curve in ((1, 'curve X,Y mouse'), (2, 'curve mouse X,Y'), (3, 'curve X,Y X,Y')):
+        self.assertEqual(dialog.templates.count(), 5)
+        self.assertEqual(dialog.templates.itemText(4), '좌표→좌표 연속 클릭')
+        for index, curve in ((1, 'curve X,Y mouse'), (2, 'curve mouse X,Y'), (3, 'curve X,Y X,Y'),
+                             (4, 'click X,Y')):
             dialog.insert_template(index)
             source = dialog.editor.toPlainText()
             self.assertNotIn('old content', source)
             self.assertEqual(source.count('loop_end'), 1)
             self.assertIn(curve, source)
+            if index == 4:
+                self.assertEqual(source, 'loop\nclick mouse\nsleep 3\nclick X,Y\nloop_end')
             self.assertFalse(dialog.validate())
             dialog.editor.setPlainText(source.replace('X,Y', '100,200'))
             self.assertTrue(dialog.validate())
@@ -616,6 +678,7 @@ class UiTests(unittest.TestCase):
 
     def test_edit_reorder_save_and_reload(self):
         w = self.window
+        w.settings.auto_pause = True
         self.assertFalse(w.armed)
         self.assertEqual(w.table.rowCount(), 3)
         w.armed = True
@@ -649,6 +712,7 @@ class UiTests(unittest.TestCase):
 
     def test_capture_inactive_target_and_stops_run(self):
         w = self.window
+        w.settings.auto_pause = True
         w.target = 99
         with patch.object(w.native, "window_identity", return_value={"exe":"Game.exe","class":"Game","title":"Game"}), patch.object(w.native, "active", return_value=False), patch.object(w.native, "exists", return_value=True), patch.object(w.native, "cursor", return_value=(400, 500)), patch.object(w.native, "bounds", return_value=(0, 0, 1920, 1080)), patch.object(w.native, "size", return_value=(1920, 1080)):
             self.assertTrue(w.eligible('capture_selected'))
@@ -687,7 +751,7 @@ class UiTests(unittest.TestCase):
         self.assertIs(w.profile, original)
         self.assertEqual(w.path, original_path)
         self.assertEqual(legacy.read_text(encoding="utf-8"), content)
-        self.assertIn('version: 3', error.call_args.args[0])
+        self.assertIn('ba-macro-profile-v1', error.call_args.args[0])
 
     def test_cancel_close_retains_unsaved_changes(self):
         w = self.window
@@ -733,16 +797,15 @@ class UiTests(unittest.TestCase):
         self.assertEqual([r.move_hk for r in w.profile.rows], ["q", "w", "e"])
         self.assertTrue(all(r.memo == "" for r in w.profile.rows))
         base = w.table.columnWidth(4)
-        geometry = (w.size(), w.target_box.size(), w.toolbar_panel.size(),
-                    w.pin_button.pos(), w.pause_button.pos())
-        text = "긴 메모 내용 " * 30
+        table_width = w.table.width()
+        text = "긴 메모 내용 " * 4
         w.table.item(0, 4).setText(text)
         self.qt.processEvents()
-        self.assertEqual(w.table.columnWidth(4), base)
+        self.assertGreater(w.table.columnWidth(4), base)
+        self.assertGreater(w.table.width(), table_width)
         self.assertEqual(w.table.item(0, 4).toolTip(), text)
-        self.assertEqual((w.size(), w.target_box.size(), w.toolbar_panel.size(),
-                          w.pin_button.pos(), w.pause_button.pos()), geometry)
         w.table.item(0, 4).setText("")
+        self.qt.processEvents()
         self.assertEqual(w.table.columnWidth(4), base)
         handle = int(w.winId())
         with patch.object(w.native, "topmost") as topmost, patch.object(w, "show") as show:
@@ -777,10 +840,10 @@ class UiTests(unittest.TestCase):
         self.assertEqual(w.table.columnWidth(4),first_width)
         self.assertEqual(w.table.width(),table_width)
         self.assertEqual(text_left(),first_left)
-        w.table.setColumnWidth(4, first_width + 100)
+        w.table.item(0, 4).setText('메모 내용에 따라 너비 변경')
         self.qt.processEvents()
         self.qt.processEvents()
-        self.assertEqual(w.table.width(), table_width + 100)
+        self.assertGreater(w.table.width(), table_width)
         self.assertEqual(text_left(), first_left)
         self.assertEqual(w.table.verticalHeader().defaultAlignment(), Qt.AlignmentFlag.AlignCenter)
         self.assertGreaterEqual(w.table.verticalHeader().width(), 28)
@@ -1326,14 +1389,14 @@ class UiTests(unittest.TestCase):
         QTest.mouseClick(field,Qt.MouseButton.LeftButton)
         self.assertEqual(field.text(),'입력 대기중...')
         self.assertEqual(dialog.value(),'q')
-        QTest.keyClick(dialog.editor,Qt.Key.Key_K,Qt.KeyboardModifier.ControlModifier)
-        self.assertEqual(dialog.value(),'ctrl+k')
-        self.assertEqual(field.text(),'Ctrl+K')
+        QTest.keyClick(dialog.editor,Qt.Key.Key_K,Qt.KeyboardModifier.AltModifier)
+        self.assertEqual(dialog.value(),'alt+k')
+        self.assertEqual(field.text(),'Alt+K')
         QTest.mouseClick(field,Qt.MouseButton.LeftButton)
         self.assertEqual(field.text(),'입력 대기중...')
         dialog.editor.clearFocus()
-        self.assertEqual(field.text(),'Ctrl+K')
-        self.assertEqual(dialog.value(),'ctrl+k')
+        self.assertEqual(field.text(),'Alt+K')
+        self.assertEqual(dialog.value(),'alt+k')
         dialog.close()
 
 
@@ -1449,6 +1512,23 @@ class UiTests(unittest.TestCase):
                 remembered = convert if accepted else previous
                 self.assertEqual(w.settings.resize_convert_profile,remembered)
                 self.assertEqual(read_json(w.settings_path)['resize_convert_profile'],remembered)
+
+    def test_resize_to_profile_basis_skips_conversion_without_changing_preference(self):
+        w = self.window
+        w.target = 99
+        w.profile.resolution = (1280, 720)
+        w.settings.resize_convert_profile = True
+        with patch('app.ResizeDialog') as dialog, \
+                patch.object(w.native, 'exists', return_value=True), \
+                patch.object(w.native, 'size', return_value=(1920, 1080)), \
+                patch.object(w, 'convert_dialog') as conversion:
+            dialog.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            dialog.return_value.convert_profile.isChecked.return_value = True
+            dialog.return_value.current_size = (1280, 720)
+            dialog.return_value.refresh_notice = ''
+            w.resize_dialog()
+            conversion.assert_not_called()
+            self.assertTrue(w.settings.resize_convert_profile)
 
     def test_script_editor_leaves_menu_accessible_and_settings_preserve_draft(self):
         w=self.window
@@ -1839,31 +1919,49 @@ class UiTests(unittest.TestCase):
                 dialog.show()
                 self.qt.processEvents()
                 QTest.keyClick(dialog.editor, key, modifiers)
-                self.assertEqual(dialog.value(), expected)
-                self.assertEqual(Hotkeys.compile(dialog.value()).key, expected)
+                if 'ctrl+' in expected:
+                    with self.assertRaisesRegex(ValueError, 'Ctrl 조합'):
+                        dialog.value()
+                    dialog.accept()
+                    self.assertTrue(dialog.isVisible())
+                    self.assertIn('Ctrl 조합', dialog.validation.text())
+                else:
+                    self.assertEqual(dialog.value(), expected)
+                    self.assertEqual(Hotkeys.compile(dialog.value()).key, expected)
                 dialog.close()
                 with managed_dialog(KeyDialog(expected, self.window)) as reopened:
-                    self.assertEqual(reopened.value(), expected)
+                    if 'ctrl+' in expected:
+                        with self.assertRaises(ValueError):
+                            reopened.value()
+                    else:
+                        self.assertEqual(reopened.value(), expected)
                 with managed_dialog(SettingsDialog(replace(self.window.settings, pause_hk=expected), self.window)) as settings:
                     self.assertEqual(settings.value().pause_hk, expected)
                 dialog.editor.clear()
                 self.assertEqual(dialog.value(), '')
 
-    def test_alias_duplicate_edit_keeps_previous_shortcut_and_uses_log(self):
+    def test_alias_duplicate_edit_keeps_previous_shortcut_and_uses_popup(self):
+        from PySide6.QtGui import QKeySequence
         w = self.window
-        w.profile.rows[0].move_hk = 'ctrl+page up'
+        w.profile.rows[0].move_hk = 'alt+page up'
         w.save()
         w.rebind()
         row = w.profile.rows[1]
-        with patch('app.KeyDialog') as factory, patch.object(QMessageBox, 'warning') as warning:
-            factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
-            factory.return_value.value.return_value = 'ctrl+pgup'
+        def duplicate_then_cancel(dialog):
+            dialog.show()
+            dialog.editor.setKeySequence(QKeySequence('Alt+PgUp'))
+            dialog.accept()
+            self.assertTrue(dialog.isVisible())
+            self.assertIn('중복', dialog.validation.text())
+            dialog.reject()
+            return dialog.result()
+        with patch.object(KeyDialog, 'exec', new=duplicate_then_cancel), \
+                patch.object(w.statusBar(), 'show_error') as error:
             w.edit_key(row.id)
-            warning.assert_not_called()
+            error.assert_not_called()
         w.flush_pending_saves()
         self.assertEqual(row.move_hk, 'w')
         self.assertEqual(read_json(w.path)['macros'][1]['move_hk'], 'w')
-        self.assertIn('중복', w.statusBar().currentMessage())
 
     def test_restore_shows_hidden_window_without_changing_profile_or_run_state(self):
         w = self.window
@@ -2039,11 +2137,19 @@ class UiTests(unittest.TestCase):
                 focused = dialog.focusWidget()
                 QTest.keyClick(field,key,modifiers)
                 self.assertIs(dialog.focusWidget(),focused)
-                self.assertEqual(dialog.value(),expected)
+                if 'ctrl+' in expected:
+                    with self.assertRaisesRegex(ValueError, 'Ctrl 조합'):
+                        dialog.value()
+                else:
+                    self.assertEqual(dialog.value(),expected)
                 self.assertTrue(dialog.isVisible())
                 self.assertIsNotNone(Hotkeys.compile(expected))
                 with managed_dialog(KeyDialog(expected,self.window)) as reopened:
-                    self.assertEqual(reopened.value(),expected)
+                    if 'ctrl+' in expected:
+                        with self.assertRaises(ValueError):
+                            reopened.value()
+                    else:
+                        self.assertEqual(reopened.value(),expected)
                 with managed_dialog(SettingsDialog(replace(self.window.settings,capture_hk='f12'),self.window)) as settings:
                     settings.show()
                     self.qt.processEvents()
@@ -2067,15 +2173,17 @@ class UiTests(unittest.TestCase):
             self.assertEqual(dialog.value(),'ctrl')
             QTest.keyPress(field,Qt.Key.Key_Control)
             QTest.keyPress(field,Qt.Key.Key_K,Qt.KeyboardModifier.ControlModifier)
-            self.assertEqual(dialog.value(),'ctrl+k')
+            self.assertEqual(field.text(), 'Ctrl+K')
+            with self.assertRaises(ValueError):
+                dialog.value()
             QTest.keyRelease(field,Qt.Key.Key_K,Qt.KeyboardModifier.ControlModifier)
             QTest.keyRelease(field,Qt.Key.Key_Control)
-            self.assertEqual(dialog.value(),'ctrl+k')
+            self.assertEqual(field.text(), 'Ctrl+K')
             QTest.mouseClick(field,Qt.MouseButton.LeftButton)
             QTest.keyPress(field,Qt.Key.Key_Control)
             dialog.editor.clearFocus()
             QTest.keyRelease(field,Qt.Key.Key_Control)
-            self.assertEqual(dialog.value(),'ctrl+k')
+            self.assertEqual(field.text(), 'Ctrl+K')
 
     def test_modifier_conflict_edit_keeps_key_and_reports_in_log(self):
         w = self.window

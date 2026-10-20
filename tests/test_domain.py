@@ -70,15 +70,22 @@ class DomainTests(unittest.TestCase):
             self.assertEqual(Profile.read(read_json(path)), profile)
             self.assertEqual(len(list(Path(directory).iterdir())), 1)
 
-    def test_missing_old_and_unknown_profile_versions_are_rejected(self):
-        for version in (None, 1, 2, 4, '3', 3.0, True):
+    def test_missing_and_unknown_profile_formats_are_rejected(self):
+        for value in (None, 1, True, {}, [], 'v1', 'ba-macro-profile-v2'):
             data = Profile.default().export()
-            if version is None:
-                del data['version']
+            data['version'] = 3
+            if value is None:
+                del data['format']
             else:
-                data['version'] = version
-            with self.subTest(version=version), self.assertRaisesRegex(ValueError, 'version: 3'):
+                data['format'] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'ba-macro-profile-v1'):
                 Profile.read(data)
+
+    def test_profile_export_uses_format_without_version(self):
+        data = Profile.default().export()
+        self.assertEqual(data['format'], 'ba-macro-profile-v1')
+        self.assertNotIn('version', data)
+        self.assertEqual(Profile.read(data).export(), data)
 
     def test_legacy_row_formats_are_rejected(self):
         for mode in ('default', 'target_only', 'target_and_return_click'):
@@ -112,11 +119,11 @@ class DomainTests(unittest.TestCase):
                 Settings.read(data)
         for coords in ("x, y", "1, 2, 3", "100001, 0"):
             with self.subTest(coords=coords), self.assertRaises(ValueError):
-                Profile.read({"version": 3, "macros": [{"coords": coords, "action_mode": "move_only"}]})
+                Profile.read({"format": "ba-macro-profile-v1", "macros": [{"coords": coords, "action_mode": "move_only"}]})
 
     def test_unknown_mode_rejected(self):
         with self.assertRaises(ValueError):
-            Profile.read({"version": 3, "macros": [{"coords": "0, 0", "action_mode": "unknown"}]})
+            Profile.read({"format": "ba-macro-profile-v1", "macros": [{"coords": "0, 0", "action_mode": "unknown"}]})
 
     def test_removed_settings_names_are_rejected(self):
         for name in ('click_delay', 'click_duration', 'curve_duration', 'after_action_delay',

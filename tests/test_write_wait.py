@@ -41,21 +41,30 @@ class WriteWaitTests(unittest.TestCase):
         atomic_json(path, Profile.default().export())
         original = w.store._settings
         release = threading.Event()
+        writing = threading.Event()
         observations = []
         def slow(*args, **kwargs):
+            writing.set()
             if not release.wait(2):
                 raise OSError('GUI failed to release writer')
             return original(*args, **kwargs)
         def heartbeat():
+            if not writing.is_set():
+                return
+            timer.stop()
             observations.append((w._waiting_for_write, w.centralWidget().isEnabled(), w.eligible('pause')))
             w.close()
             observations.append(w.closing)
             release.set()
         with patch.object(w.store, '_settings', side_effect=slow):
-            QTimer.singleShot(30, heartbeat)
+            timer = QTimer()
+            timer.setInterval(10)
+            timer.timeout.connect(heartbeat)
+            timer.start()
             try:
                 self.assertTrue(w.switch_profile(path))
             finally:
+                timer.stop()
                 release.set()
         self.assertEqual(observations, [(True,False,False),False])
         self.assertEqual(w.path,path)

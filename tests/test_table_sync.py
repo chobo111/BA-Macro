@@ -167,6 +167,7 @@ class TableSyncTests(unittest.TestCase):
 
     def test_idle_edit_renders_pending_and_saved_states_without_skipping_stop(self):
         w = self.window
+        w.settings.auto_pause = True
         with patch.object(w, 'update_labels', wraps=w.update_labels) as labels, \
                 patch.object(w.engine, 'stop', wraps=w.engine.stop) as stop:
             w.live_memo_changed(0, 'new memo')

@@ -69,7 +69,8 @@ class ScriptEditor(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         toolbar = QHBoxLayout()
         self.templates = NoWheelCombo()
-        self.templates.addItems(['예제 선택', '좌표 → 마우스 슬라이드', '마우스 → 좌표 슬라이드', '좌표 → 좌표 슬라이드'])
+        self.templates.addItems(['예제 선택', '좌표 → 마우스 슬라이드', '마우스 → 좌표 슬라이드',
+                                 '좌표 → 좌표 슬라이드', '좌표→좌표 연속 클릭'])
         self.templates.activated.connect(self.insert_template)
         toolbar.addWidget(self.templates)
         toolbar.addStretch()
@@ -101,7 +102,7 @@ class ScriptEditor(QDialog):
         self.editor.coordinate_requested.connect(self.capture_editor_point)
         self.editor.setObjectName('codeEditor')
         self.editor.setLineWrapMode(ScriptTextEdit.LineWrapMode.NoWrap)
-        self.editor.setPlaceholderText('대상 앱 영역에서 우클릭하면 입력 위치에 좌표가 추가된다. 입력기와 겹친 영역에서도 사용할 수 있다.' if target else '좌표를 직접 입력할 수 있다. 우클릭으로 좌표를 가져오려면 앱을 선택한다.')
+        self.editor.setPlaceholderText('우클릭으로 현재 입력 위치에 좌표를 불러오기')
         self.highlighter = Highlighter(self.editor.document(), parent.theme_colors)
         body.addWidget(self.editor, 1)
         layout.addLayout(body, 1)
@@ -189,7 +190,11 @@ class ScriptEditor(QDialog):
 
     def update_capture_enabled(self):
         # Only the GUI thread reads Qt state. The hook reads an Event snapshot.
-        allowed = (self.isVisible() and bool(self.target) and not self.capture_blockers
+        parent = self.parentWidget()
+        busy = any(getattr(parent, flag, False) for flag in
+                   ('_profile_switching', '_waiting_for_write', 'closing'))
+        allowed = (self.isVisible() and self.isEnabled() and not busy
+                   and bool(self.target) and not self.capture_blockers
                    and not QApplication.activeModalWidget() and not QApplication.activePopupWidget())
         if allowed:
             self.capture_enabled.set()
@@ -197,9 +202,8 @@ class ScriptEditor(QDialog):
             self.capture_enabled.clear()
 
     def capture_screen_point(self, x, y):
-        if not self.isVisible() or QApplication.activeModalWidget() or QApplication.activePopupWidget():
-            return
-        if not self.target:
+        self.update_capture_enabled()
+        if not self.capture_enabled.is_set():
             return
         try:
             self.pick_coordinate(self.native.local_point(self.target, x, y))
@@ -270,7 +274,8 @@ class ScriptEditor(QDialog):
         examples = ['',
             'loop\ncurve_first_time 5\ncurve_last_time 5\ncurve X,Y mouse\nsleep 5\nloop_end',
             'loop\ncurve_first_time 5\ncurve_last_time 5\ncurve mouse X,Y\nsleep 5\nloop_end',
-            'loop\ncurve_first_time 5\ncurve_last_time 5\ncurve X,Y X,Y\nsleep 5\nloop_end']
+            'loop\ncurve_first_time 5\ncurve_last_time 5\ncurve X,Y X,Y\nsleep 5\nloop_end',
+            'loop\nclick mouse\nsleep 3\nclick X,Y\nloop_end']
         if 0 < index < len(examples):
             cursor = self.editor.textCursor()
             cursor.beginEditBlock()
@@ -310,6 +315,10 @@ class ScriptEditor(QDialog):
 
     def eventFilter(self, watched, event):
         kind = event.type()
+        if watched is self and kind == QEvent.Type.EnabledChange:
+            self.update_capture_enabled()
+            # Wait helpers restore widgets before clearing their busy flags.
+            QTimer.singleShot(0, self, self.update_capture_enabled)
         if isinstance(watched, QWidget):
             if ((kind == QEvent.Type.Show and watched.isWindow()
                  and (watched.windowModality() != Qt.WindowModality.NonModal

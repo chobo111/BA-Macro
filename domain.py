@@ -14,6 +14,7 @@ MODES = {
     "move_only": "커서 이동",
     "script": "스크립트",
 }
+PROFILE_FORMAT = 'ba-macro-profile-v1'
 
 
 class WindowSizeUnavailable(OSError):
@@ -111,8 +112,8 @@ class Profile:
     def read(cls, data):
         if not isinstance(data, dict) or not isinstance(data.get("macros"), list):
             raise ValueError("macros 목록이 있는 JSON 프로필이 필요합니다.")
-        if type(data.get("version")) is not int or data["version"] != 3:
-            raise ValueError("현재 프로필 형식(version: 3)만 지원합니다.")
+        if data.get('format') != PROFILE_FORMAT:
+            raise ValueError(f'현재 프로필 형식(format: {PROFILE_FORMAT})만 지원합니다.')
         if not 1 <= len(data["macros"]) <= 200:
             raise ValueError("프로필은 1~200행이어야 합니다.")
         rows = [Row.read(d) for d in data["macros"]]
@@ -138,7 +139,7 @@ class Profile:
         validate_hotkeys((*reserved, *(row.move_hk for row in self.rows)))
 
     def export(self):
-        return {"version": 3, "target_resolution": "%dx%d" % self.resolution if self.resolution else "알 수 없음",
+        return {"format": PROFILE_FORMAT, "target_resolution": "%dx%d" % self.resolution if self.resolution else "알 수 없음",
                 "target_program": target_identity(self.target_program),
                 "macros": [{"id": r.id, "move_hk": r.move_hk,
                             "coords": f"{r.x}, {r.y}", "memo": r.memo, "action_mode": r.action_mode,
@@ -153,9 +154,9 @@ class Settings:
     resize_convert_profile: bool = True
     drag_segment_duration_ms: int = 10
     exclusive_hook: bool = True
-    auto_pause: bool = True
+    auto_pause: bool = False
     auto_convert_on_start: bool = False
-    theme: str = "Dark"
+    theme: str = "System"
     last_profile: str = ""
 
     @classmethod
@@ -180,7 +181,7 @@ class Settings:
             if not isinstance(value, bool):
                 raise ValueError(f"{name}: 참/거짓 값이 필요합니다.")
             setattr(obj, name, value)
-        obj.theme = data.get("theme", "Dark")
+        obj.theme = data.get("theme", obj.theme)
         if obj.theme not in ("Dark", "Light", "System"):
             raise ValueError("테마 값이 올바르지 않습니다.")
         obj.last_profile = str(data.get("last_profile", ""))

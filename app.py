@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QSystemTrayIcon, QMenu, QSizePolicy, QFrame, QGridLayout, QToolButton,
 )
 
-from domain import MODES, Profile, Row, read_json, same_program, WindowSizeUnavailable
+from domain import MODES, Profile, Row, same_program, WindowSizeUnavailable
 from engine import Engine
 from error_log import ErrorLog, ErrorLogDialog
 from native import Windows
@@ -31,8 +31,9 @@ from script_editor import ScriptEditor
 from persistence import ProfileStore
 from profile_saves import ProfileSaves
 from profile_dialogs import RenameProfileDialog, ProfileInfoDialog
-from profile_catalog import ProfileCatalog, profile_entries
-from profile_wait import wait_for_saves, wait_for_write
+from profile_catalog import ProfileCatalogJobs
+from profile_wait import wait_for_saves, wait_for_write, wait_for_profile_read
+from profile_reads import ProfileReadWorker, read_profile
 from conversion_dialog import ConversionDialog, BaselineResolutionDialog
 from version import APP_NAME, VERSION, REPOSITORY_URL
 from theme import DARK, LIGHT, palette, stylesheet
@@ -81,7 +82,12 @@ class MainWindow(QMainWindow):
         self.store = ProfileStore(self.data_dir)
         self.settings_path = self.store.settings_path
         self.profile_saves = ProfileSaves()
-        self.profile_catalog = ProfileCatalog()
+        self.profile_catalog = ProfileCatalogJobs()
+        self.profile_reader = ProfileReadWorker('profile-read')
+        self._profile_listing = None
+        self._profile_poll = QTimer(self)
+        self._profile_poll.setInterval(30)
+        self._profile_poll.timeout.connect(self.finish_profile_listing)
         self.settings_error = ""
         self.hook_enabled = hook_enabled
         loaded = self.store.load()
@@ -290,6 +296,13 @@ class MainWindow(QMainWindow):
         if self.closing:
             return
         table = self.table
+        metrics = table.fontMetrics()
+        memo_width = max(table.MEMO_MIN_WIDTH,
+                         max((metrics.horizontalAdvance(row.memo) + 24
+                              for row in self.profile.rows), default=0))
+        memo_width = min(memo_width, table.horizontalHeader().maximumSectionSize())
+        if table.columnWidth(4) != memo_width:
+            table.setColumnWidth(4, memo_width)
         margins = self.centralWidget().layout().contentsMargins()
         content_width = (sum(table.columnWidth(column) for column in range(table.columnCount()))
                          + table.verticalHeader().width() + table.frameWidth() * 2)
@@ -426,6 +439,7 @@ class MainWindow(QMainWindow):
                     self.sync_row(i, row)
         finally:
             self.rebuilding = False
+        self.queue_fit_content_width()
         if self.profile.rows:
             index = next((i for i, r in enumerate(self.profile.rows) if r.id == selected), 0)
             # Moving focus to an existing cell widget can alter selection.
@@ -511,6 +525,8 @@ class MainWindow(QMainWindow):
         if row and getattr(row, field) != value:
             setattr(row, field, value)
             self.changed()
+            if field == 'memo':
+                self.queue_fit_content_width()
             if field == 'action_mode':
                 QTimer.singleShot(0, lambda: self.rebuild(rid))
 
@@ -1015,6 +1031,15 @@ class MainWindow(QMainWindow):
             return
         try:
             with managed_dialog(KeyDialog(row.move_hk, self)) as dialog:
+                def validate_shortcut(value):
+                    others = (self.settings.capture_hk, self.settings.pause_hk,
+                              *(r.move_hk for r in self.profile.rows if r.id != rid))
+                    # Check only the edited key so existing unrelated conflicts
+                    # can still be repaired one row at a time.
+                    Hotkeys.validate((value,))
+                    for other in others:
+                        Hotkeys.validate((value, other))
+                dialog.validate_shortcut = validate_shortcut
                 if dialog.exec() == QDialog.DialogCode.Accepted:
                     value = dialog.value()
                     repairing = False
@@ -1169,9 +1194,28 @@ class MainWindow(QMainWindow):
         self.rebuild(row.id)
 
     def refresh_profiles(self):
+        if self.closing:
+            return
         directory = self.path.parent if self.path is not None else self.data_dir
+        self.profile_menu.clear()
+        self.profile_menu.addAction('이 폴더').setEnabled(False)
+        self.profile_menu.addAction('불러오는 중…').setEnabled(False)
+        self._profile_listing = (directory, self.profile_catalog.submit(directory))
+        self._profile_poll.start()
+
+    def finish_profile_listing(self):
+        if self.closing or self._profile_listing is None:
+            return
+        directory, future = self._profile_listing
+        if not future.done():
+            return
+        self._profile_listing = None
+        self._profile_poll.stop()
+        current_directory = self.path.parent if self.path is not None else self.data_dir
+        if directory != current_directory:
+            return
         try:
-            entries = profile_entries(directory, cache=self.profile_catalog)
+            entries = future.result()
             menu = self.profile_menu
             menu.clear()
             menu.addAction('이 폴더').setEnabled(False)
@@ -1184,7 +1228,10 @@ class MainWindow(QMainWindow):
             if not entries:
                 menu.addAction('프로필 없음').setEnabled(False)
             self.update_profile_checks()
-        except OSError as error:
+        except Exception as error:
+            self.profile_menu.clear()
+            self.profile_menu.addAction('이 폴더').setEnabled(False)
+            self.profile_menu.addAction('목록을 불러오지 못했습니다').setEnabled(False)
             self.statusBar().show_error(f'프로필 목록을 불러오지 못했습니다: {error}')
 
     def update_profile_checks(self):
@@ -1290,19 +1337,30 @@ class MainWindow(QMainWindow):
             self.update_labels()
 
     def switch_profile(self, path):
-        path = Path(path).resolve()
-        if self.path is not None and path == self.path.resolve():
+        path = Path(path)
+        if self.path is not None and path == self.path:
             self.update_profile_checks()
             return True
         def change():
             # Reject invalid destinations before asking to discard an editor draft.
-            self.validate_profile_shortcuts(Profile.read(read_json(path)))
+            loaded = wait_for_profile_read(self.profile_reader.submit(read_profile, path), self)
+            if loaded is None:
+                return False
+            resolved_path, candidate = loaded
+            # Layout-dependent shortcut matching stays on the GUI thread.
+            self.validate_profile_shortcuts(candidate)
+            if resolved_path == self.path:
+                return True
             if not self.prepare_profile_change():
                 return False
-            profile = Profile.read(read_json(path))
+            # The file may have changed while the user decided about their draft.
+            loaded = wait_for_profile_read(self.profile_reader.submit(read_profile, resolved_path), self)
+            if loaded is None:
+                return False
+            resolved_path, profile = loaded
             self.validate_profile_shortcuts(profile)
             self.finish_script_editor()
-            self.profile, self.path, self.dirty = profile, path, False
+            self.profile, self.path, self.dirty = profile, resolved_path, False
             self._profile_save_failed = False
             self.target = None
             self.refresh_windows(restore_saved=True)
@@ -1641,7 +1699,7 @@ class MainWindow(QMainWindow):
                     if dialog.refresh_notice:
                         self.record_error('창 크기', dialog.refresh_notice)
                     self.statusBar().showMessage(message + (' · ' + dialog.refresh_notice if dialog.refresh_notice else ''))
-                    if convert:
+                    if convert and tuple(dialog.current_size) != self.profile.resolution:
                         self.convert_dialog(reason="창 크기가 바뀌었습니다. 저장 좌표도 새 해상도에 맞출 수 있습니다.")
         except Exception as error:
             self.error(str(error))
@@ -1763,6 +1821,10 @@ class MainWindow(QMainWindow):
         self.finish_script_editor()
         self.timer.stop()
         self._fit_timer.stop()
+        self._profile_poll.stop()
+        self._profile_listing = None
+        self.profile_catalog.close()
+        self.profile_reader.close()
         self.stop()
         self.hooks.close()
         self.engine.shutdown()

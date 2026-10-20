@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 
 from theme import LIGHT
 from domain import Settings
-from shortcuts import hotkey, qt_hotkey, SHORTCUT_GUIDE, ShortcutError
+from shortcuts import row_hotkey, qt_hotkey, SHORTCUT_GUIDE, ROW_SHORTCUT_GUIDE, ShortcutError
 from row_drag import AnimatedRowsTable
 
 
@@ -264,7 +264,7 @@ class RowsTable(AnimatedRowsTable):
         self.verticalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         self.verticalHeader().setMinimumWidth(28)
         self.setShowGrid(False)
-        self.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        self.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         delegate = MemoDelegate(self)
         delegate.closeEditor.connect(lambda *_: QTimer.singleShot(0, self, self.update_memo_tooltips))
         self.setItemDelegateForColumn(4, delegate)
@@ -286,7 +286,7 @@ class RowsTable(AnimatedRowsTable):
                     self.viewport().mapFromGlobal(control.mapToGlobal(point))))
 
     def update_memo_tooltips(self):
-        # Long notes stay within the existing window; show full text on hover.
+        # Preserve the full text on hover when the sheet exceeds the screen.
         with QSignalBlocker(self):
             for index in range(self.rowCount()):
                 item = self.item(index, 4)
@@ -398,18 +398,27 @@ class KeyDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("단축키 지정")
         self.setFixedWidth(280)
+        self.validate_shortcut = None
         layout = QVBoxLayout(self)
         self.editor = ClickToCaptureEdit(QKeySequence(qt_hotkey(value), QKeySequence.SequenceFormat.PortableText), self)
         line_edit = self.editor.findChild(QLineEdit)
         if line_edit is not None:
             line_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.editor)
-        guide = QLabel(SHORTCUT_GUIDE)
+        guide = QLabel(ROW_SHORTCUT_GUIDE)
         guide.setWordWrap(True)
         layout.addWidget(guide)
         clear = QPushButton("지정 해제")
         clear.clicked.connect(self.editor.clear)
         layout.addWidget(clear)
+        self.validation = QLabel()
+        self.validation.setObjectName('scriptLog')
+        self.validation.setProperty('error', True)
+        self.validation.setTextFormat(Qt.TextFormat.PlainText)
+        self.validation.setWordWrap(True)
+        self.validation.hide()
+        layout.addWidget(self.validation)
+        self.editor.keySequenceChanged.connect(self.validation.hide)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText('확인')
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('취소')
@@ -419,7 +428,18 @@ class KeyDialog(QDialog):
         self.editor.setFocus()
 
     def value(self):
-        return hotkey(self.editor.keySequence().toString(QKeySequence.SequenceFormat.PortableText))
+        return row_hotkey(self.editor.keySequence().toString(QKeySequence.SequenceFormat.PortableText))
+
+    def accept(self):
+        try:
+            value = self.value()
+            if self.validate_shortcut is not None:
+                self.validate_shortcut(value)
+        except ValueError as error:
+            self.validation.setText(str(error))
+            self.validation.show()
+            return
+        super().accept()
 
 
 class SettingsDialog(QDialog):

@@ -2,6 +2,7 @@
 MODIFIERS = ('ctrl', 'alt', 'shift', 'win')
 COMBINATION_MODIFIERS = ('ctrl', 'alt', 'shift')
 SHORTCUT_GUIDE = 'Ctrl, Alt, Shift + 키만 가능합니다.'
+ROW_SHORTCUT_GUIDE = '조합키는 Alt, Shift + 키만 가능합니다.'
 
 
 class ShortcutError(ValueError):
@@ -50,6 +51,13 @@ def qt_hotkey(value: str) -> str:
     if canonical == 'ctrl':
         return 'Control'
     return '+'.join(QT_NAMES.get(part, part) for part in canonical.split('+'))
+
+
+def row_hotkey(value: str) -> str:
+    key = hotkey(value)
+    if 'ctrl' in key.split('+')[:-1]:
+        raise ShortcutError('행 단축키에는 Ctrl 조합을 지정할 수 없습니다.')
+    return key
 
 
 def validate_hotkeys(values):

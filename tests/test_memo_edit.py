@@ -65,6 +65,31 @@ class MemoEditingTests(unittest.TestCase):
         if table:
             self.assertEqual(w.table.item(0, 4).text(), text)
 
+    def test_sheet_tracks_live_memo_edits_and_escape_restores_width(self):
+        w = self.open_profile('')
+        initial = w.table.columnWidth(4)
+        editor = self.edit()
+        self.paste(editor, '메모를 입력하는 동안 시트가 늘어난다')
+        self.qt.processEvents()
+        self.assertGreater(w.table.columnWidth(4), initial)
+        self.assertTrue(editor.hasFocus())
+        self.assert_saved('메모를 입력하는 동안 시트가 늘어난다')
+        QTest.keyClick(editor, Qt.Key.Key_Escape)
+        self.qt.processEvents()
+        self.assertEqual(w.table.columnWidth(4), initial)
+        self.assert_saved('', table=True)
+
+    def test_sheet_uses_longest_memo_and_recalculates_after_row_removal(self):
+        w = self.open_profile('짧음')
+        w.profile.rows[1].memo = '가장 긴 메모에 맞춰 너비를 정한다'
+        w.rebuild()
+        self.qt.processEvents()
+        wide = w.table.columnWidth(4)
+        w.profile.rows.pop(1)
+        w.rebuild()
+        self.qt.processEvents()
+        self.assertLess(w.table.columnWidth(4), wide)
+
     def test_open_and_close_long_note_never_save_or_truncate(self):
         original = '가' * 32767 + '😀원문끝'
         w = self.open_profile(original)

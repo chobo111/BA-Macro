@@ -61,3 +61,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install pyinstaller
 .\.venv\Scripts\python.exe -m PyInstaller BlueArchiveStudio.spec
 ```
+
+단일 EXE는 PowerShell에서 `$env:BA_MACRO_ONEFILE = '1'`을 설정한 뒤 같은 빌드 명령을 실행합니다. 빌드가 끝나면 `Remove-Item Env:BA_MACRO_ONEFILE`로 해제합니다.
+
+두 방식 모두 EXE 파일·제품 버전은 `version.py`에서 자동으로 가져옵니다.

@@ -29,7 +29,7 @@ def help_html():
     commands = ''.join(f'<tr><td><code>{escape(syntax)}</code></td><td>{escape(description)}</td></tr>'
                        for syntax, description in COMMAND_HELP)
     return """<h2>입력창 안내</h2>
-<p>대상 앱 영역에서 우클릭하면 입력 위치에 좌표가 추가된다. 입력기와 겹친 영역에서도 사용할 수 있다.</p>
+<p>우클릭으로 현재 입력 위치에 좌표를 불러오기</p>
 <h2>작성 방법</h2>
 <ul>
 <li>한 줄에 명령 하나를 작성한다.</li>

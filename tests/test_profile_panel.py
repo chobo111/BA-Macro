@@ -45,6 +45,112 @@ class ProfileMenuTests(unittest.TestCase):
         self.patches.close()
         self.folder.cleanup()
 
+    def wait_for_profiles(self):
+        for _ in range(400):
+            self.qt.processEvents()
+            self.w.finish_profile_listing()
+            if self.w._profile_listing is None:
+                return
+            QTest.qWait(5)
+        self.fail('Profile scan did not finish')
+
+    def test_slow_profile_scan_keeps_gui_responsive(self):
+        import profile_catalog
+        started, release = threading.Event(), threading.Event()
+        read = profile_catalog.read_json
+        observations = []
+        def slow(path):
+            started.set()
+            if not release.wait(2):
+                raise TimeoutError('GUI did not release the scan')
+            return read(path)
+        def heartbeat():
+            observations.append(self.w._profile_listing is not None)
+            release.set()
+        with patch('profile_catalog.read_json', side_effect=slow):
+            try:
+                self.w.refresh_profiles()
+                self.assertTrue(started.wait(1))
+                self.assertEqual([a.text() for a in self.w.profile_menu.actions()],
+                                 ['이 폴더', '불러오는 중…'])
+                QTimer.singleShot(20, heartbeat)
+                self.wait_for_profiles()
+            finally:
+                release.set()
+        self.assertEqual(observations, [True])
+        self.assertTrue(any(a.data() == str(self.w.path) for a in self.w.profile_menu.actions()))
+
+    def test_new_scan_ignores_old_folder_results(self):
+        import profile_catalog
+        from concurrent.futures import CancelledError
+        started, release = threading.Event(), threading.Event()
+        read = profile_catalog.read_json
+        def slow(path):
+            if path == self.directory / 'macro.json':
+                started.set()
+                release.wait(2)
+            return read(path)
+        with tempfile.TemporaryDirectory() as other, patch('profile_catalog.read_json', side_effect=slow):
+            new_path = Path(other) / 'new.json'
+            atomic_json(new_path, Profile.default().export())
+            try:
+                self.w.refresh_profiles()
+                self.assertTrue(started.wait(1))
+                old_future = self.w._profile_listing[1]
+                self.w.path = new_path
+                self.w.refresh_profiles()
+                release.set()
+                self.wait_for_profiles()
+                with self.assertRaises(CancelledError):
+                    old_future.result(timeout=2)
+                self.assertEqual([a.data() for a in self.w.profile_menu.actions() if a.data()], [str(new_path)])
+            finally:
+                release.set()
+                self.w.path = self.directory / 'macro.json'
+
+    def test_completed_scan_is_discarded_after_folder_change(self):
+        self.w.refresh_profiles()
+        future = self.w._profile_listing[1]
+        future.result(timeout=2)
+        self.w.path = self.directory / 'elsewhere' / 'other.json'
+        self.w.finish_profile_listing()
+        self.assertFalse(any(a.data() for a in self.w.profile_menu.actions()))
+        self.assertFalse(self.w._profile_poll.isActive())
+        self.w.path = self.directory / 'macro.json'
+
+    def test_scan_error_replaces_loading_message(self):
+        with patch('profile_catalog.profile_entries', side_effect=OSError('offline')):
+            self.w.refresh_profiles()
+            self.wait_for_profiles()
+        self.assertEqual([a.text() for a in self.w.profile_menu.actions()],
+                         ['이 폴더', '목록을 불러오지 못했습니다'])
+        self.assertIn('offline', self.w.statusBar().currentMessage())
+
+    def test_shutdown_does_not_wait_for_scan_or_apply_late_result(self):
+        from concurrent.futures import CancelledError
+        started, release = threading.Event(), threading.Event()
+        def slow(path):
+            started.set()
+            release.wait(2)
+            return {'macros': []}
+        with patch('profile_catalog.read_json', side_effect=slow):
+            try:
+                self.w.refresh_profiles()
+                self.assertTrue(started.wait(1))
+                future = self.w._profile_listing[1]
+                self.w.shutdown()
+                self.assertFalse(release.is_set())
+                self.assertFalse(future.done())
+                self.assertIsNone(self.w._profile_listing)
+                self.assertFalse(self.w._profile_poll.isActive())
+                release.set()
+                with self.assertRaises(CancelledError):
+                    future.result(timeout=2)
+                self.qt.processEvents()
+                self.assertFalse(any(a.data() for a in self.w.profile_menu.actions()))
+            finally:
+                release.set()
+
     def other(self, name='other.json'):
         path = self.directory / name
         profile = Profile.default()
@@ -70,9 +176,11 @@ class ProfileMenuTests(unittest.TestCase):
     def test_menu_refreshes_on_open_and_marks_current_profile(self):
         w = self.w
         w.refresh_profiles()
+        self.wait_for_profiles()
         other = self.other()
         self.assertFalse(any(a.data() == str(other) for a in w.profile_menu.actions()))
         w.profile_menu.aboutToShow.emit()
+        self.wait_for_profiles()
         current = next(a for a in w.profile_menu.actions() if a.data() == str(w.path))
         destination = next(a for a in w.profile_menu.actions() if a.data() == str(other))
         self.assertTrue(current.isChecked())
@@ -149,6 +257,7 @@ class ProfileMenuTests(unittest.TestCase):
         self.assertTrue(w.dirty)
         self.assertFalse(w.armed)
         w.refresh_profiles()
+        self.wait_for_profiles()
         self.assertEqual([a.data() for a in w.profile_menu.actions() if a.isChecked()], [str(old_path)])
         self.assertIn('disk full', w.statusBar().currentMessage())
 
@@ -286,6 +395,7 @@ class ProfileMenuTests(unittest.TestCase):
             atomic_json(other, Profile.default().export())
             self.assertTrue(w.switch_profile(other))
             w.refresh_profiles()
+            self.wait_for_profiles()
             actions = w.profile_menu.actions()
             self.assertEqual(actions[0].text(), '이 폴더')
             self.assertFalse(actions[0].isSeparator())
@@ -299,6 +409,7 @@ class ProfileMenuTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as empty:
             self.w.path = Path(empty) / 'unsaved.json'
             self.w.refresh_profiles()
+            self.wait_for_profiles()
             actions = self.w.profile_menu.actions()
             self.assertEqual([a.text() for a in actions], ['이 폴더', '프로필 없음'])
             self.assertFalse(actions[0].isSeparator())
@@ -391,6 +502,7 @@ class ProfileMenuTests(unittest.TestCase):
         w = self.w
         old, other = w.path, self.other()
         w.refresh_profiles()
+        self.wait_for_profiles()
         destination = next(a for a in w.profile_menu.actions() if a.data() == str(other))
         with patch.object(w, 'prepare_profile_change', return_value=False):
             destination.trigger()
@@ -406,6 +518,7 @@ class ProfileMenuTests(unittest.TestCase):
         w = self.w
         other = self.other()
         w.refresh_profiles()
+        self.wait_for_profiles()
         destination = next(a for a in w.profile_menu.actions() if a.data() == str(other))
         destination.setChecked(True)
         original = Path.resolve
@@ -422,10 +535,13 @@ class ProfileMenuTests(unittest.TestCase):
         other = self.other()
         with patch('profile_catalog.read_json', wraps=profile_catalog.read_json) as reads:
             self.w.refresh_profiles()
+            self.wait_for_profiles()
             count = reads.call_count
             self.w.refresh_profiles()
+            self.wait_for_profiles()
             self.assertEqual(reads.call_count, count)
             other.write_text('{"other": true}', encoding='utf-8')
             self.w.refresh_profiles()
+            self.wait_for_profiles()
             self.assertEqual(reads.call_count, count + 1)
         self.assertFalse(any(a.data() == str(other) for a in self.w.profile_menu.actions()))

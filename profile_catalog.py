@@ -1,8 +1,11 @@
 """On-demand profile discovery in the current folder."""
 from collections import OrderedDict
+from concurrent.futures import CancelledError
 from pathlib import Path
 from stat import S_ISREG
-from domain import read_json
+from threading import Event
+from domain import PROFILE_FORMAT, read_json
+from profile_reads import ProfileReadWorker
 
 
 class ProfileCatalog:
@@ -30,7 +33,8 @@ class ProfileCatalog:
             self._entries.pop(path, None)
             try:
                 data = read_json(path)
-                valid = isinstance(data, dict) and isinstance(data.get('macros'), list)
+                valid = (isinstance(data, dict) and data.get('format') == PROFILE_FORMAT
+                         and isinstance(data.get('macros'), list))
             except (ValueError, RecursionError):
                 valid = False
             # Do not cache a read that raced another app's file write/replacement.
@@ -44,7 +48,7 @@ class ProfileCatalog:
             self._entries.pop(path, None)
             return False
 
-    def filter_profiles(self, paths):
+    def filter_profiles(self, paths, *, cancelled=None):
         """Check cached files before misses can evict them during a folder scan."""
         present = set(paths)
         for path in list(self._entries):
@@ -52,13 +56,24 @@ class ProfileCatalog:
                 del self._entries[path]
         cached = [path for path in paths if path in self._entries]
         uncached = [path for path in paths if path not in self._entries]
-        valid = {path for path in cached + uncached if self.is_profile(path)}
+        valid = set()
+        for path in cached + uncached:
+            check_cancelled(cancelled)
+            if self.is_profile(path):
+                valid.add(path)
+        check_cancelled(cancelled)
         return [path for path in paths if path in valid]
 
 
-def profile_entries(directory, *, cache=None):
+def check_cancelled(cancelled):
+    if cancelled is not None and cancelled():
+        raise CancelledError()
+
+
+def profile_entries(directory, *, cache=None, cancelled=None):
     """Refresh file metadata on demand, parsing only changed/uncached files."""
     cache = cache if cache is not None else ProfileCatalog()
+    check_cancelled(cancelled)
     result, seen = [], set()
     def add(path):
         try:
@@ -70,5 +85,37 @@ def profile_entries(directory, *, cache=None):
         seen.add(path)
         result.append(path)
     for path in sorted(Path(directory).glob('*.json'), key=lambda path: path.name.casefold()):
+        check_cancelled(cancelled)
         add(path)
-    return cache.filter_profiles(result)
+    return cache.filter_profiles(result, cancelled=cancelled)
+
+
+class ProfileCatalogJobs:
+    """One worker owns the cache; only the latest menu request is observed."""
+    def __init__(self):
+        self.cache = ProfileCatalog()
+        self.worker = ProfileReadWorker('profile-catalog')
+        self.future = None
+        self.cancelled = Event()
+        self.closed = False
+
+    def cancel(self):
+        self.cancelled.set()
+        if self.future is not None:
+            self.future.cancel()
+            self.future = None
+
+    def submit(self, directory):
+        if self.closed:
+            raise RuntimeError('Profile catalog is closed')
+        self.cancel()
+        self.cancelled = Event()
+        self.future = self.worker.submit(profile_entries, Path(directory), cache=self.cache,
+                                           cancelled=self.cancelled.is_set)
+        return self.future
+
+    def close(self):
+        if not self.closed:
+            self.closed = True
+            self.cancel()
+            self.worker.close()

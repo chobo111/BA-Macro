@@ -721,6 +721,7 @@ class StartChecks(unittest.TestCase):
 
     def test_script_capture_uses_original_basis_after_automatic_conversion_and_pause(self):
         w = self.window
+        w.settings.auto_pause = True
         w.show()
         self.qt.processEvents()
         w.settings.auto_convert_on_start = True
@@ -918,6 +919,7 @@ class StartChecks(unittest.TestCase):
 
     def test_row_capture_reverse_scales_during_automatic_run_and_after_pause(self):
         w = self.window
+        w.settings.auto_pause = True
         w.settings.auto_convert_on_start = True
         self.size.return_value = (1920,1080)
         untouched = w.profile.rows[2]

@@ -17,13 +17,22 @@ class ProfileCatalogTests(unittest.TestCase):
     def tearDown(self):
         self.folder.cleanup()
 
-    def write(self, name, content='{"macros": []}'):
+    def write(self, name, content='{"format": "ba-macro-profile-v1", "macros": []}'):
         path = self.directory / name
         path.write_text(content, encoding='utf-8')
         return path
 
     def entries(self):
         return profile_entries(self.directory, cache=self.cache)
+
+    def test_only_exact_profile_format_is_listed(self):
+        import json
+        valid = self.write('valid.json')
+        self.write('legacy.json', '{"version": 3, "macros": []}')
+        self.write('missing.json', '{"macros": []}')
+        for i, value in enumerate(('v1', 'ba-macro-profile-v2', None, 1, [], {})):
+            self.write(f'invalid_{i}.json', json.dumps({'format': value, 'macros': []}))
+        self.assertEqual(self.entries(), [valid])
 
     def test_unchanged_valid_invalid_and_unrelated_files_are_read_only_once(self):
         valid = self.write('a.json')
@@ -49,7 +58,7 @@ class ProfileCatalogTests(unittest.TestCase):
             for _ in range(3):
                 self.assertEqual(self.entries(), [valid])
             self.assertEqual(reads.call_count, 2)
-            nested.write_text('{"macros": []}', encoding='utf-8')
+            nested.write_text('{"format": "ba-macro-profile-v1", "macros": []}', encoding='utf-8')
             self.assertEqual(self.entries(), [valid, nested])
             self.assertEqual(reads.call_count, 3)
 
@@ -57,7 +66,7 @@ class ProfileCatalogTests(unittest.TestCase):
         first = self.write('a.json')
         broken = self.write('b.json', '{broken')
         self.assertEqual(self.entries(), [first])
-        broken.write_text('{"macros": []}', encoding='utf-8')
+        broken.write_text('{"format": "ba-macro-profile-v1", "macros": []}', encoding='utf-8')
         added = self.write('c.json')
         self.assertEqual(self.entries(), [first, broken, added])
         renamed = added.with_name('d.json')
@@ -66,18 +75,18 @@ class ProfileCatalogTests(unittest.TestCase):
         self.assertEqual(self.entries(), [broken, renamed])
 
     def test_same_size_edit_invalidates_by_timestamp(self):
-        path = self.write('a.json', '{"macros": []}')
+        path = self.write('a.json', '{"format": "ba-macro-profile-v1", "macros": []}')
         self.assertEqual(self.entries(), [path])
         info = path.stat()
-        path.write_text('{"macros": {}}', encoding='utf-8')
+        path.write_text('{"format": "ba-macro-profile-v1", "macros": {}}', encoding='utf-8')
         os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns + 1000000000))
         self.assertEqual(self.entries(), [])
 
     def test_atomic_replacement_with_same_size_and_mtime_invalidates(self):
-        path = self.write('a.json', '{"macros": []}')
+        path = self.write('a.json', '{"format": "ba-macro-profile-v1", "macros": []}')
         self.assertEqual(self.entries(), [path])
         info = path.stat()
-        replacement = self.write('replacement.tmp', '{"macros": {}}')
+        replacement = self.write('replacement.tmp', '{"format": "ba-macro-profile-v1", "macros": {}}')
         os.utime(replacement, ns=(info.st_atime_ns, info.st_mtime_ns))
         os.replace(replacement, path)
         self.assertEqual(self.entries(), [])
@@ -102,7 +111,7 @@ class ProfileCatalogTests(unittest.TestCase):
     def test_cache_is_bounded_and_does_not_retain_profile_contents(self):
         self.cache = ProfileCatalog(max_entries=2)
         for name in ('a.json', 'b.json', 'c.json'):
-            self.write(name, '{"macros": [], "script": "large source"}')
+            self.write(name, '{"format": "ba-macro-profile-v1", "macros": [], "script": "large source"}')
         self.assertEqual(len(self.entries()), 3)
         self.assertEqual(len(self.cache._entries), 2)
         for signature, valid in self.cache._entries.values():

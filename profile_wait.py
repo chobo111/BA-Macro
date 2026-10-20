@@ -4,10 +4,12 @@ from PySide6.QtWidgets import QApplication, QProgressDialog
 from widgets import managed_dialog
 
 
-def wait_for_saves(futures, parent):
+def wait_for_saves(futures, parent, *, message='프로필을 저장하고 있습니다…'):
+    if parent.closing:
+        return False
     if all(future.done() for future in futures):
         return True
-    with managed_dialog(QProgressDialog('프로필을 저장하고 있습니다…', '취소', 0, 0, parent)) as dialog:
+    with managed_dialog(QProgressDialog(message, '취소', 0, 0, parent)) as dialog:
         dialog.setWindowTitle('프로필 전환')
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
         dialog.setAutoClose(False)
@@ -41,6 +43,13 @@ def wait_for_saves(futures, parent):
             dialog.hide()
             for widget, was_enabled in enabled:
                 widget.setEnabled(was_enabled)
+
+
+def wait_for_profile_read(future, parent):
+    if not wait_for_saves([future], parent, message='프로필을 불러오고 있습니다…'):
+        future.cancel()
+        return None
+    return future.result()
 
 
 class _WriteProgress(QProgressDialog):
