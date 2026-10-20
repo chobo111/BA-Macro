@@ -278,15 +278,32 @@ class UiTests(unittest.TestCase):
         self.assertNotIn('도움말', items)
         self.assertNotIn('변경 기록', items)
         def check_about(dialog):
-            from PySide6.QtWidgets import QLabel
+            from PySide6.QtWidgets import QLabel, QToolButton
+            from version import REPOSITORY_URL
             self.assertEqual(dialog.windowTitle(), '앱 정보')
-            self.assertIn(VERSION, dialog.text())
-            self.assertIn('href="https://github.com/chobo111/BA-Macro"', dialog.text())
-            self.assertEqual(dialog.textFormat(), Qt.TextFormat.RichText)
-            self.assertTrue(any(label.openExternalLinks() and 'href=' in label.text()
-                                for label in dialog.findChildren(QLabel)))
-            return QMessageBox.StandardButton.Close
-        with patch.object(QMessageBox, 'exec', check_about):
+            self.assertTrue(any(VERSION in label.text() for label in dialog.findChildren(QLabel)))
+            github = dialog.findChild(QToolButton, 'githubLink')
+            self.assertIsNotNone(github)
+            self.assertFalse(github.icon().isNull())
+            self.assertEqual(github.text(), '')
+            hints = QApplication.styleHints()
+            original_theme = w.settings.theme
+            images = []
+            try:
+                w.settings.theme = 'System'
+                for scheme in (Qt.ColorScheme.Dark, Qt.ColorScheme.Light):
+                    with patch.object(type(hints), 'colorScheme', return_value=scheme):
+                        hints.colorSchemeChanged.emit(scheme)
+                    images.append(github.icon().pixmap(28, 28).toImage())
+                self.assertNotEqual(images[0], images[1])
+            finally:
+                w.settings.theme = original_theme
+                w.apply_theme()
+            with patch('app.QDesktopServices.openUrl') as open_url:
+                github.click()
+                self.assertEqual(open_url.call_args.args[0].toString(), REPOSITORY_URL)
+            return QDialog.DialogCode.Rejected
+        with patch.object(QDialog, 'exec', check_about):
             w.about_dialog()
         editor = ScriptEditor('', w.native, 0, w)
         editor.show()
@@ -418,8 +435,13 @@ class UiTests(unittest.TestCase):
                 dialog.editor.setKeySequence(QKeySequence(key))
                 dialog.accept()
                 self.assertTrue(dialog.isVisible())
-                self.assertIn('Ctrl 조합', dialog.validation.text())
+                self.assertIn('Shift와 Alt 조합키만 사용할 수 있습니다.', dialog.validation.text())
                 self.assertEqual(row.move_hk, 'q')
+            dialog.editor.setKeySequence(QKeySequence('Meta+K'))
+            dialog.accept()
+            self.assertTrue(dialog.isVisible())
+            self.assertIn('Win 조합은 지원하지 않습니다.', dialog.validation.text())
+            self.assertNotIn('Ctrl', dialog.validation.text())
             dialog.reject()
             return dialog.result()
         with patch.object(KeyDialog, 'exec', new=reject_ctrl), \
@@ -730,7 +752,7 @@ class UiTests(unittest.TestCase):
             self.qt.processEvents()
             self.assertFalse(w.grab().isNull())
         dialog = SettingsDialog(w.settings, w)
-        self.assertEqual(dialog.value().click_hold_ms, 50)
+        self.assertEqual(dialog.value().click_hold_ms, 10)
         self.assertEqual(dialog.value().drag_segment_duration_ms, 10)
         self.assertTrue(dialog.value().exclusive_hook)
         dialog.times['drag_segment_duration_ms'].setValue(25)
@@ -804,9 +826,20 @@ class UiTests(unittest.TestCase):
         self.assertGreater(w.table.columnWidth(4), base)
         self.assertGreater(w.table.width(), table_width)
         self.assertEqual(w.table.item(0, 4).toolTip(), text)
+        self.assertEqual(w.target_box.width(), w.table.width())
+        self.assertEqual(w.toolbar_panel.width(), w.table.width())
         w.table.item(0, 4).setText("")
         self.qt.processEvents()
         self.assertEqual(w.table.columnWidth(4), base)
+        self.assertEqual(w.target_box.width(), w.table.width())
+        self.assertEqual(w.toolbar_panel.width(), w.table.width())
+        w.resize(320, 260)
+        self.qt.processEvents()
+        self.assertLess(w.width(), 400)
+        self.assertLess(w.height(), 340)
+        self.assertLess(w.table.width(), table_width)
+        self.assertEqual(w.target_box.width(), w.table.width())
+        self.assertEqual(w.toolbar_panel.width(), w.table.width())
         handle = int(w.winId())
         with patch.object(w.native, "topmost") as topmost, patch.object(w, "show") as show:
             QTest.mouseClick(w.pin_button, Qt.MouseButton.LeftButton)
@@ -1920,11 +1953,11 @@ class UiTests(unittest.TestCase):
                 self.qt.processEvents()
                 QTest.keyClick(dialog.editor, key, modifiers)
                 if 'ctrl+' in expected:
-                    with self.assertRaisesRegex(ValueError, 'Ctrl 조합'):
+                    with self.assertRaisesRegex(ValueError, 'Shift와 Alt 조합키만 사용할 수 있습니다.'):
                         dialog.value()
                     dialog.accept()
                     self.assertTrue(dialog.isVisible())
-                    self.assertIn('Ctrl 조합', dialog.validation.text())
+                    self.assertIn('Shift와 Alt 조합키만 사용할 수 있습니다.', dialog.validation.text())
                 else:
                     self.assertEqual(dialog.value(), expected)
                     self.assertEqual(Hotkeys.compile(dialog.value()).key, expected)
@@ -2138,7 +2171,7 @@ class UiTests(unittest.TestCase):
                 QTest.keyClick(field,key,modifiers)
                 self.assertIs(dialog.focusWidget(),focused)
                 if 'ctrl+' in expected:
-                    with self.assertRaisesRegex(ValueError, 'Ctrl 조합'):
+                    with self.assertRaisesRegex(ValueError, 'Shift와 Alt 조합키만 사용할 수 있습니다.'):
                         dialog.value()
                 else:
                     self.assertEqual(dialog.value(),expected)

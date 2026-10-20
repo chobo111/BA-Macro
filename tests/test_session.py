@@ -4,6 +4,22 @@ from session import ExecutionSession
 
 
 class SessionTests(unittest.TestCase):
+    def test_deferred_start_blocks_actions_until_restore_and_stop_clears_it(self):
+        from execution_plan import ExecutionPlan
+        native = Mock()
+        native.active.return_value = True
+        state = ExecutionSession(native)
+        state.target = 99
+        state.start(ExecutionPlan(99, (1280, 720), None), awaiting_restore=True)
+        self.assertTrue(state.armed)
+        self.assertTrue(state.eligible('pause', False))
+        self.assertFalse(state.eligible('move', False))
+        state.start(ExecutionPlan(99, (1280, 720), (1280, 720)))
+        self.assertTrue(state.eligible('move', False))
+        state.stop()
+        self.assertFalse(state.awaiting_restore)
+        self.assertIsNone(state.plan)
+
     def test_nested_modal_and_exception_restore_original_state(self):
         state = ExecutionSession(Mock())
         stop, close, restore = Mock(), Mock(), Mock()

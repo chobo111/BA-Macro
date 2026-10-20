@@ -469,10 +469,125 @@ class StartChecks(unittest.TestCase):
                 self.size.side_effect = WindowSizeUnavailable()
                 self.window.toggle()
                 prompt.assert_not_called()
-                self.assertFalse(self.window.armed)
+                self.assertTrue(self.window.armed)
+                self.assertTrue(self.window.session.awaiting_restore)
                 self.assertIsNone(self.window.run_size)
                 self.assertEqual(self.window.profile.resolution, resolution)
-                self.assertIn('복원', self.window.statusBar().currentMessage())
+                self.window.stop()
+
+    def test_minimized_start_defers_checks_and_blocks_input_until_restored(self):
+        w = self.window
+        with patch.object(w.native, 'is_minimized', return_value=True), \
+                patch.object(w, 'confirm_start') as confirm:
+            w.toggle()
+            confirm.assert_not_called()
+        self.assertTrue(w.armed)
+        self.size.assert_not_called()
+        with patch.object(w.native, 'active', return_value=True), \
+                patch.object(w.engine, 'submit') as submit:
+            w.dispatch('move', w.profile.rows[0].id)
+            submit.assert_not_called()
+            with patch.object(w.native, 'cursor', return_value=(10, 20)):
+                w.tick()
+            self.assertFalse(w.session.awaiting_restore)
+            self.assertEqual(w.run_size, (1280, 720))
+            w.dispatch('move', w.profile.rows[0].id)
+            submit.assert_called_once()
+        self.assertTrue(w.armed)
+
+    def test_deferred_start_restores_with_automatic_coordinates_without_changing_profile(self):
+        w = self.window
+        before = w.profile.export()
+        with patch.object(w.native, 'is_minimized', return_value=True):
+            w.toggle()
+        w.settings.auto_convert_on_start = True
+        self.size.return_value = (1920, 1080)
+        with patch('app.SizeMismatchDialog') as warning:
+            self.assertTrue(w.check_running_size())
+            warning.assert_not_called()
+        self.assertTrue(w.armed)
+        self.assertFalse(w.session.awaiting_restore)
+        self.assertEqual(w.coordinate_transform, ((1280, 720), (1920, 1080)))
+        self.assertEqual(w.profile.export(), before)
+
+    def test_deferred_start_keeps_app_and_size_confirmations_and_cancel_stops(self):
+        w = self.window
+        for changed in ('app', 'size'):
+            with self.subTest(changed=changed):
+                self.identity.return_value = dict(GAME)
+                self.size.return_value = (1280, 720)
+                with patch.object(w.native, 'is_minimized', return_value=True):
+                    w.toggle()
+                if changed == 'app':
+                    self.identity.return_value = OTHER
+                else:
+                    self.size.return_value = (1920, 1080)
+                with patch('app.AppMismatchDialog') as app, patch('app.SizeMismatchDialog') as size:
+                    app.return_value.choice.return_value = 'cancel'
+                    size.return_value.choice.return_value = 'cancel'
+                    self.assertFalse(w.check_running_size())
+                    self.assertEqual(app.called, changed == 'app')
+                    self.assertEqual(size.called, changed == 'size')
+                    self.assertFalse(w.armed)
+                    self.assertFalse(w.session.awaiting_restore)
+                    w.check_running_size()
+                    self.assertEqual((app.call_count, size.call_count),
+                                     (1, 0) if changed == 'app' else (0, 1))
+
+    def test_deferred_start_stop_or_closed_app_cannot_restart_later(self):
+        w = self.window
+        for action in ('stop', 'close'):
+            with self.subTest(action=action):
+                w.target = 123
+                self.exists.return_value = True
+                with patch.object(w.native, 'is_minimized', return_value=True):
+                    w.toggle()
+                with patch.object(w, 'confirm_start') as confirm:
+                    if action == 'stop':
+                        w.toggle()
+                    else:
+                        self.exists.return_value = False
+                        w.tick()
+                    w.check_running_size()
+                    confirm.assert_not_called()
+                self.assertFalse(w.armed)
+                self.assertFalse(w.session.awaiting_restore)
+
+    def test_deferred_start_waits_for_dialogs_and_does_not_rearm_after_stop(self):
+        from execution_plan import ExecutionPlan
+        w = self.window
+        with patch.object(w.native, 'is_minimized', return_value=True):
+            w.toggle()
+        with patch.object(w, 'confirm_start') as confirm:
+            w.modal = True
+            self.assertFalse(w.check_running_size())
+            confirm.assert_not_called()
+            w.modal = False
+            def stop_during_confirmation():
+                w.stop()
+                return ExecutionPlan(123, (1280, 720), (1280, 720))
+            confirm.side_effect = stop_during_confirmation
+            self.assertFalse(w.check_running_size())
+        self.assertFalse(w.armed)
+        self.assertFalse(w.session.awaiting_restore)
+
+    def test_deferred_start_rejects_changed_target_or_coordinate_basis(self):
+        w = self.window
+        for changed in ('target', 'basis'):
+            with self.subTest(changed=changed):
+                w.target = 123
+                w.profile.resolution = (1280, 720)
+                with patch.object(w.native, 'is_minimized', return_value=True):
+                    w.toggle()
+                if changed == 'target':
+                    w.target = 456
+                else:
+                    w.profile.resolution = (1600, 900)
+                with patch.object(w, 'confirm_start') as confirm:
+                    self.assertFalse(w.check_running_size())
+                    confirm.assert_not_called()
+                self.assertFalse(w.armed)
+                self.assertFalse(w.session.awaiting_restore)
 
     def test_transient_unavailable_size_blocks_dispatch_without_disarming(self):
         from domain import WindowSizeUnavailable

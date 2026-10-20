@@ -82,6 +82,25 @@ class EngineTests(unittest.TestCase):
             self.wait_idle()
         self.assertEqual(self.errors, ['raid.json · 2행 · Q\nmove failed'])
 
+    def test_wait_counts_guard_time_towards_requested_duration(self):
+        for duration in (3, 100):
+            with self.subTest(milliseconds=duration):
+                clock = [0.0]
+                def guard(_):
+                    clock[0] += .002
+                def wait(timeout):
+                    self.assertGreater(timeout, 0)
+                    self.assertLessEqual(timeout, .01)
+                    clock[0] += timeout
+                    return False
+                with patch('engine.monotonic', side_effect=lambda: clock[0]), \
+                        patch.object(self.engine, 'guard', side_effect=guard), \
+                        patch.object(self.engine.cancel, 'wait', side_effect=wait):
+                    self.engine.wait(duration, self.command)
+                self.assertGreaterEqual(clock[0], duration / 1000)
+                # Only the final safety check may extend beyond the deadline.
+                self.assertLessEqual(clock[0], duration / 1000 + .002001)
+
     def test_coordinate_action_moves_without_click_or_restore(self):
         self.engine.execute(self.command)
         self.assertEqual(self.native.events, [('move', 30, 40)])

@@ -13,6 +13,7 @@ class ExecutionSession:
         self.closing = False
         self.target = None
         self.plan = None
+        self.awaiting_restore = False
 
     @property
     def run_size(self):
@@ -22,15 +23,17 @@ class ExecutionSession:
     def coordinate_transform(self):
         return self.plan.coordinate_transform if self.plan is not None else None
 
-    def start(self, plan):
+    def start(self, plan, *, awaiting_restore=False):
         if not self.target or plan.target != self.target:
             raise ValueError('선택한 앱이 변경되었습니다. 다시 시작하세요.')
         self.plan = plan
+        self.awaiting_restore = awaiting_restore
         self.armed = True
 
     def stop(self):
         self.armed = False
         self.plan = None
+        self.awaiting_restore = False
 
     def eligible(self, action, auto_pause):
         if self.closing:
@@ -45,7 +48,7 @@ class ExecutionSession:
         if not self.target:
             return False
         if action == 'move':
-            return self.armed and self.native.active(self.target)
+            return self.armed and not self.awaiting_restore and self.native.active(self.target)
         return self.native.active(self.target)
 
     @contextmanager

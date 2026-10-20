@@ -171,6 +171,9 @@ class Windows:
     def active(self, hwnd):
         return bool(hwnd and valid_window(hwnd) and not minimized(hwnd) and foreground() == hwnd)
 
+    def is_minimized(self, hwnd):
+        return bool(hwnd and minimized(hwnd))
+
     def exists(self, hwnd):
         return bool(hwnd and valid_window(hwnd))
 

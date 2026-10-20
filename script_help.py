@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
 
 COMMAND_HELP = [
     ('move X,Y', '가상 터치 위치를 옮긴다. 실제 커서는 움직이지 않는다.'),
-    ('click X,Y [X,Y ...]', '각 좌표를 차례로 한 번씩 클릭한다.'),
+    ('click X,Y [X,Y ...]', '각 좌표를 차례로 한 번씩 클릭한다. 클릭마다 설정된 클릭 유지 시간만큼 누른 뒤 뗀다.'),
     ('press X,Y', '지정 좌표를 누른다.'),
     ('release X,Y', '지정 좌표에서 누름을 해제한다.'),
     ('switch X,Y', '지정 좌표에서 누름과 해제를 전환한다.'),
@@ -55,7 +55,8 @@ Esc로 닫고, Ctrl+Space로 다시 연다. Enter는 줄바꿈이다.</p>
 <h2>반복과 입력 해제</h2>
 <ul>
 <li><code>loop</code>와 <code>loop_end</code>는 짝으로 작성한다.</li>
-<li>단축키를 놓으면 진행 중인 반복 회차를 마치고 멈춘다.</li>
+<li><code>loop</code> 또는 <code>loop until_release</code>는 단축키를 놓으면 진행 중인 반복 회차를 마치고 멈춘다.</li>
+<li>횟수를 지정한 <code>loop</code>는 단축키를 놓아도 지정 횟수만큼 실행한다.</li>
 <li>정지하면 진행 중인 대기도 중단한다.</li>
 <li><code>release_actions</code>는 반복문 밖에서 한 번만 쓴다. 이후 반복문에는 횟수가 필요하다.</li>
 <li><code>press</code>로 누른 입력은 스크립트가 끝나면 해제된다.</li>

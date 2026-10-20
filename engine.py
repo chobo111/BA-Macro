@@ -1,6 +1,7 @@
 """A single input worker, cancellable waits, and no Qt dependencies."""
 from dataclasses import dataclass
 import threading
+from time import monotonic
 from script_language import compile_script, ScriptRuntime, Program
 from domain import WindowSizeUnavailable
 
@@ -89,13 +90,14 @@ class Engine:
         self.runtime.native.keep_alive()
 
     def wait(self, milliseconds, command):
-        remaining = milliseconds / 1000
+        deadline = monotonic() + milliseconds / 1000
         self.guard(command)
-        while remaining > 0:
-            step = min(remaining, .01)
-            if self.cancel.wait(step):
+        while True:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return
+            if self.cancel.wait(min(remaining, .01)):
                 raise Cancelled()
-            remaining -= step
             self.guard(command)
 
     def execute(self, c):

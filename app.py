@@ -14,7 +14,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QTableWidgetItem, QSpinBox, QFileDialog, QMessageBox, QDialog,
-    QSystemTrayIcon, QMenu, QSizePolicy, QFrame, QGridLayout, QToolButton,
+    QSystemTrayIcon, QMenu, QSizePolicy, QFrame, QGridLayout, QToolButton, QDialogButtonBox,
 )
 
 from domain import MODES, Profile, Row, same_program, WindowSizeUnavailable
@@ -42,7 +42,7 @@ from shortcuts import ShortcutError, qt_hotkey
 from single_instance import SingleInstance
 from titlebar_menu import CaptionMenu
 from startup_dialogs import AppMismatchDialog, SizeMismatchDialog, CoordinateAppDialog, ManualCoordinateDialog
-from widgets import (managed_dialog, make_icon, RunButton, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
+from widgets import (managed_dialog, make_icon, make_github_icon, RunButton, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
                      BriefStatusBar, KeyDialog, SettingsDialog, ResizeDialog, NoWheelCombo, NoWheelSpinBox, ElidedLabel)
 
 BASE = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
@@ -67,7 +67,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowIcon(make_icon())
         self.resize(420, 420)
-        self.setMinimumHeight(340)
+        self.setMinimumHeight(260)
         self.native = Windows()
         self.session = ExecutionSession(self.native)
         self.dirty = False
@@ -182,7 +182,7 @@ class MainWindow(QMainWindow):
         self.targets.setMinimumWidth(0)
         self.targets.setMinimumContentsLength(10)
         self.targets.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.targets.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.targets.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.targets.currentIndexChanged.connect(self.change_target)
         self.targets.setFixedHeight(30)
         target_grid.addWidget(self.targets, 0, 0)
@@ -225,7 +225,7 @@ class MainWindow(QMainWindow):
         target_outer.addWidget(self.target_content)
         self.target_toggle.toggled.connect(self.set_target_expanded)
         self.target_toggle.setChecked(True)
-        layout.addWidget(target_box, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(target_box)
 
         toolbar_panel = self.toolbar_panel = QWidget()
         toolbar_panel.setFixedWidth(384)
@@ -262,7 +262,7 @@ class MainWindow(QMainWindow):
         self.pause_button.setFixedSize(106, 30)
         self.pause_button.setIconSize(QSize(16, 16))
         toolbar.addWidget(self.pause_button)
-        layout.addWidget(toolbar_panel, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(toolbar_panel)
         self._fit_timer = QTimer(self)
         self._fit_timer.setSingleShot(True)
         self._fit_timer.setInterval(0)
@@ -297,8 +297,9 @@ class MainWindow(QMainWindow):
             return
         table = self.table
         metrics = table.fontMetrics()
+        memo_padding = 24 + metrics.horizontalAdvance('가')
         memo_width = max(table.MEMO_MIN_WIDTH,
-                         max((metrics.horizontalAdvance(row.memo) + 24
+                         max((metrics.horizontalAdvance(row.memo) + memo_padding
                               for row in self.profile.rows), default=0))
         memo_width = min(memo_width, table.horizontalHeader().maximumSectionSize())
         if table.columnWidth(4) != memo_width:
@@ -314,13 +315,14 @@ class MainWindow(QMainWindow):
             frame = max(0, self.frameGeometry().width() - self.geometry().width())
             width = min(width, screen.availableGeometry().width() - frame)
         table_width = width - margins.left() - margins.right()
-        table.setFixedWidth(table_width)
-        self.target_box.setFixedWidth(table_width - scroll_width)
-        self.toolbar_panel.setFixedWidth(table_width - scroll_width)
-        previous = getattr(self, "_content_width", None)
+        for panel in (table, self.target_box, self.toolbar_panel):
+            panel.setMinimumWidth(0)
+            panel.setMaximumWidth(table_width)
+        previous = getattr(self, "_sheet_content_width", None)
+        self._sheet_content_width = content_width
         self._content_width = width
-        self.setMinimumWidth(400)
-        if previous is None or (width > previous and width > self.width()):
+        self.setMinimumWidth(320)
+        if previous is None or (content_width > previous and width > self.width()):
             self.resize(width, self.height())
 
     def build_menu(self):
@@ -380,6 +382,8 @@ class MainWindow(QMainWindow):
         self.pause_button.setFixedWidth(max(106, self.pause_button.sizeHint().width()))
         self.pin_button.setIcon(make_pin_icon(colors.muted, colors.accent))
         self.delete_button.setIcon(make_trash_icon(colors.muted))
+        for github in self.findChildren(QToolButton, 'githubLink'):
+            github.setIcon(make_github_icon(colors.text))
         if self.script_editor is not None:
             self.script_editor.highlighter.apply_theme(colors)
 
@@ -677,18 +681,23 @@ class MainWindow(QMainWindow):
             return
         self.session.stop()
         try:
-            plan = self.confirm_start()
-            if plan is None:
-                return
-            plan.check_context(self.native, self.target, self.profile.resolution)
+            plan = None
+            try:
+                if not self.native.is_minimized(self.target):
+                    plan = self.confirm_start()
+                    if plan is None:
+                        return
+                    plan.check_context(self.native, self.target, self.profile.resolution)
+            except WindowSizeUnavailable:
+                # A minimize/restore race also defers the size decision.
+                plan = None
+            awaiting_restore = plan is None
+            if awaiting_restore:
+                plan = ExecutionPlan(self.target, self.profile.resolution, None)
             self.rebind()
             if self.hook_enabled:
                 self.hooks.start()
-            self.session.start(plan)
-        except WindowSizeUnavailable as error:
-            self.stop()
-            self.statusBar().show_error(str(error))
-            return
+            self.session.start(plan, awaiting_restore=awaiting_restore)
         except Exception as error:
             self.error(str(error))
             return
@@ -700,6 +709,8 @@ class MainWindow(QMainWindow):
 
     def check_running_size(self, size=None):
         if self.armed and self.session.plan is not None:
+            if self.session.awaiting_restore:
+                return self.complete_deferred_start(size)
             try:
                 self.session.plan.check_context(self.native, self.target, self.profile.resolution, size=size)
             except WindowSizeUnavailable:
@@ -708,6 +719,38 @@ class MainWindow(QMainWindow):
                 self.on_engine_error(str(error))
                 return False
         return True
+
+    def complete_deferred_start(self, size=None):
+        if (self.modal or self._profile_switching
+                or self._waiting_for_write or self.closing):
+            return False
+        pending = self.session.plan
+        try:
+            pending.check_context(self.native, self.target, self.profile.resolution)
+            # Do not open confirmation dialogs until a client area is available.
+            if size is None:
+                self.native.size(self.target)
+            plan = self.confirm_start()
+            # Stop, app changes and profile changes during a dialog cancel the request.
+            if not self.armed or self.session.plan is not pending:
+                return False
+            if plan is None:
+                self.stop()
+                return False
+            plan.check_context(self.native, self.target, self.profile.resolution)
+            self.rebind()
+            self.session.start(plan)
+            self.update_labels()
+            if plan.automatic and self.settings.auto_convert_on_start:
+                warning = aspect_warning(plan.source_resolution, plan.expected_size)
+                if warning:
+                    self.statusBar().showMessage(warning)
+            return True
+        except WindowSizeUnavailable:
+            return False
+        except Exception as error:
+            self.on_engine_error(str(error))
+            return False
 
     @editing_dialog(hooks=False, pause=False)
     def confirm_start(self):
@@ -1802,16 +1845,26 @@ class MainWindow(QMainWindow):
 
     @editing_dialog(hooks=False)
     def about_dialog(self):
-        with managed_dialog(QMessageBox(self)) as dialog:
+        with managed_dialog(QDialog(self)) as dialog:
             dialog.setWindowTitle('앱 정보')
-            dialog.setTextFormat(Qt.TextFormat.RichText)
-            dialog.setText(f'<b>{APP_NAME}</b><br>버전: {VERSION}<br><br>'
-                           f'<a href="{REPOSITORY_URL}">GitHub · chobo111/BA-Macro</a>')
-            dialog.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-            dialog.setStandardButtons(QMessageBox.StandardButton.Close)
-            dialog.button(QMessageBox.StandardButton.Close).setText('닫기')
-            for label in dialog.findChildren(QLabel):
-                label.setOpenExternalLinks(True)
+            layout = QVBoxLayout(dialog)
+            label = QLabel(f'<b>{APP_NAME}</b><br>버전: {VERSION}')
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(label)
+            github = QToolButton(dialog)
+            github.setObjectName('githubLink')
+            github.setIcon(make_github_icon(self.theme_colors.text))
+            github.setIconSize(QSize(28, 28))
+            github.setFixedSize(40, 40)
+            github.setCursor(Qt.CursorShape.PointingHandCursor)
+            github.setAccessibleName('GitHub 저장소 열기')
+            github.setToolTip('GitHub · chobo111/BA-Macro')
+            github.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(REPOSITORY_URL)))
+            layout.addWidget(github, 0, Qt.AlignmentFlag.AlignHCenter)
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+            buttons.button(QDialogButtonBox.StandardButton.Close).setText('닫기')
+            buttons.rejected.connect(dialog.reject)
+            layout.addWidget(buttons)
             dialog.exec()
 
     def shutdown(self):

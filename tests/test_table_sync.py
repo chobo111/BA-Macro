@@ -246,8 +246,7 @@ class TableSyncTests(unittest.TestCase):
             w.queue_fit_content_width()
         self.qt.processEvents()
         self.assertEqual(spy.count(), 1)
-        expected = (sum(w.table.columnWidth(c) for c in range(4)) + w.table.MEMO_MIN_WIDTH
-                    + w.table.verticalHeader().width() + 2*w.table.frameWidth())
+        expected = w.table.width()
         self.assertEqual(w.target_box.width(), expected)
         self.assertEqual(w.toolbar_panel.width(), expected)
 

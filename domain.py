@@ -150,7 +150,7 @@ class Profile:
 class Settings:
     capture_hk: str = "ctrl+s"
     pause_hk: str = "ctrl+`"
-    click_hold_ms: int = 50
+    click_hold_ms: int = 10
     resize_convert_profile: bool = True
     drag_segment_duration_ms: int = 10
     exclusive_hook: bool = True

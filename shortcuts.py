@@ -35,7 +35,7 @@ def hotkey(value: str) -> str:
     if len(set(parts)) != len(parts):
         raise ShortcutError('단축키에 같은 키가 두 번 들어갔습니다.')
     if len(parts) > 1 and 'win' in parts:
-        raise ShortcutError('Win 조합은 지원하지 않습니다. Ctrl·Alt·Shift를 사용하세요.')
+        raise ShortcutError('Win 조합은 지원하지 않습니다.')
     modifiers = [key for key in MODIFIERS if key in parts]
     keys = [key for key in parts if key not in MODIFIERS]
     if not keys and len(modifiers) == 1:
@@ -56,7 +56,7 @@ def qt_hotkey(value: str) -> str:
 def row_hotkey(value: str) -> str:
     key = hotkey(value)
     if 'ctrl' in key.split('+')[:-1]:
-        raise ShortcutError('행 단축키에는 Ctrl 조합을 지정할 수 없습니다.')
+        raise ShortcutError('Shift와 Alt 조합키만 사용할 수 있습니다.')
     return key
 
 

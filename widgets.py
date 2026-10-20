@@ -7,6 +7,7 @@ from dataclasses import asdict
 
 from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QEvent, QSignalBlocker, QKeyCombination, QPersistentModelIndex, QRectF
 from PySide6.QtGui import QColor, QPalette, QIcon, QKeySequence, QPainter, QPixmap, QPolygon, QPen, QValidator
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QHeaderView, QAbstractItemView,
     QSpinBox, QLineEdit, QDialog, QFormLayout, QDialogButtonBox, QCheckBox, QKeySequenceEdit,
@@ -38,6 +39,24 @@ def make_icon():
     painter.drawRoundedRect(2, 2, 60, 60, 16, 16)
     painter.setBrush(QColor("#102435"))
     painter.drawPolygon(QPolygon([QPoint(x, y) for x, y in [(19, 13), (47, 33), (34, 36), (28, 51)]]))
+    painter.end()
+    return QIcon(pixmap)
+
+
+def make_github_icon(color):
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="{color}">'
+           '<path d="M12 .297C5.37.297 0 5.67 0 12.297c0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577'
+           ' 0-.285-.01-1.04-.015-2.04-3.338.724-4.043-1.61-4.043-1.61-.546-1.387-1.333-1.756-1.333-1.756'
+           '-1.09-.745.083-.729.083-.729 1.205.084 1.838 1.237 1.838 1.237 1.07 1.835 2.807 1.305 3.492.998'
+           '.108-.776.418-1.305.762-1.605-2.665-.3-5.467-1.334-5.467-5.93 0-1.31.467-2.38 1.235-3.22'
+           '-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23a11.5 11.5 0 0 1 3-.404c1.02.005 2.045.138 3 .404'
+           ' 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22'
+           ' 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286'
+           ' 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>')
+    pixmap = QPixmap(64, 64)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    QSvgRenderer(svg.encode('utf-8')).render(painter)
     painter.end()
     return QIcon(pixmap)
 
@@ -230,6 +249,9 @@ class MemoDelegate(QStyledItemDelegate):
                 notice = f'기존 메모가 {MemoLengthValidator.LIMIT:,}자를 초과합니다. 원문은 유지되며 더 늘릴 수 없습니다.'
                 self.parent().memo_notice.emit(notice)
             editor.inputRejected.connect(lambda: self.parent().memo_notice.emit(notice))
+            # The view selects all text after initialization; place the caret
+            # after that step, once per editor, without affecting later selections.
+            QTimer.singleShot(0, editor, lambda: editor.end(False))
         return editor
 
     def eventFilter(self, editor, event):
@@ -588,7 +610,7 @@ class ResizeDialog(QDialog):
         fields.addWidget(self.aspect_lock)
         fields.addStretch()
         self.form.addRow("크기", self.custom_fields)
-        self.convert_profile = QCheckBox("변경 후 프로필 해상도 변환")
+        self.convert_profile = QCheckBox("변경 후 프로필 해상도 변환 창 열기")
         self.convert_profile.setChecked(convert_profile)
         layout.addWidget(self.convert_profile)
         self.message = QLabel()

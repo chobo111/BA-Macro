@@ -65,6 +65,17 @@ class MemoEditingTests(unittest.TestCase):
         if table:
             self.assertEqual(w.table.item(0, 4).text(), text)
 
+    def test_edit_starts_at_end_and_appends_without_replacing_memo(self):
+        self.open_profile('기존 메모')
+        editor = self.edit()
+        self.assertFalse(editor.hasSelectedText())
+        self.assertEqual(editor.cursorPosition(), len(editor.text()))
+        self.paste(editor, ' 추가')
+        self.assert_saved('기존 메모 추가')
+        editor.selectAll()
+        self.qt.processEvents()
+        self.assertEqual(editor.selectedText(), '기존 메모 추가')
+
     def test_sheet_tracks_live_memo_edits_and_escape_restores_width(self):
         w = self.open_profile('')
         initial = w.table.columnWidth(4)
