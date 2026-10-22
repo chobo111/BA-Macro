@@ -52,4 +52,5 @@ class ExecutionPlan:
             click_hold_ms=settings.click_hold_ms, script=row.script,
             drag_segment_duration_ms=settings.drag_segment_duration_ms, program=program,
             expected_size=self.expected_size,
+            source_resolution=self.source_resolution, automatic=self.automatic,
         )

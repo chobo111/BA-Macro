@@ -86,6 +86,7 @@ class DefaultProfileUiTests(unittest.TestCase):
         self.w.timer.stop()
         self.w.target = 123
         self.patches = ExitStack()
+        self.patches.enter_context(patch('app.elevation.requires_elevation', return_value=False))
         self.patches.enter_context(patch.object(self.w.native, 'exists', return_value=True))
         self.patches.enter_context(patch.object(self.w.native, 'size', return_value=(1280, 720)))
         self.patches.enter_context(patch.object(self.w.native, 'window_identity', return_value=dict(OTHER)))

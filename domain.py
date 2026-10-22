@@ -155,6 +155,7 @@ class Settings:
     drag_segment_duration_ms: int = 10
     exclusive_hook: bool = True
     auto_pause: bool = False
+    always_run_as_admin: bool = False
     auto_convert_on_start: bool = False
     theme: str = "System"
     last_profile: str = ""
@@ -176,7 +177,7 @@ class Settings:
         validate_hotkeys((obj.pause_hk, obj.capture_hk))
         for name in ("click_hold_ms", "drag_segment_duration_ms"):
             setattr(obj, name, bounded_int(data.get(name, getattr(obj, name)), 1 if name == "click_hold_ms" else 0, 99999, name))
-        for name in ("exclusive_hook", "auto_pause", "resize_convert_profile", "auto_convert_on_start"):
+        for name in ("exclusive_hook", "auto_pause", "resize_convert_profile", "auto_convert_on_start", "always_run_as_admin"):
             value = data.get(name, getattr(obj, name))
             if not isinstance(value, bool):
                 raise ValueError(f"{name}: 참/거짓 값이 필요합니다.")

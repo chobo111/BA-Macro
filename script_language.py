@@ -172,8 +172,6 @@ class ScriptRuntime:
     def button(self, button, down):
         if down:
             self.buttons.add(button)
-        if down and hasattr(self.native, "validate_pointer"):
-            self.native.validate_pointer(self.context)
         self.native.mouse_button(button, down)
         if not down:
             self.buttons.discard(button)

@@ -4,6 +4,21 @@ from session import ExecutionSession
 
 
 class SessionTests(unittest.TestCase):
+    def test_armed_restore_confirmation_allows_stop_but_stopped_capture_does_not(self):
+        from execution_plan import ExecutionPlan
+        state = ExecutionSession(Mock())
+        state.target = 99
+        state.start(ExecutionPlan(99, (1280, 720), None), awaiting_restore=True)
+        with state.editing(False, Mock()):
+            self.assertTrue(state.eligible('pause', True))
+            self.assertFalse(state.eligible('move', True))
+            self.assertFalse(state.eligible('capture_selected', True))
+            state.stop()
+            self.assertFalse(state.eligible('pause', True))
+        state.armed = True
+        state.closing = True
+        self.assertFalse(state.eligible('pause', True))
+
     def test_deferred_start_blocks_actions_until_restore_and_stop_clears_it(self):
         from execution_plan import ExecutionPlan
         native = Mock()

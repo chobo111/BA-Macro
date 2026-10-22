@@ -5,7 +5,7 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 from domain import Settings
-from engine import Command, Engine
+from engine import Cancelled, Command, Engine
 from script_language import compile_script, ScriptRuntime, ScriptError
 from touch_input import (TouchScriptInput, TouchDevice, PointerInfo, PointerTypeInfo,
                          DOWN, UPDATE, UP, CANCELED, INRANGE, INCONTACT)
@@ -52,6 +52,53 @@ class TouchTests(unittest.TestCase):
             ((30, 40), UPDATE | INRANGE | INCONTACT), ((30, 40), UP),
             ((200, 300), DOWN | INRANGE | INCONTACT), ((200, 300), UP)])
         self.assertEqual(self.native.position, (200, 300))
+
+    def test_button_contacts_check_pointer_once_per_frame(self):
+        with patch.object(self.adapter, 'validate_pointer', wraps=self.adapter.validate_pointer) as validate, \
+             patch.object(self.native, 'local_point', wraps=self.native.local_point) as local_point:
+            self.run_script('click 10,20\npress 30,40\nmouse_press left\nmouse_release left')
+        self.assertEqual([flags for _, flags in self.device.events], [
+            DOWN | INRANGE | INCONTACT, UP,
+            DOWN | INRANGE | INCONTACT, UPDATE | INRANGE | INCONTACT, UP])
+        self.assertEqual(validate.call_count, 3)
+        self.assertEqual(self.native.point_belongs_to.call_count, 3)
+        self.assertEqual(local_point.call_count, 3)
+
+    def test_contact_retry_rechecks_cancellation_focus_occlusion_and_bounds(self):
+        for pressed in (False, True):
+            for change in ('cancel', 'focus', 'occlusion', 'bounds'):
+                with self.subTest(pressed=pressed, change=change):
+                    self.setUp()
+                    device = TouchDevice.__new__(TouchDevice)
+                    device.handle = 123
+                    device.promotion_filter = None
+                    device.destroy = Mock()
+                    device.inject = Mock(return_value=False)
+                    self.adapter.device_factory = lambda: device
+                    check_input = Mock()
+                    self.adapter.begin(1, check_input=check_input)
+                    self.adapter.move(10, 20)
+                    self.adapter.pressed = pressed
+
+                    def change_after_first_attempt(_):
+                        if change == 'cancel':
+                            check_input.side_effect = Cancelled()
+                        elif change == 'focus':
+                            self.native.active_value = False
+                        elif change == 'occlusion':
+                            self.native.point_belongs_to.return_value = False
+                        else:
+                            self.native.local_point = Mock(return_value=(-1, 20))
+
+                    error = Cancelled if change == 'cancel' else ValueError
+                    with patch('touch_input.C.get_last_error', return_value=21), \
+                         patch('touch_input.time.sleep', side_effect=change_after_first_attempt), \
+                         self.assertRaises(error):
+                        self.adapter.mouse_button('left', True)
+                    device.inject.assert_called_once()
+                    device.destroy.assert_called_once_with(123)
+                    self.assertEqual(check_input.call_count, 2)
+                    self.assertFalse(self.adapter.pressed)
 
     def test_held_loop_refreshes_mouse_for_both_curve_directions(self):
         for reverse in (False, True):
@@ -163,8 +210,10 @@ class TouchTests(unittest.TestCase):
             packets.append((info.type, point.pointerType, point.ptPixelLocation.x, point.ptPixelLocation.y, point.pointerFlags))
             return len(packets) > 1
         device.inject = inject
+        before_send = Mock()
         with patch('touch_input.C.get_last_error', return_value=21), patch('touch_input.time.sleep'):
-            device.send((-100, 200), DOWN | INRANGE | INCONTACT)
+            device.send((-100, 200), DOWN | INRANGE | INCONTACT, before_send=before_send)
+        self.assertEqual(before_send.call_count, 2)
         self.assertEqual(packets[0], packets[1])
         self.assertEqual(packets[0][:4], (2, 2, -100, 200))
         device.inject = Mock(return_value=False)

@@ -31,7 +31,153 @@ class StartChecks(unittest.TestCase):
         self.exists = patch.object(self.window.native, 'exists', return_value=True).start()
         self.identity = patch.object(self.window.native, 'window_identity', return_value=dict(GAME)).start()
         self.size = patch.object(self.window.native, 'size', return_value=(1280, 720)).start()
+        self.elevation_required = patch('app.elevation.requires_elevation', return_value=False).start()
         self.addCleanup(patch.stopall)
+
+    def test_elevated_target_requests_restart_instead_of_start(self):
+        self.elevation_required.return_value = True
+        with patch.object(self.window, 'request_admin_restart') as restart, \
+             patch.object(self.window, 'confirm_start') as confirm:
+            self.window.toggle()
+        restart.assert_called_once_with(prompt=True)
+        confirm.assert_not_called()
+        self.assertFalse(self.window.armed)
+
+    def test_failed_permission_query_does_not_arm(self):
+        self.elevation_required.side_effect = OSError('access denied')
+        with patch.object(self.window, 'error') as error:
+            self.window.toggle()
+        error.assert_called_once()
+        self.assertFalse(self.window.armed)
+
+    def test_admin_warning_ignore_continues_normal_checks_without_launch_and_is_not_remembered(self):
+        self.elevation_required.return_value = True
+        choices = []
+        def choose(dialog):
+            choices.append([button.text() for button in dialog.buttons()])
+            next(button for button in dialog.buttons() if button.text() == '무시하고 실행').click()
+            return dialog.result()
+        with patch.object(QMessageBox, 'exec', choose), \
+             patch('app.elevation.ElevatedLaunch') as launch, \
+             patch.object(self.window, 'confirm_start', wraps=self.window.confirm_start) as confirm:
+            self.window.toggle()
+            self.assertTrue(self.window.armed)
+            self.assertFalse(self.window.modal)
+            self.assertFalse(self.window._restarting)
+            self.window.stop()
+            self.window.toggle()
+            self.assertTrue(self.window.armed)
+        self.assertEqual(len(choices), 2)
+        self.assertEqual(confirm.call_count, 2)
+        launch.assert_not_called()
+
+    def test_admin_warning_ignore_still_respects_start_confirmation_cancel(self):
+        self.elevation_required.return_value = True
+        def choose(dialog):
+            next(button for button in dialog.buttons() if button.text() == '무시하고 실행').click()
+            return dialog.result()
+        with patch.object(QMessageBox, 'exec', choose), \
+             patch.object(self.window, 'confirm_start', return_value=None), \
+             patch('app.elevation.ElevatedLaunch') as launch:
+            self.window.toggle()
+        self.assertFalse(self.window.armed)
+        launch.assert_not_called()
+
+    def test_admin_warning_cancel_and_restart_never_continue_start(self):
+        self.elevation_required.return_value = True
+        for choice in ('취소', '관리자 권한으로 재실행'):
+            def choose(dialog):
+                next(button for button in dialog.buttons() if button.text() == choice).click()
+                return dialog.result()
+            with self.subTest(choice=choice), patch.object(QMessageBox, 'exec', choose), \
+                 patch.object(self.window, 'save', return_value=False) as save, \
+                 patch.object(self.window, 'confirm_start') as confirm:
+                self.window.toggle()
+            self.assertEqual(save.call_count, int(choice == '관리자 권한으로 재실행'))
+            confirm.assert_not_called()
+            self.assertFalse(self.window.armed)
+
+    def test_restart_declined_does_not_save_or_launch(self):
+        with patch('app.QMessageBox') as factory, patch.object(self.window, 'save') as save, \
+             patch('app.elevation.ElevatedLaunch') as launch:
+            factory.return_value.clickedButton.return_value = None
+            self.assertFalse(self.window.request_admin_restart())
+        save.assert_not_called()
+        launch.assert_not_called()
+        self.assertFalse(self.window.closing)
+
+    def test_admin_restart_preserves_window_on_save_or_settings_failure(self):
+        for profile_saved in (False, True):
+            with self.subTest(profile_saved=profile_saved), \
+                 patch.object(self.window, 'save', return_value=profile_saved), \
+                 patch.object(self.window, 'persist_settings', side_effect=OSError('write failed')), \
+                 patch('app.elevation.ElevatedLaunch') as launch:
+                self.assertFalse(self.window.request_admin_restart(prompt=False))
+            launch.assert_not_called()
+            self.assertFalse(self.window.closing)
+            self.assertFalse(self.window._restarting)
+
+    def test_admin_restart_uac_cancel_keeps_saved_profile_and_existing_window(self):
+        import ctypes
+        self.window.profile.rows[0].memo = 'keep before restart'
+        with patch('app.elevation.ElevatedLaunch', side_effect=ctypes.WinError(1223)), \
+             patch.object(self.window, 'shutdown') as shutdown:
+            self.assertFalse(self.window.request_admin_restart(prompt=False))
+        shutdown.assert_not_called()
+        self.assertEqual(Profile.read(read_json(self.window.path)).rows[0].memo, 'keep before restart')
+        self.assertEqual(read_json(self.window.settings_path)['last_profile'], self.window.path.name)
+        self.assertIn('취소', self.window.statusBar().currentMessage())
+
+    def test_admin_restart_requires_ready_ack_before_shutdown_and_commit(self):
+        for ready in (False, True):
+            events = []
+            with self.subTest(ready=ready), patch('app.elevation.ElevatedLaunch') as factory, \
+                 patch('app.elevation.await_ready', return_value=ready), \
+                 patch.object(self.window, 'shutdown', side_effect=lambda: events.append('shutdown')), \
+                 patch.object(self.qt, 'quit', side_effect=lambda: events.append('quit')):
+                launch = factory.return_value
+                launch.commit.side_effect = lambda: events.append('commit')
+                self.assertEqual(self.window.request_admin_restart(prompt=False), ready)
+                launch.close.assert_called_once()
+            self.assertEqual(events, ['shutdown', 'commit', 'quit'] if ready else [])
+            self.assertFalse(self.window._restarting)
+
+    def test_restart_close_guard_blocks_early_close_but_accepts_completed_shutdown(self):
+        from PySide6.QtGui import QCloseEvent
+        w = self.window
+        w._restarting = True
+        event = QCloseEvent()
+        w.closeEvent(event)
+        self.assertFalse(event.isAccepted())
+        w.shutdown()
+        event = QCloseEvent()
+        w.closeEvent(event)
+        self.assertTrue(event.isAccepted())
+        w._restarting = False
+
+    def test_always_admin_startup_only_requests_when_enabled_and_not_elevated(self):
+        for enabled, elevated in ((False, False), (True, True), (True, False)):
+            with self.subTest(enabled=enabled, elevated=elevated), \
+                 patch('app.elevation.is_elevated', return_value=elevated), \
+                 patch.object(self.window, 'request_admin_restart') as restart:
+                self.window.settings.always_run_as_admin = enabled
+                self.window.check_startup_elevation()
+                if enabled and not elevated:
+                    restart.assert_called_once_with(prompt=False)
+                else:
+                    restart.assert_not_called()
+
+    def test_admin_option_roundtrips_through_settings_dialog_and_disk(self):
+        from widgets import SettingsDialog
+        self.assertFalse(self.window.settings.always_run_as_admin)
+        dialog = SettingsDialog(self.window.settings, self.window)
+        try:
+            self.assertFalse(dialog.checks['always_run_as_admin'].isChecked())
+            dialog.checks['always_run_as_admin'].setChecked(True)
+            self.window.commit_settings(dialog.value())
+            self.assertTrue(Settings.read(read_json(self.window.settings_path)).always_run_as_admin)
+        finally:
+            dialog.deleteLater()
 
     def tearDown(self):
         self.window.shutdown()
@@ -570,6 +716,26 @@ class StartChecks(unittest.TestCase):
             self.assertFalse(w.check_running_size())
         self.assertFalse(w.armed)
         self.assertFalse(w.session.awaiting_restore)
+
+    def test_stop_shortcut_cancels_restore_confirmation_with_auto_pause_enabled(self):
+        w = self.window
+        w.settings.auto_pause = True
+        with patch.object(w.native, 'is_minimized', return_value=True):
+            w.toggle()
+        self.size.return_value = (1920, 1080)
+        with patch('app.SizeMismatchDialog') as prompt:
+            def stop_from_shortcut():
+                self.assertTrue(w.modal)
+                self.assertTrue(w.eligible('pause'))
+                w.dispatch('pause', '')
+                self.assertFalse(w.armed)
+                return 0
+            prompt.return_value.exec.side_effect = stop_from_shortcut
+            prompt.return_value.choice.return_value = 'auto'
+            self.assertFalse(w.check_running_size())
+        self.assertFalse(w.armed)
+        self.assertFalse(w.session.awaiting_restore)
+        self.assertIsNone(w.session.plan)
 
     def test_deferred_start_rejects_changed_target_or_coordinate_basis(self):
         w = self.window

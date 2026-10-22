@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
 from domain import MODES, Profile, Row, same_program, WindowSizeUnavailable
 from engine import Engine
 from error_log import ErrorLog, ErrorLogDialog
+from coordinate_diagnostics import CoordinateDiagnostics
+from diagnostics_dialog import CoordinateDiagnosticsDialog
 from native import Windows
 from interactive_resize import resize as resize_window
 from hotkeys import Hotkeys
@@ -40,6 +42,7 @@ from theme import DARK, LIGHT, palette, stylesheet
 from session import ExecutionSession, editing_dialog
 from shortcuts import ShortcutError, qt_hotkey
 from single_instance import SingleInstance
+import elevation
 from titlebar_menu import CaptionMenu
 from startup_dialogs import AppMismatchDialog, SizeMismatchDialog, CoordinateAppDialog, ManualCoordinateDialog
 from widgets import (managed_dialog, make_icon, make_github_icon, RunButton, make_pin_icon, make_trash_icon, TargetCombo, RowsTable,
@@ -76,6 +79,7 @@ class MainWindow(QMainWindow):
         self.script_editor = None
         self._profile_switching = False
         self._waiting_for_write = False
+        self._restarting = False
         self._selected_identity = {}
         self.data_dir = Path(data_dir or BASE).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -95,7 +99,10 @@ class MainWindow(QMainWindow):
         self.load_error = loaded.warning
         self._validated_shortcuts = None
         self.bridge = Bridge()
-        self.engine = Engine(self.native, lambda key: self.hooks.held(key), self.bridge.error.emit)
+        self.coordinate_diagnostics = CoordinateDiagnostics()
+        self.diagnostics_window = None
+        self.engine = Engine(self.native, lambda key: self.hooks.held(key), self.bridge.error.emit,
+                             diagnostics=self.coordinate_diagnostics)
         self.hooks = Hotkeys(self.bridge.action.emit, self.eligible, self.engine.stop, self.bridge.error.emit)
         self.bridge.action.connect(self.dispatch, Qt.ConnectionType.QueuedConnection)
         self.bridge.error.connect(self.on_engine_error, Qt.ConnectionType.QueuedConnection)
@@ -320,7 +327,6 @@ class MainWindow(QMainWindow):
             panel.setMaximumWidth(table_width)
         previous = getattr(self, "_sheet_content_width", None)
         self._sheet_content_width = content_width
-        self._content_width = width
         self.setMinimumWidth(320)
         if previous is None or (content_width > previous and width > self.width()):
             self.resize(width, self.height())
@@ -348,7 +354,8 @@ class MainWindow(QMainWindow):
             menu.addAction(text, callback)
         for group in (
             (("환경설정", self.settings_dialog), ("프로필 해상도 변환…", self.convert_dialog)),
-            (("현재 프로필 정보", self.profile_info_dialog), ("앱 정보", self.about_dialog), ("오류 로그", self.error_log_dialog)),
+            (("현재 프로필 정보", self.profile_info_dialog), ("앱 정보", self.about_dialog),
+             ("오류 로그", self.error_log_dialog), ("좌표 진단", self.coordinate_diagnostics_dialog)),
         ):
             if menu.actions():
                 menu.addSeparator()
@@ -632,7 +639,7 @@ class MainWindow(QMainWindow):
         return self.script_editor is None
 
     def eligible(self, action):
-        if self._profile_switching or self._waiting_for_write:
+        if self._profile_switching or self._waiting_for_write or self._restarting:
             return False
         return self.session.eligible(action, self.settings.auto_pause)
 
@@ -664,7 +671,7 @@ class MainWindow(QMainWindow):
             self.update_labels()
 
     def toggle(self):
-        if self._profile_switching or self._waiting_for_write:
+        if self._profile_switching or self._waiting_for_write or self._restarting:
             return
         if self.armed:
             self.stop()
@@ -681,6 +688,9 @@ class MainWindow(QMainWindow):
             return
         self.session.stop()
         try:
+            if elevation.requires_elevation(self.target):
+                if self.request_admin_restart(prompt=True) != QMessageBox.StandardButton.Ignore:
+                    return
             plan = None
             try:
                 if not self.native.is_minimized(self.target):
@@ -706,6 +716,73 @@ class MainWindow(QMainWindow):
             warning = aspect_warning(plan.source_resolution, plan.expected_size)
             if warning:
                 self.statusBar().showMessage(warning)
+
+    def check_startup_elevation(self):
+        if self.closing or not self.settings.always_run_as_admin:
+            return
+        try:
+            if not elevation.is_elevated():
+                self.request_admin_restart(prompt=False)
+        except OSError as error:
+            self.statusBar().show_error(f'실행 권한 확인 실패: {error}')
+
+    def request_admin_restart(self, *, prompt=True):
+        """Return Ignore only for explicit permission to continue this start."""
+        if self.closing or self._restarting or self._waiting_for_write or self._profile_switching:
+            return False
+        self.stop()
+        self._restarting = True
+        previous_modal = self.modal
+        self.modal = True
+        launch = None
+        try:
+            if prompt:
+                with managed_dialog(QMessageBox(QMessageBox.Icon.Question, '관리자 권한 필요',
+                        '선택한 앱이 관리자 권한으로 실행 중입니다.\n'
+                        'BA Macro를 관리자 권한으로 다시 실행할까요?', parent=self)) as dialog:
+                    restart = dialog.addButton('관리자 권한으로 재실행', QMessageBox.ButtonRole.AcceptRole)
+                    ignore = dialog.addButton('무시하고 실행', QMessageBox.ButtonRole.ActionRole)
+                    cancel = dialog.addButton('취소', QMessageBox.ButtonRole.RejectRole)
+                    ignore.clicked.connect(dialog.accept)
+                    dialog.setDefaultButton(restart)
+                    dialog.setEscapeButton(cancel)
+                    dialog.exec()
+                    if dialog.clickedButton() is ignore:
+                        return QMessageBox.StandardButton.Ignore
+                    if dialog.clickedButton() is not restart:
+                        return False
+            # Commit the active delegate before taking the restart snapshot.
+            focus = QApplication.focusWidget()
+            if focus is not None and self.isAncestorOf(focus):
+                focus.clearFocus()
+            if not self.save():
+                return False
+            self.persist_settings()
+            launch = elevation.ElevatedLaunch(self.data_dir, int(self.winId()))
+            if not elevation.await_ready(launch, self):
+                raise OSError('관리자 앱의 시작을 확인하지 못했습니다. 기존 앱을 유지합니다.')
+            try:
+                self.shutdown()
+                launch.commit()
+            finally:
+                # Shutdown cannot be rolled back. Even a failed handoff must
+                # finish exiting instead of leaving a disabled window behind.
+                QApplication.instance().quit()
+            return True
+        except OSError as error:
+            if getattr(error, 'winerror', None) == 1223:
+                self.statusBar().showMessage('관리자 권한 요청을 취소했습니다.')
+            else:
+                self.statusBar().show_error(f'관리자 재실행 실패: {error}')
+            return False
+        except Exception as error:
+            self.statusBar().show_error(f'관리자 재실행 실패: {error}')
+            return False
+        finally:
+            if launch is not None:
+                launch.close()
+            self.modal = previous_modal
+            self._restarting = False
 
     def check_running_size(self, size=None):
         if self.armed and self.session.plan is not None:
@@ -1204,6 +1281,14 @@ class MainWindow(QMainWindow):
 
     def record_error(self, source, text):
         self.error_log.record(source, text, self.path.name if self.path else '새 프로필')
+
+    def coordinate_diagnostics_dialog(self):
+        if self.diagnostics_window is None:
+            self.diagnostics_window = CoordinateDiagnosticsDialog(self.coordinate_diagnostics, self)
+            self.diagnostics_window.destroyed.connect(lambda: setattr(self, 'diagnostics_window', None))
+        self.diagnostics_window.show()
+        self.diagnostics_window.raise_()
+        self.diagnostics_window.activateWindow()
 
     @editing_dialog(hooks=False)
     def error_log_dialog(self):
@@ -1871,6 +1956,7 @@ class MainWindow(QMainWindow):
         if self.closing:
             return
         self.closing = True
+        self.coordinate_diagnostics.stop()
         self.finish_script_editor()
         self.timer.stop()
         self._fit_timer.stop()
@@ -1887,11 +1973,13 @@ class MainWindow(QMainWindow):
         self.caption_menu.close()
 
     def closeEvent(self, event):
-        if self._waiting_for_write:
-            event.ignore()
-            return
+        # Completed shutdown must be allowed to close even inside the restart
+        # guard; otherwise QApplication.quit() is vetoed and the child times out.
         if self.closing:
             event.accept()
+            return
+        if self._waiting_for_write or self._restarting:
+            event.ignore()
             return
         self.stop()
         if not self.confirm_changes():
@@ -1907,6 +1995,12 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--elevated-parent', type=int)
+    parser.add_argument('--elevated-ready')
+    parser.add_argument('--data-dir', type=Path)
+    options = parser.parse_args()
     app = QApplication(sys.argv)
     # Keep the lock location stable across the display-name change.
     app.setApplicationName("BlueArchiveStudio")
@@ -1920,12 +2014,17 @@ def main():
     data_dir.mkdir(parents=True, exist_ok=True)
     instance = SingleInstance(data_dir, app)
     try:
+        if options.elevated_parent is not None or options.elevated_ready is not None:
+            if options.elevated_parent is None or not options.elevated_ready:
+                raise OSError('잘못된 재실행 요청입니다.')
+            elevation.accept_handoff(options.elevated_parent, options.elevated_ready)
         if not instance.acquire():
             return 0
-        window = MainWindow()
+        window = MainWindow(data_dir=options.data_dir)
         instance.activate_requested.connect(window.restore)
         app.aboutToQuit.connect(window.shutdown)
         window.show()
+        QTimer.singleShot(0, window, window.check_startup_elevation)
         return app.exec()
     except OSError as error:
         QMessageBox.critical(None, APP_NAME, str(error))

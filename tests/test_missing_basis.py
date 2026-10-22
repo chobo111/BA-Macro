@@ -43,6 +43,7 @@ class MissingBasisTests(unittest.TestCase):
         self.window.timer.stop()
         self.window.target = 123
         self.patches = ExitStack()
+        self.patches.enter_context(patch('app.elevation.requires_elevation', return_value=False))
         native = self.window.native
         self.exists = self.patches.enter_context(patch.object(native, 'exists', return_value=True))
         self.identity = self.patches.enter_context(patch.object(native, 'window_identity', return_value=dict(GAME)))

@@ -38,6 +38,10 @@ class ExecutionSession:
     def eligible(self, action, auto_pause):
         if self.closing:
             return False
+        # A restore confirmation may be open while still armed. Always allow
+        # stopping it; stopped capture dialogs retain their normal key policy.
+        if action == 'pause' and self.armed:
+            return True
         if self.modal or self.editor_open:
             if auto_pause or action == 'capture_selected':
                 return False

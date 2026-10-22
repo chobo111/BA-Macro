@@ -158,6 +158,7 @@ class TouchScriptInput:
         self.pressed = False
         self.last_frame = 0
         self.check_input = None
+        self.diagnostic = None
 
     def begin(self, target, *, check_input=None):
         if not target:
@@ -169,7 +170,7 @@ class TouchScriptInput:
         self.target = target
         self.check_input = check_input
         if not self.pressed:
-            self.position = self.native.screen(target, *self.native.cursor(target))
+            self.position = self.screen(target, *self.native.cursor(target))
 
     def cursor(self, target):
         return self.native.cursor(target)
@@ -178,7 +179,10 @@ class TouchScriptInput:
         return self.native.bounds(target)
 
     def screen(self, target, x, y):
-        return self.native.screen(target, x, y)
+        position = self.native.screen(target, x, y)
+        if self.diagnostic is not None and self.diagnostic.sampling:
+            self.diagnostic.resolved(position, (x, y))
+        return position
 
     def validate_pointer(self, target):
         if not self.native.active(self.target) or not self.native.point_belongs_to(self.target, *self.position):
@@ -196,14 +200,28 @@ class TouchScriptInput:
         self.validate_pointer(self.target)
 
     def _send(self, flags):
+        trace = self.diagnostic
+        frame = None
         try:
             if self.device is None:
                 self.device = self.device_factory()
             # Release frames must still be sent after cancellation/focus loss.
             check = self.check_contact if flags & (DOWN | UPDATE) else None
-            self.device.send(self.position, flags, before_send=check)
+            before_send = check
+            if trace is not None and trace.sampling:
+                def before_send():
+                    nonlocal frame
+                    if check is not None:
+                        check()
+                    kind = '누름' if flags & DOWN else '이동/유지' if flags & UPDATE else '해제'
+                    frame = trace.sample(self.native, self.position, kind)
+            self.device.send(self.position, flags, before_send=before_send)
             self.last_frame = time.monotonic()
-        except Exception:
+            if frame is not None:
+                trace.record(frame, '성공')
+        except Exception as error:
+            if frame is not None:
+                trace.record(frame, f'실패: {error}')
             self.close()
             raise
 
@@ -222,7 +240,6 @@ class TouchScriptInput:
         if name != 'left':
             raise ValueError('독립 터치는 왼쪽 버튼만 지원합니다.')
         if down:
-            self.validate_pointer(self.target)
             self._send((UPDATE if self.pressed else DOWN) | INRANGE | INCONTACT)
             self.pressed = True
         elif self.pressed:

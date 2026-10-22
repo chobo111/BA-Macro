@@ -510,6 +510,7 @@ class SettingsDialog(QDialog):
             field_layout.addStretch()
             forms["스크립트"].addRow(label, field)
         for name, label in (("exclusive_hook", "처리한 단축키를 다른 앱에 전달하지 않기"),
+                            ("always_run_as_admin", "항상 관리자 권한으로 실행"),
                             ("auto_pause", "설정·편집 창을 열거나 변경할 때 자동 정지"),
                             ("auto_convert_on_start", "창 크기가 다르면 묻지 않고 자동 변환")):
             checkbox = QCheckBox(label)
