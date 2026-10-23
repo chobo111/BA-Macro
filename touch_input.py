@@ -5,6 +5,7 @@ import time
 import threading
 from keyboard_hook import PhysicalHook, U
 from mouse_hook import MouseEvent
+from domain import WindowPositionChanged
 
 PT_TOUCH = 2
 PROMOTION_GRACE_SECONDS = 2.0
@@ -159,6 +160,7 @@ class TouchScriptInput:
         self.last_frame = 0
         self.check_input = None
         self.diagnostic = None
+        self.origin = None
 
     def begin(self, target, *, check_input=None):
         if not target:
@@ -169,6 +171,10 @@ class TouchScriptInput:
             self.close()
         self.target = target
         self.check_input = check_input
+        origin = self.native.screen(target, 0, 0)
+        if self.pressed and origin != self.origin:
+            raise WindowPositionChanged()
+        self.origin = origin
         if not self.pressed:
             self.position = self.screen(target, *self.native.cursor(target))
 
@@ -193,6 +199,9 @@ class TouchScriptInput:
         left, top, right, bottom = self.native.bounds(self.target)
         if not left <= x < right or not top <= y < bottom:
             raise ValueError('터치 위치가 대상 앱 내부 영역 밖에 있습니다.')
+        # Reuse the client conversion instead of another WinAPI call per frame.
+        if (self.position[0] - x, self.position[1] - y) != self.origin:
+            raise WindowPositionChanged()
 
     def check_contact(self):
         if self.check_input is not None:
@@ -215,6 +224,8 @@ class TouchScriptInput:
                         check()
                     kind = '누름' if flags & DOWN else '이동/유지' if flags & UPDATE else '해제'
                     frame = trace.sample(self.native, self.position, kind)
+                    if check is not None:
+                        check()
             self.device.send(self.position, flags, before_send=before_send)
             self.last_frame = time.monotonic()
             if frame is not None:
@@ -244,6 +255,12 @@ class TouchScriptInput:
             self.pressed = True
         elif self.pressed:
             flags = UP if self.native.active(self.target) else UP | CANCELED
+            if flags == UP:
+                try:
+                    if self.native.screen(self.target, 0, 0) != self.origin:
+                        flags |= CANCELED
+                except OSError:
+                    flags |= CANCELED
             self._send(flags)
             self.pressed = False
 
@@ -257,3 +274,4 @@ class TouchScriptInput:
             self.device.close()
             self.device = None
         self.pressed = False
+        self.origin = None

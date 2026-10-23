@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import threading
 from time import monotonic
 from script_language import compile_script, ScriptRuntime, Program
-from domain import WindowSizeUnavailable
+from domain import WindowSizeUnavailable, WindowPositionChanged
 
 WINDOW_SIZE_CHANGED = '앱 창 크기가 변경되었습니다. 해상도를 확인한 뒤 다시 시작하세요.'
 
@@ -27,6 +27,7 @@ class Command:
     error_context: str = ''
     source_resolution: tuple[int, int] | None = None
     automatic: bool = False
+    expected_origin: tuple[int, int] | None = None
 
 
 class Cancelled(Exception):
@@ -81,12 +82,18 @@ class Engine:
             if tuple(self.native.size(command.hwnd)) != command.expected_size:
                 raise WindowSizeChanged(WINDOW_SIZE_CHANGED)
 
+    def check_geometry(self, command):
+        self.check_size(command)
+        if command.expected_origin is not None:
+            if tuple(self.native.screen(command.hwnd, 0, 0)) != command.expected_origin:
+                raise WindowPositionChanged()
+
     def check_input(self, command):
         if not command.hwnd:
             raise ValueError('앱을 선택하세요.')
         if self.cancel.is_set() or not self.native.active(command.hwnd):
             raise Cancelled()
-        self.check_size(command)
+        self.check_geometry(command)
 
     def guard(self, command):
         self.check_input(command)
@@ -118,6 +125,8 @@ class Engine:
             trace.resolved(position, (c.x, c.y))
             frame = trace.sample(self.native, position, '커서 이동')
         try:
+            # Coordinate resolution/diagnostic sampling can outlive a move.
+            self.check_input(c)
             self.native.move(*position)
         except Exception as error:
             if frame is not None:
@@ -157,7 +166,7 @@ class Engine:
                     return
                 if c is None:
                     if self.runtime.buttons and self.input_context is not None:
-                        self.check_size(self.input_context)
+                        self.check_geometry(self.input_context)
                     self.runtime.native.keep_alive()
                     continue
                 if self.diagnostics is not None:
@@ -166,7 +175,7 @@ class Engine:
                 if c.mode == 'script':
                     self.guard(c)
                     program = c.program if c.program is not None else compile_script(c.script)
-                    self.check_size(c)
+                    self.check_geometry(c)
                     self.input_context = c
                     # Bind this command, including while a latched contact is idle.
                     # The injection check must not generate another heartbeat.
@@ -184,7 +193,7 @@ class Engine:
                 self.close_script_input()
             except Exception as error:
                 outcome = f'실행 실패: {error}'
-                if isinstance(error, WindowSizeChanged):
+                if isinstance(error, (WindowSizeChanged, WindowPositionChanged)):
                     self.stop()
                 context = c or self.input_context
                 message = f'{context.error_context}\n{error}' if context and context.error_context else str(error)

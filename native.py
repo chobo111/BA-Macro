@@ -105,6 +105,12 @@ class Windows:
         check(to_client(hwnd, C.byref(point)))
         return point.x, point.y
 
+    def window_process_id(self, hwnd):
+        check(hwnd and valid_window(hwnd))
+        pid = W.DWORD()
+        check(get_pid(hwnd, C.byref(pid)))
+        return int(check(pid.value))
+
     def window_identity(self, hwnd):
         check(valid_window(hwnd))
         title, classname = C.create_unicode_buffer(1024), C.create_unicode_buffer(256)

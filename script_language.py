@@ -220,6 +220,10 @@ class ScriptRuntime:
             self.steps += 1
             name, args = instruction.name, instruction.args
             try:
+                if name in COORD_COMMANDS:
+                    diagnostic = getattr(self.native, 'diagnostic', None)
+                    if diagnostic is not None and diagnostic.sampling:
+                        diagnostic.start_instruction()
                 if (name in COORD_COMMANDS
                         and 'mouse' in args):
                     # Sample once per instruction, including each loop iteration.

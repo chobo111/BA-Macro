@@ -31,6 +31,7 @@ class StartChecks(unittest.TestCase):
         self.exists = patch.object(self.window.native, 'exists', return_value=True).start()
         self.identity = patch.object(self.window.native, 'window_identity', return_value=dict(GAME)).start()
         self.size = patch.object(self.window.native, 'size', return_value=(1280, 720)).start()
+        self.origin = patch.object(self.window.native, 'screen', return_value=(0, 0)).start()
         self.elevation_required = patch('app.elevation.requires_elevation', return_value=False).start()
         self.addCleanup(patch.stopall)
 

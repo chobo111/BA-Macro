@@ -23,6 +23,11 @@ class WindowSizeUnavailable(OSError):
         super().__init__('앱이 최소화되었거나 복원 중입니다. 창을 복원한 뒤 다시 시도하세요.')
 
 
+class WindowPositionChanged(RuntimeError):
+    def __init__(self):
+        super().__init__('앱 창 위치가 변경되었습니다. 위치를 확인한 뒤 다시 시작하세요.')
+
+
 def target_identity(data):
     """Validate the current filename-based target identity."""
     if not data:

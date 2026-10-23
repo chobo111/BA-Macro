@@ -914,7 +914,8 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage('선택한 앱이 변경되었습니다. 다시 선택하세요.')
                 return None
             current = latest
-        plan = ExecutionPlan(target, resolution, current_size, automatic=automatic)
+        plan = ExecutionPlan(target, resolution, current_size, automatic=automatic,
+                             expected_origin=tuple(self.native.screen(target, 0, 0)))
         plan.check_context(self.native, self.target, self.profile.resolution)
         if remember_automatic:
             self.commit_settings(replace(self.settings, auto_convert_on_start=True))
@@ -1956,7 +1957,7 @@ class MainWindow(QMainWindow):
         if self.closing:
             return
         self.closing = True
-        self.coordinate_diagnostics.stop()
+        self.coordinate_diagnostics.close()
         self.finish_script_editor()
         self.timer.stop()
         self._fit_timer.stop()

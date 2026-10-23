@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from coordinate_cache import scaled_point, scaled_program
 from coordinate_transform import validate_sizes
-from domain import Row, Settings
+from domain import Row, Settings, WindowPositionChanged
 from engine import Command, WINDOW_SIZE_CHANGED, WindowSizeChanged
 from script_language import compile_script
 
@@ -14,6 +14,7 @@ class ExecutionPlan:
     source_resolution: tuple[int, int] | None
     expected_size: tuple[int, int] | None
     automatic: bool = False
+    expected_origin: tuple[int, int] | None = None
 
     def __post_init__(self):
         if not self.target:
@@ -38,6 +39,9 @@ class ExecutionPlan:
             actual = tuple(size) if size is not None else tuple(native.size(target))
             if actual != self.expected_size:
                 raise WindowSizeChanged(WINDOW_SIZE_CHANGED)
+        if self.expected_origin is not None:
+            if tuple(native.screen(target, 0, 0)) != self.expected_origin:
+                raise WindowPositionChanged()
 
     def command(self, row: Row, settings: Settings) -> Command:
         program = None
@@ -53,4 +57,5 @@ class ExecutionPlan:
             drag_segment_duration_ms=settings.drag_segment_duration_ms, program=program,
             expected_size=self.expected_size,
             source_resolution=self.source_resolution, automatic=self.automatic,
+            expected_origin=self.expected_origin,
         )

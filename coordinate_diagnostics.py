@@ -1,6 +1,6 @@
 """Opt-in, bounded coordinate traces. Never writes profiles or injects input."""
 from datetime import datetime
-from threading import RLock
+from threading import RLock, Thread
 
 from version import VERSION
 
@@ -14,12 +14,12 @@ def display(value):
 
 
 def environment(hwnd):
-    """Read on the input worker, only once per requested trace."""
+    """Read on the diagnostic worker, only once per requested trace."""
     import ctypes as C
     from ctypes import wintypes as W
     import platform
     import elevation
-    from native import U, bind, get_pid, window_dpi
+    from native import bind, get_pid, window_dpi
 
     class MonitorInfo(C.Structure):
         _fields_ = [('cbSize', W.DWORD), ('monitor', W.RECT), ('work', W.RECT),
@@ -44,17 +44,25 @@ def environment(hwnd):
         result['대상 모니터'] = info.device
         result['모니터 시작 위치'] = (info.monitor.left, info.monitor.top)
     result['대상 앱 DPI'] = window_dpi(hwnd) if window_dpi else None
+    return result
+
+
+def input_dpi_awareness():
+    """This thread-local value must be captured on the input worker."""
+    import ctypes as C
+    from ctypes import wintypes as W
+    from native import U, bind
     if hasattr(U, 'GetThreadDpiAwarenessContext'):
         context = bind('GetThreadDpiAwarenessContext', [], W.HANDLE)()
         awareness = bind('GetAwarenessFromDpiAwarenessContext', [W.HANDLE], C.c_int)(context)
-        result['입력 스레드 DPI 인식'] = {0: '미지원', 1: '시스템', 2: '모니터별'}.get(awareness, '확인 불가')
-    return result
+        return {0: '미지원', 1: '시스템', 2: '모니터별'}.get(awareness, '확인 불가')
+    return '확인 불가'
 
 
 class CoordinateTrace:
     LIMIT = 20
 
-    def __init__(self, command, native, screens, read_environment):
+    def __init__(self, command, native, screens):
         self.lock = RLock()
         self.command = command
         self.frames = []
@@ -68,14 +76,34 @@ class CoordinateTrace:
                         '단축키': command.key,
                         '프로필 기준 크기': command.source_resolution,
                         '실행 기준 크기': command.expected_size,
-                        '자동 변환': '사용' if command.automatic else '사용 안 함'}
+                        '자동 변환': '사용' if command.automatic else '사용 안 함',
+                        '환경 정보': '조회 중'}
         try:
+            self.process_id = native.window_process_id(command.hwnd)
             self.identity = native.window_identity(command.hwnd)
+            if native.window_process_id(command.hwnd) != self.process_id:
+                raise ValueError('진단한 앱이 변경되었습니다. 다시 진단하세요.')
             self.context['대상 앱'] = self.identity.get('title', '')
-            self.context.update(read_environment(command.hwnd))
         except Exception as error:
+            self.process_id = None
             self.identity = None
-            self.context['환경 확인 오류'] = str(error)
+            self.context['앱 확인 오류'] = str(error)
+        try:
+            self.context['입력 스레드 DPI 인식'] = input_dpi_awareness()
+        except Exception as error:
+            self.context['입력 스레드 DPI 확인 오류'] = str(error)
+
+    def set_environment(self, values):
+        with self.lock:
+            self.context.pop('환경 정보', None)
+            self.context.update(values)
+            self.revision += 1
+
+    def cancel_environment(self):
+        with self.lock:
+            if self.context.get('환경 정보') == '조회 중':
+                self.context['환경 정보'] = '조회 중단'
+                self.revision += 1
 
     @property
     def sampling(self):
@@ -90,6 +118,13 @@ class CoordinateTrace:
                 if len(self.origins) >= 256:
                     self.origins.clear()
                 self.origins[screen] = origin
+
+    def start_instruction(self):
+        # Intermediate curve points may equal a screen point used earlier.
+        # Keep endpoint lookups and interpolation origins local to this path.
+        with self.lock:
+            self.origins.clear()
+            self.origin = None
 
     def sample(self, native, screen, kind):
         with self.lock:
@@ -148,7 +183,12 @@ class CoordinateTrace:
             raise ValueError('확인할 입력 기록이 없습니다.')
         if target != self.command.hwnd or not native.exists(target):
             raise ValueError('진단한 앱을 다시 선택하세요.')
-        if self.identity is None or native.window_identity(target) != self.identity:
+        if self.identity is None:
+            raise ValueError('진단한 앱 정보를 확인하지 못했습니다. 다시 진단하세요.')
+        current = native.window_identity(target)
+        if (native.window_process_id(target) != self.process_id
+                or current.get('exe', '').casefold() != self.identity.get('exe', '').casefold()
+                or current.get('class', '') != self.identity.get('class', '')):
             raise ValueError('진단한 앱이 변경되었습니다. 다시 진단하세요.')
         if tuple(native.size(target)) != self.command.expected_size:
             raise ValueError('앱 크기가 변경되었습니다. 다시 진단하세요.')
@@ -162,9 +202,16 @@ class CoordinateDiagnostics:
         self.armed = False
         self.trace = None
         self.screens = ''
+        self._generation = 0
+        self._loading = False
+        self._pending_environment = None
+        self._environment_worker = None
+        self._closed = False
 
     def arm(self, screens=''):
         with self.lock:
+            if self._closed:
+                return
             self.stop()
             self.trace = None
             self.screens = screens
@@ -172,14 +219,63 @@ class CoordinateDiagnostics:
 
     def stop(self):
         with self.lock:
+            self._generation += 1
+            self._loading = False
             self.armed = False
+            self._pending_environment = None
             if self.trace is not None:
                 self.trace.finish('기록 정지')
+                self.trace.cancel_environment()
+
+    def close(self):
+        with self.lock:
+            self._closed = True
+            self.stop()
 
     def begin(self, command, native):
         with self.lock:
-            if not self.armed:
+            if self._closed or not self.armed or self._loading:
                 return None
+            self._loading = True
+            generation, screens = self._generation, self.screens
+        trace = CoordinateTrace(command, native, screens)
+        with self.lock:
+            if generation != self._generation:
+                trace.finish('기록 정지')
+                return None
+            self._loading = False
             self.armed = False
-            self.trace = CoordinateTrace(command, native, self.screens, self.read_environment)
-            return self.trace
+            self.trace = trace
+            # One worker and one replaceable pending job bound resources even
+            # if a system query stalls while the user repeatedly starts traces.
+            self._pending_environment = (generation, trace, native)
+            if self._environment_worker is None:
+                worker = Thread(target=self._read_environments, name='coordinate-diagnostics', daemon=True)
+                self._environment_worker = worker
+                try:
+                    worker.start()
+                except Exception as error:
+                    self._environment_worker = None
+                    self._pending_environment = None
+                    trace.set_environment({'환경 확인 오류': str(error)})
+            return trace
+
+    def _read_environments(self):
+        while True:
+            with self.lock:
+                job, self._pending_environment = self._pending_environment, None
+                if self._closed or job is None:
+                    self._environment_worker = None
+                    return
+                generation, trace, native = job
+            try:
+                if trace.process_id is None or native.window_process_id(trace.command.hwnd) != trace.process_id:
+                    raise ValueError('진단한 앱이 변경되거나 확인되지 않습니다.')
+                values = dict(self.read_environment(trace.command.hwnd))
+                if native.window_process_id(trace.command.hwnd) != trace.process_id:
+                    raise ValueError('환경 조회 중 앱이 변경되었습니다. 다시 진단하세요.')
+            except Exception as error:
+                values = {'환경 확인 오류': str(error)}
+            with self.lock:
+                if not self._closed and generation == self._generation and self.trace is trace:
+                    trace.set_environment(values)
