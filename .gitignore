@@ -1,14 +1,33 @@
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 build/
 dist/
 
 # Local profiles and runtime settings
 /*.json
 *.log
+*.log.*
+*.bak
 
-# Local shortcut contains absolute installation paths
-/Blue Archive Studio.lnk
+# Local shortcuts and packaged releases (publish packages as release assets)
+*.lnk
+/*.exe
+/*.zip
 
-/BA Macro.lnk
+# Local work notes and agent instructions; keep public documentation trackable
+/TODO.md
+/todo.md
+/AGENTS.md
+/.agents/
+/.codex/
+/docs/로그_안내_문구_수정표.md
+/docs/성능_점검_0.2.66.md
+/docs/코드_품질_점검_0.2.65.md
