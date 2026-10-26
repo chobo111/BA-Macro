@@ -9,7 +9,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
 from shiboken6 import isValid
 
-from conversion import plan_conversion
+from conversion import convert_snapshot
 from conversion_dialog import ConversionDialog
 from domain import Profile, Row
 
@@ -58,12 +58,12 @@ class ConversionAsyncTests(unittest.TestCase):
             calls.append((threading.get_ident(), profile.rows[0].x, destination))
             entered.set()
             release.wait(2)
-            return plan_conversion(profile, source, destination, **kwargs)
+            return convert_snapshot(profile, source, destination, **kwargs)
         return run, entered, release, calls
 
     def test_slow_conversion_keeps_ui_responsive_and_uses_a_snapshot(self):
         run, entered, release, calls = self.slow_conversion()
-        with patch('conversion_jobs.plan_conversion', side_effect=run):
+        with patch('conversion_jobs.convert_snapshot', side_effect=run):
             dialog = self.dialog()
             self.assertTrue(entered.wait(1))
             self.assertFalse(dialog.copy_button.isEnabled())
@@ -89,7 +89,7 @@ class ConversionAsyncTests(unittest.TestCase):
 
     def test_only_latest_size_result_is_shown(self):
         run, entered, release, calls = self.slow_conversion()
-        with patch('conversion_jobs.plan_conversion', side_effect=run):
+        with patch('conversion_jobs.convert_snapshot', side_effect=run):
             dialog = self.dialog()
             self.assertTrue(entered.wait(1))
             old = dialog.future
@@ -124,7 +124,7 @@ class ConversionAsyncTests(unittest.TestCase):
         dialog = self.dialog()
         self.settle(dialog)
         run, entered, release, _ = self.slow_conversion()
-        with patch('conversion_jobs.plan_conversion', side_effect=run):
+        with patch('conversion_jobs.convert_snapshot', side_effect=run):
             dialog.save('apply')
             self.assertTrue(entered.wait(1))
             dialog.destination.set_value((300,300))
@@ -137,7 +137,7 @@ class ConversionAsyncTests(unittest.TestCase):
 
     def test_invalid_size_cancels_old_results_and_disables_save(self):
         run, entered, release, _ = self.slow_conversion()
-        with patch('conversion_jobs.plan_conversion', side_effect=run):
+        with patch('conversion_jobs.convert_snapshot', side_effect=run):
             dialog = self.dialog()
             self.assertTrue(entered.wait(1))
             dialog.destination.set_value((0,200))
@@ -150,7 +150,7 @@ class ConversionAsyncTests(unittest.TestCase):
 
     def test_worker_and_save_failures_allow_retry(self):
         callback = Mock(side_effect=OSError('disk denied'))
-        with patch('conversion_jobs.plan_conversion', side_effect=ValueError('invalid source')):
+        with patch('conversion_jobs.convert_snapshot', side_effect=ValueError('invalid source')):
             dialog = self.dialog(callback)
             self.settle(dialog)
         self.assertIn('invalid source', dialog.error.text())
@@ -169,7 +169,7 @@ class ConversionAsyncTests(unittest.TestCase):
         dialog = self.dialog()
         self.settle(dialog)
         run, entered, release, _ = self.slow_conversion()
-        with patch('conversion_jobs.plan_conversion', side_effect=run):
+        with patch('conversion_jobs.convert_snapshot', side_effect=run):
             dialog.save('apply')
             self.assertTrue(entered.wait(1))
             future = dialog.future
@@ -185,7 +185,7 @@ class ConversionAsyncTests(unittest.TestCase):
 
     def test_destroying_dialog_cancels_worker_without_widget_callbacks(self):
         run, entered, release, _ = self.slow_conversion()
-        with patch('conversion_jobs.plan_conversion', side_effect=run):
+        with patch('conversion_jobs.convert_snapshot', side_effect=run):
             dialog = self.dialog()
             self.assertTrue(entered.wait(1))
             jobs = dialog.jobs

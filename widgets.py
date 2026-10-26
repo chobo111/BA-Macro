@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 
 from theme import LIGHT
 from domain import Settings
-from shortcuts import row_hotkey, qt_hotkey, SHORTCUT_GUIDE, ROW_SHORTCUT_GUIDE, ShortcutError
+from shortcuts import row_hotkey, supported_hotkey, qt_hotkey, SHORTCUT_GUIDE, ROW_SHORTCUT_GUIDE, ShortcutError
 from row_drag import AnimatedRowsTable
 
 
@@ -147,6 +147,18 @@ def make_pin_icon(muted, accent):
         painter.end()
         icon.addPixmap(pixmap, QIcon.Mode.Normal, state)
     return icon
+
+
+def make_add_icon(color):
+    pixmap = QPixmap(24, 24)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(QColor(color), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    painter.drawLine(5, 12, 19, 12)
+    painter.drawLine(12, 5, 12, 19)
+    painter.end()
+    return QIcon(pixmap)
 
 
 def make_trash_icon(color):
@@ -421,8 +433,14 @@ class KeyDialog(QDialog):
         self.setWindowTitle("단축키 지정")
         self.setFixedWidth(280)
         self.validate_shortcut = None
+        self._checked_edit = None
+        self.accepted_edit = None
         layout = QVBoxLayout(self)
-        self.editor = ClickToCaptureEdit(QKeySequence(qt_hotkey(value), QKeySequence.SequenceFormat.PortableText), self)
+        try:
+            sequence = qt_hotkey(value)
+        except ShortcutError:
+            sequence = ''
+        self.editor = ClickToCaptureEdit(QKeySequence(sequence, QKeySequence.SequenceFormat.PortableText), self)
         line_edit = self.editor.findChild(QLineEdit)
         if line_edit is not None:
             line_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -440,27 +458,55 @@ class KeyDialog(QDialog):
         self.validation.setWordWrap(True)
         self.validation.hide()
         layout.addWidget(self.validation)
-        self.editor.keySequenceChanged.connect(self.validation.hide)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText('확인')
+        self.confirm_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.confirm_button.setText('확인')
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('취소')
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self.editor.keySequenceChanged.connect(self.refresh_validation)
+        self.refresh_validation()
         self.editor.setFocus()
 
     def value(self):
         return row_hotkey(self.editor.keySequence().toString(QKeySequence.SequenceFormat.PortableText))
 
-    def accept(self):
+    def refresh_validation(self, *_):
+        self._checked_edit = None
+        self.confirm_button.setText('확인')
         try:
             value = self.value()
             if self.validate_shortcut is not None:
-                self.validate_shortcut(value)
+                self._checked_edit = self.validate_shortcut(value)
         except ValueError as error:
             self.validation.setText(str(error))
+            self.validation.setProperty('error', True)
             self.validation.show()
+            self.confirm_button.setEnabled(False)
+        else:
+            edit = self._checked_edit
+            self.validation.setText(edit.message if edit is not None else '')
+            self.validation.setProperty('error', False)
+            self.validation.setVisible(bool(self.validation.text()))
+            self.confirm_button.setText(edit.action if edit is not None else '확인')
+            self.confirm_button.setEnabled(True)
+        self.validation.style().unpolish(self.validation)
+        self.validation.style().polish(self.validation)
+        self.ensurePolished()
+        self.layout().invalidate()
+        self.resize(self.width(), self.layout().totalHeightForWidth(self.width()))
+        return self.confirm_button.isEnabled()
+
+    def accept(self):
+        previous = self._checked_edit
+        if not self.refresh_validation():
             return
+        # Never approve a newly changed exchange without showing its preview.
+        if (self._checked_edit != previous
+                and any(edit is not None and len(edit.changes) > 1 for edit in (previous, self._checked_edit))):
+            return
+        self.accepted_edit = self._checked_edit
         super().accept()
 
 
@@ -529,31 +575,43 @@ class SettingsDialog(QDialog):
         self.validation.hide()
         layout.addWidget(self.validation)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Save).setText('저장')
+        self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
+        self.save_button.setText('저장')
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('취소')
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        for editor in self.keys.values():
+            editor.keySequenceChanged.connect(self.refresh_validation)
+        self.refresh_validation()
 
     def show_validation_error(self, message):
         self.validation.setText(str(message))
         self.validation.show()
         self.tabs.setCurrentIndex(0)
 
-    def accept(self):
+    def refresh_validation(self, *_):
         try:
             settings = self.value()
             if self.validate_settings is not None:
                 self.validate_settings(settings)
-        except ShortcutError as error:
+        except ValueError as error:
             self.show_validation_error(error)
-            self.validation_failed.emit(str(error))
+            self.save_button.setEnabled(False)
+            return False
+        self.validation.hide()
+        self.save_button.setEnabled(True)
+        return True
+
+    def accept(self):
+        if not self.refresh_validation():
+            self.validation_failed.emit(self.validation.text())
             return
         super().accept()
 
     def value(self):
         data = asdict(self.original)
-        data.update({name: editor.keySequence().toString(QKeySequence.SequenceFormat.PortableText)
+        data.update({name: supported_hotkey(editor.keySequence().toString(QKeySequence.SequenceFormat.PortableText))
                      for name, editor in self.keys.items()})
         data.update({name: spin.value() for name, spin in self.times.items()})
         data.update({name: checkbox.isChecked() for name, checkbox in self.checks.items()})

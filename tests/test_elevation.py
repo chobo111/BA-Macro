@@ -256,3 +256,22 @@ class ElevationTests(unittest.TestCase):
                     timer.stop()
         parent.deleteLater()
         qt.processEvents()
+
+    def test_immediately_ready_child_must_still_be_running_without_entering_wait(self):
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        from PySide6.QtCore import QObject, QEventLoop
+        from PySide6.QtWidgets import QApplication
+        qt = QApplication.instance() or QApplication([])
+        parent = QObject()
+        try:
+            for finished in (False, True):
+                launch = Mock()
+                launch.ready.return_value = True
+                launch.finished.return_value = finished
+                with self.subTest(finished=finished), patch.object(
+                        QEventLoop, 'exec', side_effect=AssertionError('already-ready child must not wait')):
+                    self.assertEqual(e.await_ready(launch, parent), not finished)
+                launch.finished.assert_called_once_with()
+        finally:
+            parent.deleteLater()
+            qt.processEvents()

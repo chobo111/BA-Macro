@@ -169,13 +169,18 @@ class TableSyncTests(unittest.TestCase):
         w = self.window
         w.settings.auto_pause = True
         with patch.object(w, 'update_labels', wraps=w.update_labels) as labels, \
+                patch.object(w, 'update_save_state', wraps=w.update_save_state) as state, \
+                patch.object(w, 'update_profile_checks', wraps=w.update_profile_checks) as checks, \
                 patch.object(w.engine, 'stop', wraps=w.engine.stop) as stop:
             w.live_memo_changed(0, 'new memo')
-            self.assertEqual(labels.call_count, 1)
+            labels.assert_not_called()
+            self.assertEqual(state.call_count, 1)
             self.assertTrue(w.dirty)
             stop.assert_called_once()
             w.flush_pending_saves()
-            self.assertEqual(labels.call_count, 2)
+            labels.assert_not_called()
+            checks.assert_not_called()
+            self.assertEqual(state.call_count, 2)
         self.assertFalse(w.dirty)
         self.assertEqual(read_json(w.path)['macros'][0]['memo'], 'new memo')
 
@@ -184,6 +189,15 @@ class TableSyncTests(unittest.TestCase):
         w.path = Path(self.directory.name) / 'different.json'
         w.rebuild()
         self.assertEqual(w.profile_name.text(),'different')
+
+    def test_autosave_refreshes_new_coordinate_basis_and_profile_app(self):
+        w = self.window
+        w.profile.resolution = (1920, 1080)
+        w.profile.target_program = {'exe': 'Example.exe', 'class': 'Example', 'title': 'Example'}
+        w.changed()
+        w.flush_pending_saves()
+        self.assertEqual(w.profile_resolution.text(), '기준 1920×1080')
+        self.assertEqual(w.targets.placeholderText(), 'Example')
 
     def test_unrelated_refresh_preserves_incomplete_numeric_input(self):
         w, t = self.window, self.window.table

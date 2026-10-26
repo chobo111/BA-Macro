@@ -18,6 +18,9 @@ from domain import Profile, Settings, atomic_json, read_json, WindowSizeUnavaila
 from execution_plan import ExecutionPlan
 from persistence import SaveResult
 from profile_catalog import profile_entries
+from profile_dialogs import DuplicateProfileDialog
+from PySide6.QtWidgets import QDialog
+from ui_test_support import fail_on_unexpected_error_dialogs
 
 
 class ProfileMenuTests(unittest.TestCase):
@@ -26,6 +29,7 @@ class ProfileMenuTests(unittest.TestCase):
         cls.qt = QApplication.instance() or QApplication([])
 
     def setUp(self):
+        fail_on_unexpected_error_dialogs(self)
         self.folder = tempfile.TemporaryDirectory()
         self.directory = Path(self.folder.name)
         self.patches = ExitStack()
@@ -166,7 +170,7 @@ class ProfileMenuTests(unittest.TestCase):
     def test_profile_actions_are_in_titlebar_menu(self):
         self.assertEqual([a.text() for a in self.w.main_menu.actions() if not a.isSeparator()],
                          ['프로필 선택', '새 프로필…', '불러오기…', '복제…', '이름 변경…', '폴더 열기',
-                          '환경설정', '프로필 해상도 변환…', '현재 프로필 정보', '앱 정보', '오류 로그'])
+                          '환경설정', '프로필 해상도 변환…', '현재 프로필 정보', '앱 정보', '오류 로그', '좌표 진단'])
         self.assertFalse(hasattr(self.w, 'profile_panel'))
         self.assertFalse(hasattr(self.w,'cursor_label'))
         self.assertTrue(self.w.target_box.isAncestorOf(self.w.profile_name))
@@ -356,7 +360,8 @@ class ProfileMenuTests(unittest.TestCase):
         source, before = w.path, w.path.read_bytes()
         destination = self.directory / 'copy.json'
         w.armed = True
-        with patch.object(QFileDialog, 'getSaveFileName', return_value=(str(destination), '')):
+        with patch.object(DuplicateProfileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+                patch.object(DuplicateProfileDialog, 'value', return_value=destination.stem):
             self.assertTrue(w.duplicate_profile())
         self.assertEqual(w.path, destination)
         self.assertEqual(source.read_bytes(), before)
@@ -369,11 +374,14 @@ class ProfileMenuTests(unittest.TestCase):
     def test_duplicate_rejects_source_path_and_failed_write_keeps_current(self):
         w = self.w
         source, before = w.path, w.path.read_bytes()
-        with patch.object(QFileDialog, 'getSaveFileName', return_value=(str(source), '')):
+        with patch.object(DuplicateProfileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+                patch.object(DuplicateProfileDialog, 'value', return_value=source.stem):
             self.assertFalse(w.duplicate_profile())
         failed = Future()
         failed.set_result(SaveResult(False, error='copy failed'))
-        with patch.object(QFileDialog, 'getSaveFileName', return_value=(str(self.directory/'copy.json'), '')), patch.object(w.store, 'save', return_value=failed):
+        with patch.object(DuplicateProfileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+                patch.object(DuplicateProfileDialog, 'value', return_value='copy'), \
+                patch.object(w.store, 'save', return_value=failed):
             self.assertFalse(w.duplicate_profile())
         self.assertEqual(w.path, source)
         self.assertEqual(source.read_bytes(), before)
@@ -387,7 +395,7 @@ class ProfileMenuTests(unittest.TestCase):
         self.assertTrue(self.w.switch_profile(self.other()))
         self.assertNotIn('recent_profiles', read_json(self.w.settings_path))
 
-    def test_menu_only_lists_selected_folder_after_switch(self):
+    def test_external_import_menu_lists_app_folder_and_selects_local_copy(self):
         w = self.w
         with tempfile.TemporaryDirectory() as other_folder:
             directory = Path(other_folder)
@@ -402,7 +410,9 @@ class ProfileMenuTests(unittest.TestCase):
             self.assertFalse(actions[0].isEnabled())
             self.assertGreaterEqual(w.profile_menu.actionGeometry(actions[0]).height(),
                                     w.profile_menu.fontMetrics().height())
-            self.assertEqual([a.data() for a in actions if a.data()], [str(other)])
+            local = w.data_dir / other.name
+            self.assertEqual(w.path, local)
+            self.assertEqual([a.data() for a in actions if a.data()], [str(local), str(w.data_dir / 'macro.json')])
             self.assertTrue(actions[1].isChecked())
 
     def test_empty_folder_still_has_folder_heading(self):

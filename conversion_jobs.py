@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from threading import Event
 
-from conversion import plan_conversion
+from conversion import convert_snapshot
 
 
 class ConversionJobs:
@@ -25,7 +25,7 @@ class ConversionJobs:
         self.cancel()
         self.cancelled = Event()
         # Snapshot on the caller thread; subsequent UI edits cannot race the worker.
-        self.future = self.executor.submit(plan_conversion, deepcopy(profile), source, destination,
+        self.future = self.executor.submit(convert_snapshot, deepcopy(profile), source, destination,
                                            cancelled=self.cancelled.is_set)
         return self.future
 

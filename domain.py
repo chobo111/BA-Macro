@@ -95,7 +95,12 @@ class Row:
             raise ValueError("스크립트는 100,000자 이하의 문자열이어야 합니다.")
         if mode not in MODES:
             raise ValueError(f"지원하지 않는 실행 모드: {mode}")
-        return cls(str(data.get("id") or uuid.uuid4().hex), hotkey(data.get("move_hk", "")),
+        key = str(data.get("move_hk", ""))
+        try:
+            key = hotkey(key)
+        except ShortcutError:
+            pass  # Preserve imported keys for repair; runtime registration filters them.
+        return cls(str(data.get("id") or uuid.uuid4().hex), key,
                    bounded_int(x, -99999, 99999, "X"),
                    bounded_int(y, -99999, 99999, "Y"), str(data.get("memo", "")), mode, script)
 
@@ -132,16 +137,12 @@ class Profile:
             values = resolution.split("x")
             size = tuple(bounded_int(v.strip(), 1, 100000, "해상도") for v in values)
         obj = cls(rows, size, target_identity(data.get('target_program')))
-        obj.validate()
         return obj
 
     def has_fixed_coordinates(self):
         # Keep hidden coordinates too: changing a row's mode can restore them.
         # The default table point (0, 0) alone does not establish a saved basis.
         return any(row.x or row.y or coordinate_tokens(row.script) for row in self.rows)
-
-    def validate(self, reserved=()):
-        validate_hotkeys((*reserved, *(row.move_hk for row in self.rows)))
 
     def export(self):
         return {"format": PROFILE_FORMAT, "target_resolution": "%dx%d" % self.resolution if self.resolution else "알 수 없음",

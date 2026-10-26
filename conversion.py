@@ -28,6 +28,12 @@ class ConversionPlan:
 
 
 def plan_conversion(profile, source, destination, *, cancelled=None):
+    """Convert a caller-owned profile without changing its contents."""
+    return convert_snapshot(deepcopy(profile), source, destination, cancelled=cancelled)
+
+
+def convert_snapshot(profile, source, destination, *, cancelled=None):
+    """Convert an exclusively owned snapshot in place; the caller must not reuse it."""
     def check_cancelled():
         if cancelled is not None and cancelled():
             raise CancelledError()
@@ -35,7 +41,7 @@ def plan_conversion(profile, source, destination, *, cancelled=None):
     check_cancelled()
     sw, sh, dw, dh = [bounded_int(v, 1, 100000, '해상도') for v in (*source, *destination)]
     warning = aspect_warning((sw, sh), (dw, dh))
-    plan = ConversionPlan(deepcopy(profile), 0, [], [warning] if warning else [])
+    plan = ConversionPlan(profile, 0, [], [warning] if warning else [])
 
     def point(x, y, location):
         try:

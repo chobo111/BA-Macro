@@ -13,6 +13,8 @@ from PySide6.QtWidgets import QApplication, QDialog, QFileDialog
 from app import MainWindow
 from domain import Profile, Settings, atomic_json, read_json
 from persistence import ProfileStore
+from hotkeys import Hotkeys
+from profile_dialogs import NewProfileDialog
 
 GAME = {'exe': 'Game.exe', 'class': 'Game', 'title': 'Game'}
 OTHER = {'exe': 'Other.exe', 'class': 'Other', 'title': 'Other'}
@@ -26,13 +28,13 @@ class DefaultProfileTests(unittest.TestCase):
                                    (('ctrl+q', 'shift+e'), ['q', 'w', 'e'])):
             with self.subTest(reserved=reserved):
                 profile = Profile.default(reserved)
-                profile.validate(reserved)
+                self.assertFalse(Hotkeys.prepare_profile(reserved, [r.move_hk for r in profile.rows]).issues)
                 self.assertEqual([r.move_hk for r in profile.rows], expected)
                 self.assertTrue(all(not r.memo and not r.script and r.x == r.y == 0
                                     and r.action_mode == 'move_only' for r in profile.rows))
                 self.assertEqual(len({r.id for r in profile.rows}), 3)
 
-    def load(self, contents=None):
+    def load(self, contents=None, *, conflicting=False):
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
             settings = Settings(pause_hk='q', capture_hk='w')
@@ -43,7 +45,14 @@ class DefaultProfileTests(unittest.TestCase):
             store = ProfileStore(directory)
             try:
                 loaded = store.load()
-                loaded.profile.validate((loaded.settings.pause_hk, loaded.settings.capture_hk))
+                if conflicting:
+                    self.assertEqual(loaded.path, path)
+                    self.assertFalse(loaded.warning)
+                    self.assertEqual([r.move_hk for r in loaded.profile.rows], ['q', 'w', 'e'])
+                    self.assertEqual(path.read_text(encoding='utf-8'), contents)
+                    return
+                self.assertFalse(Hotkeys.prepare_profile((loaded.settings.capture_hk, loaded.settings.pause_hk),
+                                                        [r.move_hk for r in loaded.profile.rows]).issues)
                 self.assertEqual([r.move_hk for r in loaded.profile.rows], ['', '', 'e'])
                 self.assertEqual((loaded.settings.pause_hk, loaded.settings.capture_hk), ('q', 'w'))
                 if contents is None:
@@ -65,7 +74,7 @@ class DefaultProfileTests(unittest.TestCase):
 
     def test_existing_conflicting_profile_is_not_silently_rewritten(self):
         import json
-        self.load(json.dumps(Profile.default().export()))
+        self.load(json.dumps(Profile.default().export()), conflicting=True)
 
 
 class DefaultProfileUiTests(unittest.TestCase):
@@ -118,8 +127,8 @@ class DefaultProfileUiTests(unittest.TestCase):
         w = self.w
         previous_path, previous_bytes = w.path, w.path.read_bytes()
         destination = previous_path.with_name('new.json')
-        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
-             patch.object(QFileDialog, 'selectedFiles', return_value=[str(destination)]):
+        with patch.object(NewProfileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(NewProfileDialog, 'value', return_value=destination.stem):
             w.new_profile()
         self.assertEqual(w.path, destination)
         self.assert_saved(previous_path, previous_bytes, ['', '', 'e'])

@@ -17,6 +17,37 @@ class HotkeyTests(unittest.TestCase):
     def event(self, key, kind="down"):
         return self.hooks.handle(SimpleNamespace(scan_code=keyboard.key_to_scan_codes(key)[0], event_type=kind))
 
+    def test_imported_ctrl_alias_never_dispatches_alongside_global_capture(self):
+        prepared = Hotkeys.prepare_profile(('ctrl+s', 'ctrl+`'), ('left control', 'right_ctrl+q', 'q'))
+        self.assertEqual(prepared.keys, ('', '', 'q'))
+        self.assertEqual(set(prepared.issues), {0, 1})
+        self.hooks.configure_profile(prepared, ('one', 'two', 'three'), True)
+        self.event('ctrl')
+        self.event('s')
+        self.assertEqual(self.actions, [('capture_selected', '')])
+
+    def test_sided_alias_binding_uses_both_physical_modifiers_without_recompile(self):
+        from unittest.mock import patch
+        prepared = Hotkeys.prepare_profile(('f8', 'f9'), ('left ctrl',))
+        with patch.object(Hotkeys, 'compile', side_effect=AssertionError('must reuse checked binding')):
+            self.hooks.configure_profile(prepared, ('row',), True)
+        for event in ((29, 0xA2, False), (29, 0xA3, True)):
+            self.assertFalse(self.physical_event(*event))
+            self.assertTrue(self.hooks.held('right control'))
+            self.assertFalse(self.physical_event(*event, kind='up'))
+        self.assertEqual(self.actions, [('move', 'row'), ('move', 'row')])
+
+    def test_backend_win_aliases_are_rejected_by_all_registration_paths(self):
+        previous = list(self.hooks.bindings)
+        for name in ('left windows', 'right_win', 'command', 'cmd'):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(ValueError, 'Win'):
+                    self.hooks.configure([(name, 'pause', '')])
+                self.assertEqual(self.hooks.bindings, previous)
+                prepared = Hotkeys.prepare_profile(('f8', 'f9'), (name,))
+                self.assertEqual(prepared.keys, ('',))
+                self.assertIn('Win', prepared.issues[0])
+
     def test_repeat_and_release(self):
         self.assertFalse(self.event("q"))
         self.assertFalse(self.event("q"))
@@ -196,7 +227,7 @@ class HotkeyTests(unittest.TestCase):
         self.assertFalse(self.hooks.suppressed)
 
     def test_special_key_aliases_have_one_canonical_binding(self):
-        from domain import hotkey, Profile, Row
+        from shortcuts import hotkey
         for qt_name, canonical in (('Print', 'print screen'), ('PrintScreen', 'print screen'),
                                     ('NumLock', 'num lock'), ('ScrollLock', 'scroll lock'),
                                     ('CapsLock', 'caps lock')):
@@ -204,7 +235,7 @@ class HotkeyTests(unittest.TestCase):
                 self.assertEqual(hotkey(qt_name), canonical)
                 self.assertEqual(Hotkeys.compile(qt_name).groups, Hotkeys.compile(canonical).groups)
                 with self.assertRaises(ValueError):
-                    Profile([Row(move_hk=qt_name), Row(move_hk=canonical)]).validate(())
+                    Hotkeys.validate((qt_name, canonical))
 
     def test_duplicate_configuration_leaves_existing_bindings_intact(self):
         previous = list(self.hooks.bindings)
@@ -443,6 +474,69 @@ class HotkeyTests(unittest.TestCase):
                 self.assertEqual(group.matches(PressedKey(scan, vk, False)), expected)
         with self.assertRaisesRegex(ValueError, '중복'):
             Hotkeys.validate(('shift+plus', 'shift+='))
+
+    def test_unqualified_shift_symbols_cannot_replace_active_bindings(self):
+        from unittest.mock import patch
+        from keyboard_hook import character_key
+        mappings = {'_': (0xBD, frozenset(('shift',))),
+                    '!': (0x31, frozenset(('shift',))),
+                    '?': (0xBF, frozenset(('shift',)))}
+        previous = list(self.hooks.bindings)
+        with patch('keyboard_hook.character_key',
+                   side_effect=lambda char: mappings[char] if char in mappings else character_key(char)):
+            for symbol in mappings:
+                with self.subTest(symbol=symbol), self.assertRaisesRegex(ValueError, 'Shift'):
+                    self.hooks.configure([(symbol, 'move', 'invalid')], True)
+                self.assertEqual(self.hooks.bindings, previous)
+
+    def test_imported_shift_symbols_are_quarantined_without_suppressing_base_keys(self):
+        from unittest.mock import patch
+        from keyboard_hook import character_key
+        mappings = {'_': (0xBD, frozenset(('shift',))),
+                    '!': (0x31, frozenset(('shift',))),
+                    '?': (0xBF, frozenset(('shift',)))}
+        with patch('keyboard_hook.character_key',
+                   side_effect=lambda char: mappings[char] if char in mappings else character_key(char)):
+            prepared = Hotkeys.prepare_profile(('ctrl+s', 'ctrl+f9'), ('_', '!', '?', 'q'))
+        self.assertEqual(prepared.keys, ('', '', '', 'q'))
+        self.assertEqual(set(prepared.issues), {0, 1, 2})
+        self.hooks.configure_profile(prepared, ('underscore', 'exclamation', 'question', 'valid'), True)
+        for scan, vk in ((12, 0xBD), (2, 0x31), (53, 0xBF)):
+            self.assertTrue(self.physical_event(scan, vk))
+            self.assertTrue(self.physical_event(scan, vk, kind='up'))
+        self.assertEqual(self.actions, [])
+        self.event('q')
+        self.assertEqual(self.actions, [('move', 'valid')])
+
+    def test_qualified_shift_symbols_and_their_plain_keys_remain_distinct(self):
+        from unittest.mock import patch
+        from keyboard_hook import character_key
+        for symbol, plain, scan, vk in (('_', '-', 12, 0xBD), ('!', '1', 2, 0x31), ('?', '/', 53, 0xBF)):
+            with self.subTest(symbol=symbol):
+                self.hooks.close()
+                self.actions.clear()
+                with patch('keyboard_hook.character_key', side_effect=lambda char:
+                           (vk, frozenset(('shift',))) if char == symbol else character_key(char)):
+                    self.hooks.configure([('shift+' + symbol, 'move', 'shifted'),
+                                          (plain, 'move', 'plain')], True)
+                self.assertFalse(self.physical_event(scan, vk))
+                self.assertFalse(self.physical_event(scan, vk, kind='up'))
+                self.physical_event(42, 0xA0)
+                self.assertFalse(self.physical_event(scan, vk))
+                self.assertTrue(self.hooks.held('shift+' + symbol))
+                self.assertFalse(self.physical_event(scan, vk, kind='up'))
+                self.physical_event(42, 0xA0, kind='up')
+                self.assertEqual(self.actions, [('move', 'plain'), ('move', 'shifted')])
+
+    def test_character_mapping_requires_every_layout_modifier(self):
+        from unittest.mock import patch
+        from keyboard_hook import character_key
+        with patch('keyboard_hook.character_key', side_effect=lambda char:
+                   (0x51, frozenset(('ctrl', 'alt'))) if char == '@' else character_key(char)):
+            for shortcut in ('@', 'alt+@', 'ctrl+@'):
+                with self.subTest(shortcut=shortcut), self.assertRaisesRegex(ValueError, 'Ctrl\\+Alt'):
+                    Hotkeys.validate((shortcut,))
+            Hotkeys.validate(('ctrl+alt+@',))
 
     def test_unmapped_symbol_keeps_existing_bindings(self):
         from unittest.mock import patch

@@ -82,7 +82,9 @@ def stylesheet(c):
         QLabel {{background: transparent;}}
         QLabel#muted {{color: {c.muted};}}
         QLabel#profileName {{font-weight: 600;}}
-        QLabel#profileUnsaved {{color: {c.error_text}; background: {c.error_background}; border-radius: 3px; padding: 1px 4px;}}
+        QToolButton#profileUnsaved {{color: {c.error_text}; background: {c.error_background}; border: 1px solid {c.error_border}; border-radius: 3px; padding: 1px 4px;}}
+        QToolButton#profileUnsaved:hover:enabled {{border-color: {c.accent};}}
+        QToolButton#profileUnsaved:disabled {{color: {c.disabled_text};}}
         QLabel#targetStatus {{color: {c.muted};}}
         QLabel#targetStatus[warning="true"] {{color: {c.error_text};}}
         QFrame#targetBox {{background: {c.panel}; border: 1px solid {c.border}; border-radius: 6px;}}
@@ -90,6 +92,10 @@ def stylesheet(c):
         QToolButton#targetToggle:hover {{background: {c.alternate}; color: {c.text};}}
         QToolButton#targetToggle:pressed {{background: {c.selection}; color: {c.selected_text};}}
         QFrame#toolbarSeparator {{background: {c.border}; border: none;}}
+        QToolButton#addRowButton {{background: {c.panel}; border: 1px solid {c.border}; border-radius: 5px; padding: 0;}}
+        QToolButton#addRowButton:hover:enabled {{border-color: {c.accent}; background: {c.alternate};}}
+        QToolButton#addRowButton:pressed:enabled {{background: {c.border};}}
+        QToolButton#addRowButton:disabled {{background: {c.disabled_background}; color: {c.disabled_text}; border-color: {c.disabled_border};}}
         QTabWidget::pane {{border: 1px solid {c.border}; border-radius: 4px;}}
         QTabBar::tab {{background: {c.panel}; color: {c.muted}; padding: 7px 18px; border: 1px solid {c.border};}}
         QTabBar::tab:selected {{color: {c.text}; border-bottom: 2px solid {c.accent};}}

@@ -15,7 +15,7 @@ from script_help import COMMAND_HELP
 class CompletionContextTests(unittest.TestCase):
     def words(self, text, explicit=False):
         result = completion_context(text, len(text), explicit)
-        return [word for word, _ in result[3]] if result else []
+        return [word for word, _ in result[2]] if result else []
 
     def test_commands_indentation_case_and_explicit_empty(self):
         self.assertEqual(self.words('  CU'), ['curve', 'curve_first_time', 'curve_last_time', 'curve_release'])
@@ -42,8 +42,8 @@ class CompletionContextTests(unittest.TestCase):
 
     def test_middle_token_span_preserves_arguments_and_comments(self):
         result = completion_context('  curve_last_time 5 // 설명', 5)
-        self.assertEqual(result[:3], (2, 17, True))
-        self.assertEqual(result[3][0][0], 'curve')
+        self.assertEqual(result[:2], (2, 17))
+        self.assertEqual(result[2][0][0], 'curve')
 
 
 class CompletionEditorTests(unittest.TestCase):

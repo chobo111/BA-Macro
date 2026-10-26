@@ -1,8 +1,10 @@
 """Canonical shortcut names shared by JSON, Qt adapters and input bindings."""
+from keyboard import normalize_name
+
 MODIFIERS = ('ctrl', 'alt', 'shift', 'win')
 COMBINATION_MODIFIERS = ('ctrl', 'alt', 'shift')
-SHORTCUT_GUIDE = 'Ctrl, Alt, Shift + 키만 가능합니다.'
-ROW_SHORTCUT_GUIDE = '조합키는 Alt, Shift + 키만 가능합니다.'
+SHORTCUT_GUIDE = '키 하나 또는 Ctrl/Alt/Shift + 키\nWin 키는 사용할 수 없습니다.'
+ROW_SHORTCUT_GUIDE = '키 하나 또는 Alt/Shift + 키\nWin 키는 사용할 수 없습니다.'
 
 
 class ShortcutError(ValueError):
@@ -20,6 +22,19 @@ ALIASES = {
 QT_NAMES = {'win': 'Meta', 'plus': '+'}
 
 
+def _key_name(part):
+    name = ALIASES.get(part.strip(), part.strip())
+    if not name:
+        return name
+    # Use the input backend's modifier aliases too (command, option, left_ctrl).
+    # BA Macro deliberately treats left/right modifiers as the same shortcut.
+    physical = normalize_name(name)
+    if physical.startswith(('left ', 'right ')):
+        physical = physical.split(' ', 1)[1]
+    modifier = ALIASES.get(physical, physical)
+    return modifier if modifier in MODIFIERS else name
+
+
 def hotkey(value: str) -> str:
     text = str(value).strip().lower()
     if not text:
@@ -29,7 +44,7 @@ def hotkey(value: str) -> str:
         text = 'plus'
     elif text.endswith('++'):
         text = text[:-1] + 'plus'
-    parts = [ALIASES.get(part.strip(), part.strip()) for part in text.split('+')]
+    parts = [_key_name(part) for part in text.split('+')]
     if any(not part for part in parts):
         raise ShortcutError('단축키의 키 이름이 비어 있습니다.')
     if len(set(parts)) != len(parts):
@@ -53,26 +68,38 @@ def qt_hotkey(value: str) -> str:
     return '+'.join(QT_NAMES.get(part, part) for part in canonical.split('+'))
 
 
-def row_hotkey(value: str) -> str:
+def supported_hotkey(value: str) -> str:
     key = hotkey(value)
+    if key == 'win':
+        raise ShortcutError('Win 키는 사용할 수 없습니다. 다른 키를 지정하세요.')
+    return key
+
+
+def row_hotkey(value: str) -> str:
+    key = supported_hotkey(value)
     if 'ctrl' in key.split('+')[:-1]:
         raise ShortcutError('Shift와 Alt 조합키만 사용할 수 있습니다.')
     return key
 
 
+def canonical_conflict(first, second):
+    """Compare already normalized names; physical overlap is checked by bindings."""
+    if first == second:
+        return f'중복된 단축키: {first.upper()}'
+    for single, chord in ((first, second), (second, first)):
+        if single in COMBINATION_MODIFIERS and single in chord.split('+')[:-1]:
+            return f'{single.upper()} 단독과 {chord.upper()} 조합은 함께 지정할 수 없습니다.'
+    return ''
+
+
 def validate_hotkeys(values):
-    """Reject duplicates and standalone modifiers used as another chord's prefix."""
-    used = set()
+    """Validate stored names without discarding unsupported imported settings."""
+    used = []
     for value in values:
         normalized = hotkey(value)
         if not normalized:
             continue
-        if normalized in used:
-            raise ShortcutError(f'중복된 단축키: {normalized.upper()}')
-        used.add(normalized)
-    for modifier in COMBINATION_MODIFIERS:
-        if modifier not in used:
-            continue
-        conflict = next((key for key in sorted(used) if modifier in key.split('+')[:-1]), None)
-        if conflict:
-            raise ShortcutError(f'{modifier.upper()} 단독과 {conflict.upper()} 조합은 함께 지정할 수 없습니다.')
+        for previous in used:
+            if reason := canonical_conflict(previous, normalized):
+                raise ShortcutError(reason)
+        used.append(normalized)
