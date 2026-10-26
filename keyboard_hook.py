@@ -60,6 +60,12 @@ def character_key(character):
     return code & 0xFF, required
 
 
+def base_character(virtual_key):
+    """Name the unshifted character using the current Windows keyboard layout."""
+    code = U.MapVirtualKeyW(virtual_key, 2) & 0x7FFFFFFF  # MAPVK_VK_TO_CHAR; strip dead-key flag
+    return chr(code).lower() if 0 < code <= 0xFFFF else ''
+
+
 class PhysicalHook:
     def __init__(self, handler, on_error=None):
         self.handler = handler

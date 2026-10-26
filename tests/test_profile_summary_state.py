@@ -15,6 +15,8 @@ from app import MainWindow
 from domain import Profile, atomic_json
 from persistence import SaveResult
 from shortcuts import ShortcutError
+from profile_dialogs import DuplicateProfileDialog
+from PySide6.QtWidgets import QDialog
 
 
 class ProfileSummaryStateTests(unittest.TestCase):
@@ -181,7 +183,8 @@ class ProfileSummaryStateTests(unittest.TestCase):
         failed = Future()
         failed.set_result(SaveResult(False, error='copy unavailable'))
         destination = self.directory / 'copy.json'
-        with patch.object(QFileDialog, 'getSaveFileName', return_value=(str(destination), '')), \
+        with patch.object(DuplicateProfileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+                patch.object(DuplicateProfileDialog, 'value', return_value=destination.stem), \
                 patch.object(self.w.store, 'save', return_value=failed):
             self.assertFalse(self.w.duplicate_profile())
         self.assertEqual(self.w.path, original)

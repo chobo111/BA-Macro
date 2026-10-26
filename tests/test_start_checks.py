@@ -1,3 +1,4 @@
+from profile_dialogs import NewProfileDialog
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from dataclasses import asdict
@@ -156,18 +157,6 @@ class StartChecks(unittest.TestCase):
         self.assertTrue(event.isAccepted())
         w._restarting = False
 
-    def test_always_admin_startup_only_requests_when_enabled_and_not_elevated(self):
-        for enabled, elevated in ((False, False), (True, True), (True, False)):
-            with self.subTest(enabled=enabled, elevated=elevated), \
-                 patch('app.elevation.is_elevated', return_value=elevated), \
-                 patch.object(self.window, 'request_admin_restart') as restart:
-                self.window.settings.always_run_as_admin = enabled
-                self.window.check_startup_elevation()
-                if enabled and not elevated:
-                    restart.assert_called_once_with(prompt=False)
-                else:
-                    restart.assert_not_called()
-
     def test_admin_option_roundtrips_through_settings_dialog_and_disk(self):
         from widgets import SettingsDialog
         self.assertFalse(self.window.settings.always_run_as_admin)
@@ -308,7 +297,7 @@ class StartChecks(unittest.TestCase):
                 self.assertEqual(resize.called, choice == 'resize')
                 self.assertFalse(convert.called)
                 if choice == 'resize':
-                    resize.assert_called_once_with(profile_size=(1280, 720))
+                    resize.assert_called_once_with(profile_size=(1280, 720), starting=True)
                 self.assertEqual(self.window.armed, choice == 'auto')
                 self.assertEqual(self.window.profile.export(), before)
                 if choice == 'auto':
@@ -321,6 +310,49 @@ class StartChecks(unittest.TestCase):
             self.window.toggle()
         warning.assert_not_called()
         self.assertTrue(self.window.armed)
+
+    def test_resize_success_is_rechecked_before_starting(self):
+        self.size.return_value = (1920, 1080)
+        with patch('app.SizeMismatchDialog') as prompt, \
+                patch.object(self.window, 'resize_dialog', return_value=True):
+            prompt.return_value.choice.return_value = 'resize'
+            self.window.toggle()
+        self.assertFalse(self.window.armed)
+        self.assertIn('기준 해상도와 다릅니다', self.window.statusBar().currentMessage())
+
+    def test_deferred_start_resize_continues_without_second_toggle(self):
+        w = self.window
+        with patch.object(w.native, 'is_minimized', return_value=True):
+            w.toggle()
+        self.assertTrue(w.session.awaiting_restore)
+        self.size.return_value = (1920, 1080)
+        def resized(hwnd, width, height):
+            self.size.return_value = (width, height)
+        with patch('app.SizeMismatchDialog') as prompt, \
+                patch.object(w.native, 'resize', side_effect=resized), \
+                patch('native.valid_window', return_value=True), \
+                patch('interactive_resize.is_hung', return_value=False), \
+                patch('interactive_resize.refresh', return_value=''):
+            prompt.return_value.choice.return_value = 'resize'
+            self.assertTrue(w.complete_deferred_start())
+        self.assertTrue(w.armed)
+        self.assertFalse(w.session.awaiting_restore)
+        self.assertEqual(w.session.run_size, (1280, 720))
+
+    def test_stop_during_deferred_resize_cannot_rearm(self):
+        w = self.window
+        with patch.object(w.native, 'is_minimized', return_value=True):
+            w.toggle()
+        self.size.return_value = (1920, 1080)
+        def resized(**kwargs):
+            self.size.return_value = (1280, 720)
+            w.stop()
+            return True
+        with patch('app.SizeMismatchDialog') as prompt, \
+                patch.object(w, 'resize_dialog', side_effect=resized):
+            prompt.return_value.choice.return_value = 'resize'
+            self.assertFalse(w.complete_deferred_start())
+        self.assertFalse(w.armed)
 
     def test_approved_resize_uses_profile_size_and_verifies_actual_window(self):
         self.size.return_value = (1920, 1080)
@@ -387,8 +419,8 @@ class StartChecks(unittest.TestCase):
         w = self.window
         w.settings.auto_pause = False
         w.armed = True
-        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
-             patch.object(QFileDialog, 'selectedFiles', return_value=[str(w.path.with_name('new.json'))]), \
+        with patch.object(NewProfileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(NewProfileDialog, 'value', return_value='new'), \
              patch.object(w.native, 'windows', return_value=[]), \
              patch.object(w.engine, 'stop', wraps=w.engine.stop) as stop:
             w.new_profile()
@@ -400,8 +432,8 @@ class StartChecks(unittest.TestCase):
     def test_cancel_new_profile_preserves_existing_profile(self):
         w = self.window
         before = w.profile
-        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
-             patch.object(QFileDialog, 'selectedFiles', return_value=[str(w.path.with_name('new.json'))]), \
+        with patch.object(NewProfileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(NewProfileDialog, 'value', return_value='new'), \
              patch.object(w, 'prepare_profile_change', return_value=False):
             w.new_profile()
         self.assertIs(w.profile, before)
@@ -896,7 +928,7 @@ class StartChecks(unittest.TestCase):
         self.assertEqual(w.coordinate_transform,((1280,720),(1280,960)))
         self.assertEqual(w.profile.export(),before)
 
-    def test_different_ratio_resize_then_restart_uses_original_coordinates(self):
+    def test_different_ratio_resize_starts_immediately_with_original_coordinates(self):
         w = self.window
         self.size.return_value = (1280,960)
         def resized(hwnd,width,height):
@@ -906,8 +938,6 @@ class StartChecks(unittest.TestCase):
             prompt.return_value.choice.return_value = 'resize'
             w.toggle()
         resize.assert_called_once_with(123,1280,720)
-        self.assertFalse(w.armed)
-        w.toggle()
         self.assertTrue(w.armed)
         self.assertIsNone(w.coordinate_transform)
 

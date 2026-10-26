@@ -23,7 +23,7 @@ class PersistenceTests(unittest.TestCase):
         profile = Profile.default().export()
         self.store.save(self.path, profile, self.settings).result()
         destination = self.store.rename_path(self.path, '레이드.JSON')
-        result = self.store.rename(self.path, destination, self.settings)
+        result = self.store.rename_async(self.path, destination, self.settings).result()
         self.assertTrue(result.profile_saved)
         self.assertEqual(result.recent_name, '레이드.json')
         self.assertFalse(self.path.exists())
@@ -40,7 +40,7 @@ class PersistenceTests(unittest.TestCase):
         self.store.save(self.path, Profile.default().export(), self.settings).result()
         destination = self.path.with_name('other.json')
         destination.write_text('keep', encoding='utf-8')
-        result = self.store.rename(self.path, destination, self.settings)
+        result = self.store.rename_async(self.path, destination, self.settings).result()
         self.assertFalse(result.profile_saved)
         self.assertTrue(self.path.exists())
         self.assertEqual(destination.read_text(encoding='utf-8'), 'keep')
@@ -49,7 +49,7 @@ class PersistenceTests(unittest.TestCase):
         self.store.save(self.path, Profile.default().export(), self.settings).result()
         destination = self.path.with_name('other.json')
         with patch.object(Path, 'rename', side_effect=OSError('locked')):
-            result = self.store.rename(self.path, destination, self.settings)
+            result = self.store.rename_async(self.path, destination, self.settings).result()
         self.assertFalse(result.profile_saved)
         self.assertTrue(self.path.exists())
         self.assertFalse(destination.exists())
@@ -59,7 +59,7 @@ class PersistenceTests(unittest.TestCase):
         self.store.save(self.path, Profile.default().export(), self.settings).result()
         destination = self.path.with_name('other.json')
         with patch('persistence.atomic_json', side_effect=OSError('settings locked')):
-            result = self.store.rename(self.path, destination, self.settings)
+            result = self.store.rename_async(self.path, destination, self.settings).result()
         self.assertTrue(result.profile_saved)
         self.assertIn('settings locked', result.error)
         self.assertTrue(destination.exists())
@@ -73,7 +73,7 @@ class PersistenceTests(unittest.TestCase):
             profile = Profile.default().export()
             self.store.save(source, profile, self.settings).result()
             destination = source.with_name('new.json')
-            result = self.store.rename(source, destination, self.settings)
+            result = self.store.rename_async(source, destination, self.settings).result()
             self.assertTrue(result.profile_saved)
             self.assertEqual(result.recent_name, 'new.json')
             self.assertEqual(read_json(self.store.directory / 'new.json'), profile)
@@ -98,7 +98,7 @@ class PersistenceTests(unittest.TestCase):
                 last = self.store.save(self.path, profile, self.settings, coalesce=True)
             finally:
                 release.set()
-            result = self.store.rename(self.path, destination, self.settings)
+            result = self.store.rename_async(self.path, destination, self.settings).result()
         self.assertTrue(first.result().profile_saved)
         self.assertTrue(last.result().profile_saved)
         self.assertTrue(result.profile_saved)
@@ -108,7 +108,7 @@ class PersistenceTests(unittest.TestCase):
     def test_case_only_rename_updates_filename_and_recent_setting(self):
         self.store.save(self.path, Profile.default().export(), self.settings).result()
         destination = self.path.with_name('Macro.json')
-        result = self.store.rename(self.path, destination, self.settings)
+        result = self.store.rename_async(self.path, destination, self.settings).result()
         self.assertTrue(result.profile_saved)
         self.assertEqual(result.recent_name, 'Macro.json')
         self.assertIn('Macro.json', [p.name for p in self.path.parent.iterdir()])
@@ -233,7 +233,8 @@ class PersistenceTests(unittest.TestCase):
                     futures.append(self.store.save(path, profile, self.settings, coalesce=automatic))
             finally:
                 release.set()
-            self.store.flush()
+            for future in futures:
+                future.result()
         self.assertTrue(all(f.result().profile_saved for f in futures))
         self.assertEqual(writes, [('macro.json', 'a'), ('macro.json', 'explicit'),
                                   ('macro.json', 'b'), ('other.json', 'other'), ('macro.json', 'latest')])
@@ -266,7 +267,7 @@ class PersistenceTests(unittest.TestCase):
             finally:
                 release.set()
                 thread.join(3)
-            self.store.flush()
+            last.result()
         self.assertFalse(thread.is_alive())
         self.assertFalse(errors)
         self.assertTrue(last.result().profile_saved)
@@ -283,7 +284,7 @@ class PersistenceTests(unittest.TestCase):
                 last = self.store.save(self.path, profile, self.settings, coalesce=True)
             finally:
                 release.set()
-            self.store.flush()
+            last.result()
         for future in (first, last):
             self.assertFalse(future.result().profile_saved)
             self.assertIn('disk unavailable', future.result().error)
@@ -344,7 +345,7 @@ class PersistenceTests(unittest.TestCase):
         self.assertIn('원본을 보존', result.error)
         with self.assertRaises(ValueError):
             self.store.settings(self.path, settings)
-        self.store.flush()
+        self.store.close()
         self.assertEqual(self.store.settings_path.read_bytes(), original)
 
     def test_explicit_settings_recovery_preserves_raw_backup_and_resumes_autosave(self):

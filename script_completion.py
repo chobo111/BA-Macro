@@ -53,7 +53,7 @@ def completion_context(line, position, explicit=False):
     choices = tuple(choice for choice in choices if choice[0].startswith(prefix))
     if not choices or (not explicit and len(choices) == 1 and choices[0][0] == prefix):
         return None
-    return start, end, index == 0, choices
+    return start, end, choices
 
 
 class ScriptTextEdit(CoordinateTextEdit):
@@ -90,7 +90,7 @@ class ScriptTextEdit(CoordinateTextEdit):
             self.completions.hide()
             return
         self.completions.clear()
-        for word, description in context[3]:
+        for word, description in context[2]:
             item = QListWidgetItem(f'{word}  —  {description}')
             item.setData(Qt.ItemDataRole.UserRole, word)
             item.setToolTip(item.text())
@@ -120,7 +120,7 @@ class ScriptTextEdit(CoordinateTextEdit):
         if item is None or context is None:
             return
         word = item.data(Qt.ItemDataRole.UserRole)
-        start, end, command, choices = context
+        start, end, choices = context
         if word not in {choice[0] for choice in choices}:
             return
         cursor = self.textCursor()
@@ -131,7 +131,7 @@ class ScriptTextEdit(CoordinateTextEdit):
         cursor.setPosition(block_start + len(line[:end].encode('utf-16-le')) // 2,
                            QTextCursor.MoveMode.KeepAnchor)
         replacement = word
-        if command and word not in NO_ARGUMENT and (end == len(line) or not line[end].isspace()):
+        if word not in NO_ARGUMENT and (end == len(line) or not line[end].isspace()):
             replacement += ' '
 
         def insert():

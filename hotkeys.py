@@ -1,8 +1,8 @@
 """Keyboard hook with conditional suppression and one dispatch per chord press."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import threading
 import keyboard
-from shortcuts import hotkey, validate_hotkeys, ShortcutError
+from shortcuts import hotkey, supported_hotkey, row_hotkey, canonical_conflict, ShortcutError, COMBINATION_MODIFIERS
 
 
 # Navigation, keypad and special keys share scan codes. The virtual key describes
@@ -71,6 +71,18 @@ class KeyGroup:
         elif name in LOGICAL_KEYS:
             virtual_keys = frozenset((LOGICAL_KEYS[name],))
         else:
+            if len(name) == 1:
+                from keyboard_hook import character_key
+                mapped = character_key(name)
+                if mapped is None:
+                    raise ShortcutError(f'현재 키보드 배열에서 사용할 수 없는 문자입니다: {name}')
+                if not mapped[1].issubset(modifiers):
+                    from keyboard_hook import base_character
+                    required = '+'.join(key.title() for key in COMBINATION_MODIFIERS if key in mapped[1])
+                    base = base_character(mapped[0]) or name
+                    keys = [key.title() for key in COMBINATION_MODIFIERS if key in set(modifiers) | mapped[1]]
+                    suggestion = '+'.join((*keys, base.upper()))
+                    raise ShortcutError(f"'{name}' 단축키에는 {required} 조합이 필요합니다. {suggestion}로 지정하세요.")
             virtual_keys = frozenset()
         return cls(frozenset(scan_codes), virtual_keys, key_codes)
 
@@ -81,6 +93,30 @@ class Binding:
     action: str
     row_id: str
     groups: tuple
+
+    def overlaps(self, other):
+        return (len(self.groups) == len(other.groups)
+                and all(a.overlaps(b) for a, b in zip(self.groups, other.groups)))
+
+
+def binding_conflict(first, second):
+    """Compare compiled bindings without reparsing names or keyboard mappings."""
+    if reason := canonical_conflict(first.key, second.key):
+        return reason
+    if first.overlaps(second):
+        return f'실제 입력이 중복된 단축키: {first.key.upper()} / {second.key.upper()}'
+    return ''
+
+
+@dataclass(frozen=True)
+class ProfileBindings:
+    globals: tuple
+    rows: tuple
+    issues: dict
+
+    @property
+    def keys(self):
+        return tuple(binding.key if binding is not None else '' for binding in self.rows)
 
 
 class Hotkeys:
@@ -99,8 +135,8 @@ class Hotkeys:
             self.modifiers.update(keyboard.key_to_scan_codes(key))
 
     @staticmethod
-    def compile(key, action="", row_id=""):
-        normalized = hotkey(key)
+    def compile(key, action="", row_id="", *, row=False):
+        normalized = row_hotkey(key) if row else supported_hotkey(key)
         if not normalized:
             return None
         parts = normalized.split("+")
@@ -112,21 +148,14 @@ class Hotkeys:
     @classmethod
     def validated_bindings(cls, values):
         """Compile and check before replacing any live input state."""
-        values = tuple(values)
-        validate_hotkeys(value[0] for value in values)
         bindings = []
         for value in values:
             binding = cls.compile(*value)
             if binding is None:
                 continue
             for previous in bindings:
-                # Canonical modifiers are ordered. Different modifier counts
-                # cannot match together because runtime matching is exact.
-                if (len(binding.groups) == len(previous.groups)
-                        and all(first.overlaps(second)
-                                for first, second in zip(binding.groups, previous.groups))):
-                    raise ShortcutError(
-                        f'실제 입력이 중복된 단축키: {previous.key.upper()} / {binding.key.upper()}')
+                if reason := binding_conflict(previous, binding):
+                    raise ShortcutError(reason)
             bindings.append(binding)
         return bindings
 
@@ -134,8 +163,51 @@ class Hotkeys:
     def validate(cls, keys):
         cls.validated_bindings((key, '', '') for key in keys)
 
+    @classmethod
+    def prepare_profile(cls, global_keys, row_keys):
+        """Keep global keys and quarantine every conflicting/unsupported row."""
+        row_keys = tuple(row_keys)
+        globals_ = cls.validated_bindings((key, action, '') for key, action in
+                                        zip(global_keys, ('capture_selected', 'pause')))
+        candidates, issues = {}, {}
+
+        for index, key in enumerate(row_keys):
+            try:
+                binding = cls.compile(key, row=True)
+                if binding is None:
+                    continue
+                issue = next((reason for other in globals_ if (reason := binding_conflict(binding, other))), '')
+                if issue:
+                    issues[index] = issue
+                else:
+                    candidates[index] = binding
+            except ValueError as error:
+                issues[index] = str(error)
+        entries = list(candidates.items())
+        for offset, (index, binding) in enumerate(entries):
+            for other_index, other in entries[offset + 1:]:
+                issue = binding_conflict(binding, other)
+                if issue:
+                    issues.setdefault(index, issue)
+                    issues.setdefault(other_index, issue)
+        return ProfileBindings(tuple(globals_),
+                               tuple(None if i in issues else candidates.get(i) for i in range(len(row_keys))), issues)
+
+    def configure_profile(self, prepared, row_ids, exclusive=False):
+        """Install a prepared snapshot with the current profile's row identities."""
+        row_ids = tuple(row_ids)
+        if len(prepared.rows) != len(row_ids):
+            raise ValueError('단축키와 프로필 행 수가 다릅니다.')
+        bindings = list(reversed(prepared.globals))
+        bindings.extend(replace(binding, action='move', row_id=rid)
+                        for binding, rid in zip(prepared.rows, row_ids) if binding is not None)
+        self._install(bindings, exclusive)
+
     def configure(self, values, exclusive=False):
         bindings = self.validated_bindings(values)
+        self._install(bindings, exclusive)
+
+    def _install(self, bindings, exclusive):
         with self.lock:
             self.bindings = bindings
             self.exclusive = exclusive

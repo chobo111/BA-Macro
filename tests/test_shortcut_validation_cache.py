@@ -38,7 +38,7 @@ class ShortcutValidationCacheTests(unittest.TestCase):
     def test_memo_and_coordinate_changes_save_immediately_without_revalidation(self):
         w = self.w
         w.validate_profile_shortcuts(w.profile)
-        with patch.object(Hotkeys, 'validate', wraps=Hotkeys.validate) as validate, \
+        with patch.object(Hotkeys, 'prepare_profile', wraps=Hotkeys.prepare_profile) as validate, \
                 patch.object(w.store, 'save', wraps=w.store.save) as save:
             w.live_memo_changed(0, 'one')
             self.assertEqual(save.call_count, 1)
@@ -52,18 +52,19 @@ class ShortcutValidationCacheTests(unittest.TestCase):
             self.assertEqual((row['memo'], row['coords']), ('two', '123, 0'))
             validate.assert_not_called()
 
-    def test_row_conflict_is_rejected_repeatedly_and_repair_saves_pending_edits(self):
+    def test_row_conflict_is_cached_without_blocking_saves(self):
         w = self.w
         w.validate_profile_shortcuts(w.profile)
-        original = w.path.read_bytes()
         w.profile.rows[1].move_hk = 'q'
         w.profile.rows[0].memo = 'pending'
-        with patch.object(Hotkeys, 'validate', wraps=Hotkeys.validate) as validate:
+        with patch.object(Hotkeys, 'prepare_profile', wraps=Hotkeys.prepare_profile) as validate:
             for _ in range(2):
-                self.assertFalse(w.save(automatic=True))
-                self.assertTrue(w.dirty)
-                self.assertEqual(w.path.read_bytes(), original)
-            self.assertEqual(validate.call_count, 2)
+                self.assertTrue(w.save(automatic=True))
+                w.flush_pending_saves()
+                w.rebind()
+                self.assertFalse(w.dirty)
+                self.assertEqual(w.validate_profile_shortcuts(w.profile).keys, ('', '', 'e'))
+            self.assertEqual(validate.call_count, 1)
         w.profile.rows[1].move_hk = 'w'
         self.assertTrue(w.save(automatic=True))
         w.flush_pending_saves()
@@ -82,25 +83,85 @@ class ShortcutValidationCacheTests(unittest.TestCase):
                     w.validate_profile_shortcuts(w.profile, conflicting)
                 w.validate_profile_shortcuts(w.profile)
 
+    def test_settings_draft_does_not_evict_current_validation_or_recompile_rows(self):
+        w = self.w
+        candidate = replace(w.settings, pause_hk='f9')
+        current = w.validate_profile_shortcuts(w.profile)
+        draft = w.validate_profile_shortcuts(w.profile, candidate)
+        with patch.object(Hotkeys, 'prepare_profile', wraps=Hotkeys.prepare_profile) as prepare, \
+                patch.object(Hotkeys, 'compile', wraps=Hotkeys.compile) as compile_key:
+            for _ in range(3):
+                self.assertIs(w.validate_profile_shortcuts(w.profile, candidate), draft)
+                self.assertIs(w.validate_profile_shortcuts(w.profile), current)
+                w.rebind()
+            prepare.assert_not_called()
+            self.assertEqual(compile_key.call_count, 6)  # only two proposed global keys per check
+        for number in range(5, 13):
+            w.validate_profile_shortcuts(w.profile, replace(w.settings, pause_hk=f'f{number}'))
+            self.assertLessEqual(len(w._shortcut_cache), 2)
+
     def test_replacing_profile_and_mutating_keys_rechecks_conflicts(self):
         w = self.w
         w.validate_profile_shortcuts(w.profile)
         other = Profile.default()
-        with patch.object(Hotkeys, 'validate', wraps=Hotkeys.validate) as validate:
+        with patch.object(Hotkeys, 'prepare_profile', wraps=Hotkeys.prepare_profile) as validate:
             w.validate_profile_shortcuts(other)
             validate.assert_not_called()
             other.rows[2].move_hk = 'ctrl+s'
-            with self.assertRaises(ShortcutError):
-                w.validate_profile_shortcuts(other)
+            prepared = w.validate_profile_shortcuts(other)
+            self.assertEqual(prepared.keys, ('q', 'w', ''))
+            self.assertEqual(set(prepared.issues), {2})
             validate.assert_called_once()
 
     def test_layout_change_rechecks_physical_symbol_collisions(self):
+        from keyboard_hook import character_key
         w = self.w
         w.profile.rows[0].move_hk = 'plus'
         w.profile.rows[1].move_hk = '='
-        with patch('keyboard_hook.character_key', return_value=(0xBB, frozenset(('shift',)))) as mapping:
+        required = frozenset(('shift',))
+        with patch('keyboard_hook.character_key', side_effect=lambda char:
+                   (0xBB, required) if char == '+' else character_key(char)):
             w.validate_profile_shortcuts(w.profile)
             self.layout.return_value = 2
-            mapping.return_value = (0xBB, frozenset())
-            with self.assertRaisesRegex(ShortcutError, '실제 입력'):
-                w.validate_profile_shortcuts(w.profile)
+            required = frozenset()
+            prepared = w.validate_profile_shortcuts(w.profile)
+            self.assertEqual(prepared.keys, ('', '', 'e'))
+            self.assertIn('실제 입력', prepared.issues[0])
+
+    def test_ctrl_row_is_saved_but_not_registered_until_repaired(self):
+        w = self.w
+        w.profile.rows[0].move_hk = 'ctrl+q'
+        for _ in range(2):
+            self.assertTrue(w.save(automatic=True))
+            w.flush_pending_saves()
+            w.rebind()
+            self.assertFalse(w.dirty)
+            self.assertEqual(read_json(w.path)['macros'][0]['move_hk'], 'ctrl+q')
+            self.assertNotIn('ctrl+q', [b.key for b in w.hooks.bindings])
+        w.profile.rows[0].move_hk = 'alt+q'
+        self.assertTrue(w.save(automatic=True))
+        w.flush_pending_saves()
+        w.rebind()
+        self.assertFalse(w.dirty)
+        self.assertEqual((w.settings.capture_hk, w.settings.pause_hk), ('ctrl+s', 'ctrl+`'))
+
+    def test_rebind_reuses_matchers_but_uses_new_profile_row_ids(self):
+        w = self.w
+        previous_ids = {row.id for row in w.profile.rows}
+        w.profile = Profile.default()
+        with patch.object(Hotkeys, 'compile', wraps=Hotkeys.compile) as compile_key:
+            w.rebind()
+            w.rebind()
+            compile_key.assert_not_called()
+        ids = {binding.row_id for binding in w.hooks.bindings if binding.action == 'move'}
+        self.assertEqual(ids, {row.id for row in w.profile.rows})
+        self.assertFalse(ids & previous_ids)
+
+    def test_layout_change_rebuilds_prepared_matchers_once(self):
+        w = self.w
+        self.layout.return_value = 2
+        with patch.object(Hotkeys, 'compile', wraps=Hotkeys.compile) as compile_key:
+            w.rebind()
+            self.assertEqual(compile_key.call_count, 5)
+            w.rebind()
+            self.assertEqual(compile_key.call_count, 5)

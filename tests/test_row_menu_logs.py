@@ -152,12 +152,24 @@ class RowMenuLogTests(unittest.TestCase):
         self.assertEqual(len(self.w.profile.rows), 2)
 
     def test_insert_above_and_below(self):
-        original = self.w.profile.rows[1]
-        self.menu(1, '위에 행 추가')
-        self.assertIs(self.w.profile.rows[2], original)
-        self.menu(2, '아래에 행 추가')
-        self.assertEqual(self.w.table.currentRow(), 3)
-        self.assertEqual((self.w.profile.rows[3].move_hk, self.w.profile.rows[3].memo), ('', ''))
+        w = self.w
+        for mode in ('script', 'move_only'):
+            with self.subTest(mode=mode):
+                next(action for action in w.add_mode_menu.actions() if action.data() == mode).trigger()
+                original = w.profile.rows[1]
+                self.menu(1, '위에 행 추가')
+                self.assertIs(w.profile.rows[2], original)
+                self.assertEqual(w.table.currentRow(), 1)
+                self.assertEqual(w.profile.rows[1].action_mode, mode)
+                self.assertEqual((w.profile.rows[1].move_hk, w.profile.rows[1].memo), ('', ''))
+                self.menu(2, '아래에 행 추가')
+                self.assertIs(w.profile.rows[2], original)
+                self.assertEqual(w.table.currentRow(), 3)
+                self.assertEqual(w.profile.rows[3].action_mode, mode)
+                self.assertEqual((w.profile.rows[3].move_hk, w.profile.rows[3].memo), ('', ''))
+                self.assertIsNone(w.script_editor)
+                w.flush_pending_saves()
+                self.assertEqual(Profile.read(read_json(w.path)).export(), w.profile.export())
 
     def test_duplicate_save_failure_keeps_changes_and_logs_error(self):
         from persistence import SaveResult

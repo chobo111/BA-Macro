@@ -12,6 +12,10 @@ PROMOTION_GRACE_SECONDS = 2.0
 INRANGE, INCONTACT, DOWN, UPDATE, UP, CANCELED = 2, 4, 0x10000, 0x20000, 0x40000, 0x8000
 
 
+class _CancelRelease(Exception):
+    """Cancel through device destruction rather than completing a stale UP."""
+
+
 class PointerInfo(C.Structure):
     _fields_ = [('pointerType', W.DWORD), ('pointerId', W.UINT), ('frameId', W.UINT),
                 ('pointerFlags', W.DWORD), ('sourceDevice', W.HANDLE), ('hwndTarget', W.HWND),
@@ -190,7 +194,7 @@ class TouchScriptInput:
             self.diagnostic.resolved(position, (x, y))
         return position
 
-    def validate_pointer(self, target):
+    def validate_pointer(self):
         if not self.native.active(self.target) or not self.native.point_belongs_to(self.target, *self.position):
             raise ValueError('터치 위치가 대상 앱에 가려졌거나 대상 앱이 비활성 상태입니다.')
         # A title bar/border belongs to the same window but is not game content.
@@ -206,7 +210,16 @@ class TouchScriptInput:
     def check_contact(self):
         if self.check_input is not None:
             self.check_input()
-        self.validate_pointer(self.target)
+        self.validate_pointer()
+
+    def check_release(self):
+        try:
+            valid = (self.native.active(self.target)
+                     and self.native.screen(self.target, 0, 0) == self.origin)
+        except OSError:
+            valid = False
+        if not valid:
+            raise _CancelRelease()
 
     def _send(self, flags):
         trace = self.diagnostic
@@ -215,7 +228,8 @@ class TouchScriptInput:
             if self.device is None:
                 self.device = self.device_factory()
             # Release frames must still be sent after cancellation/focus loss.
-            check = self.check_contact if flags & (DOWN | UPDATE) else None
+            check = (self.check_contact if flags & (DOWN | UPDATE)
+                     else self.check_release if flags == UP else None)
             before_send = check
             if trace is not None and trace.sampling:
                 def before_send():
@@ -230,6 +244,10 @@ class TouchScriptInput:
             self.last_frame = time.monotonic()
             if frame is not None:
                 trace.record(frame, '성공')
+        except _CancelRelease:
+            if frame is not None:
+                trace.record(frame, '취소: 앱 위치 또는 활성 상태 변경')
+            self.close()
         except Exception as error:
             if frame is not None:
                 trace.record(frame, f'실패: {error}')
@@ -241,7 +259,7 @@ class TouchScriptInput:
         self.position = (x, y)
         if self.pressed:
             try:
-                self.validate_pointer(self.target)
+                self.validate_pointer()
             except Exception:
                 self.position = previous
                 raise
@@ -266,7 +284,7 @@ class TouchScriptInput:
 
     def keep_alive(self):
         if self.pressed and time.monotonic() - self.last_frame >= .05:
-            self.validate_pointer(self.target)
+            self.validate_pointer()
             self._send(UPDATE | INRANGE | INCONTACT)
 
     def close(self):

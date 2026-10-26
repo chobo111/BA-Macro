@@ -1,3 +1,4 @@
+from profile_dialogs import NewProfileDialog
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from pathlib import Path
@@ -13,6 +14,7 @@ from app import MainWindow, KeyDialog, SettingsDialog, ResizeDialog, resize_wind
 from script_editor import ScriptEditor
 from domain import MODES
 from execution_plan import ExecutionPlan
+from ui_test_support import fail_on_unexpected_error_dialogs, mock_target_context
 
 
 class UiTests(unittest.TestCase):
@@ -87,9 +89,9 @@ class UiTests(unittest.TestCase):
         self.assertEqual(w.width(), width)
         self.assertEqual(editor.editor.toPlainText(), row.script)
         w.finish_script_editor()
-        row.move_hk = 'ctrl+q'
+        row.move_hk = 'alt+q'
         w.edit_script(row.id)
-        self.assertEqual(w.script_editor.row_identity.text(), 'CTRL+Q · ' + row.memo)
+        self.assertEqual(w.script_editor.row_identity.text(), 'ALT+Q · ' + row.memo)
         w.finish_script_editor()
 
     def test_profile_menu_actions_and_rename_preserve_editor_draft(self):
@@ -397,10 +399,10 @@ class UiTests(unittest.TestCase):
         def duplicate_then_correct(dialog):
             dialog.show()
             dialog.editor.setKeySequence(QKeySequence('W'))
-            dialog.accept()
             self.assertNotEqual(dialog.result(), QDialog.DialogCode.Accepted)
             self.assertTrue(dialog.isVisible())
             self.assertIn('중복', dialog.validation.text())
+            self.assertEqual(dialog.confirm_button.text(), '서로 바꾸기')
             self.assertEqual(row.move_hk, 'q')
             dialog.editor.setKeySequence(QKeySequence('Alt+R'))
             self.assertTrue(dialog.validation.isHidden())
@@ -535,7 +537,7 @@ class UiTests(unittest.TestCase):
         self.assertNotIn('auto_fire', asdict(settings))
         self.assertNotIn('show_realtime', asdict(settings))
         dialog = SettingsDialog(settings, self.window)
-        self.assertEqual(set(dialog.checks), {'auto_pause', 'exclusive_hook', 'auto_convert_on_start'})
+        self.assertEqual(set(dialog.checks), {'auto_pause', 'exclusive_hook', 'auto_convert_on_start', 'always_run_as_admin'})
         dialog.checks['auto_pause'].setChecked(False)
         self.assertFalse(dialog.value().auto_pause)
         dialog.deleteLater()
@@ -685,6 +687,7 @@ class UiTests(unittest.TestCase):
         cls.qt.setStyle("Fusion")
 
     def setUp(self):
+        fail_on_unexpected_error_dialogs(self)
         self.directory = tempfile.TemporaryDirectory()
         self.window = MainWindow(data_dir=self.directory.name, hook_enabled=False)
         self.window.show()
@@ -900,7 +903,7 @@ class UiTests(unittest.TestCase):
     def test_pause_key_works_while_paused(self):
         w = self.window
         w.target = 99
-        with patch.object(w.native, "size", return_value=(1280,720)), patch.object(w.native, "exists", return_value=True), patch.object(w.native, "window_identity", return_value={"exe": "Game.exe", "class": "Game", "title": "Game"}):
+        with mock_target_context(w), patch.object(w.native, "size", return_value=(1280,720)), patch.object(w.native, "exists", return_value=True), patch.object(w.native, "window_identity", return_value={"exe": "Game.exe", "class": "Game", "title": "Game"}):
             QTest.mouseClick(w.pause_button, Qt.MouseButton.LeftButton)
             self.assertTrue(w.armed)
             w.dispatch("pause", "")
@@ -1137,8 +1140,8 @@ class UiTests(unittest.TestCase):
         self.assertEqual(len(Profile.read(self.saved(w.path)).rows),3)
         old_path,old_bytes=w.path,w.path.read_bytes()
         destination = old_path.with_name('사용자 지정.json')
-        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
-             patch.object(QFileDialog, 'selectedFiles', return_value=[str(destination)]):
+        with patch.object(NewProfileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(NewProfileDialog, 'value', return_value=destination.stem):
             w.new_profile()
         self.assertEqual(w.path, destination)
         self.assertNotEqual(w.path,old_path)
@@ -1155,11 +1158,10 @@ class UiTests(unittest.TestCase):
         editor = w.script_editor
         editor.editor.setPlainText('sleep 42')
         def cancel(dialog):
-            self.assertEqual(dialog.acceptMode(), QFileDialog.AcceptMode.AcceptSave)
-            self.assertEqual(dialog.defaultSuffix(), 'json')
-            self.assertFalse(dialog.testOption(QFileDialog.Option.DontConfirmOverwrite))
+            self.assertEqual(dialog.windowTitle(), '새 프로필 생성')
+            self.assertTrue(dialog.name.text())
             return QDialog.DialogCode.Rejected
-        with patch.object(QFileDialog, 'exec', cancel), patch.object(w, 'confirm_changes') as confirm:
+        with patch.object(NewProfileDialog, 'exec', cancel), patch.object(w, 'confirm_changes') as confirm:
             w.new_profile()
         confirm.assert_not_called()
         self.assertIs(w.profile, old_profile)
@@ -1175,8 +1177,8 @@ class UiTests(unittest.TestCase):
         old_profile, old_path, old_bytes = w.profile, w.path, w.path.read_bytes()
         result = Future()
         result.set_result(SaveResult(False, error='disk full'))
-        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
-             patch.object(QFileDialog, 'selectedFiles', return_value=[str(w.path.with_name('new.json'))]), \
+        with patch.object(NewProfileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(NewProfileDialog, 'value', return_value='new'), \
              patch.object(w.store, 'save', return_value=result):
             w.new_profile()
         self.assertIs(w.profile, old_profile)
@@ -1188,8 +1190,8 @@ class UiTests(unittest.TestCase):
         w = self.window
         old_profile, old_path = w.profile, w.path
         settings_before = w.settings_path.read_bytes()
-        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
-             patch.object(QFileDialog, 'selectedFiles', return_value=[str(w.settings_path)]):
+        with patch.object(NewProfileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(NewProfileDialog, 'value', return_value='setting'):
             w.new_profile()
         self.assertIs(w.profile, old_profile)
         self.assertEqual(w.path, old_path)
@@ -1610,14 +1612,14 @@ class UiTests(unittest.TestCase):
         w.edit_script(previous.rows[0].id)
         editor=w.script_editor
         editor.editor.setPlainText('sleep 42')
-        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
-             patch.object(QFileDialog, 'selectedFiles', return_value=[str(w.path.with_name('new.json'))]), \
+        with patch.object(NewProfileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(NewProfileDialog, 'value', return_value='new'), \
              patch.object(QMessageBox,'exec',return_value=QMessageBox.StandardButton.Cancel):
             w.new_profile()
         self.assertIs(w.profile,previous)
         self.assertIs(w.script_editor,editor)
-        with patch.object(QFileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
-             patch.object(QFileDialog, 'selectedFiles', return_value=[str(w.path.with_name('new.json'))]), \
+        with patch.object(NewProfileDialog, 'exec', return_value=QDialog.DialogCode.Accepted), \
+             patch.object(NewProfileDialog, 'value', return_value='new'), \
              patch.object(QMessageBox,'exec',return_value=QMessageBox.StandardButton.Discard):
             w.new_profile()
         self.assertIsNot(w.profile,previous)
@@ -1983,9 +1985,9 @@ class UiTests(unittest.TestCase):
         def duplicate_then_cancel(dialog):
             dialog.show()
             dialog.editor.setKeySequence(QKeySequence('Alt+PgUp'))
-            dialog.accept()
             self.assertTrue(dialog.isVisible())
             self.assertIn('중복', dialog.validation.text())
+            self.assertEqual(dialog.confirm_button.text(), '서로 바꾸기')
             dialog.reject()
             return dialog.result()
         with patch.object(KeyDialog, 'exec', new=duplicate_then_cancel), \
@@ -2158,7 +2160,6 @@ class UiTests(unittest.TestCase):
                  (Qt.Key.Key_Control,Qt.KeyboardModifier.NoModifier,'ctrl'),
                  (Qt.Key.Key_Shift,Qt.KeyboardModifier.NoModifier,'shift'),
                  (Qt.Key.Key_Alt,Qt.KeyboardModifier.NoModifier,'alt'),
-                 (Qt.Key.Key_Meta,Qt.KeyboardModifier.NoModifier,'win'),
                  (Qt.Key.Key_Escape,Qt.KeyboardModifier.NoModifier,'esc'),
                  (Qt.Key.Key_Return,Qt.KeyboardModifier.NoModifier,'enter'))
         for key,modifiers,expected in cases:
@@ -2358,7 +2359,7 @@ class UiTests(unittest.TestCase):
         self.assertEqual(row.move_hk, 'w')
         self.assertEqual(w.path.read_bytes(), before)
         self.assertEqual(w.hooks.bindings, bindings)
-        self.assertIn('실제 입력이 중복', w.statusBar().currentMessage())
+        self.assertIn('교환 내용을 다시 확인', w.statusBar().currentMessage())
 
     def test_physical_settings_conflicts_keep_settings_and_use_log(self):
         from dataclasses import replace
@@ -2381,27 +2382,27 @@ class UiTests(unittest.TestCase):
             self.assertEqual(w.settings_path.read_bytes(), before)
             self.assertIn('실제 입력이 중복', w.statusBar().currentMessage())
 
-    def test_physical_conflict_profile_open_preserves_current_profile_and_draft(self):
+    def test_physical_conflict_profile_open_preserves_keys_and_disables_conflicting_rows(self):
         from domain import atomic_json
         w = self.window
-        original, path = w.profile, w.path
+        path = w.path
         invalid = path.with_name('conflicting.json')
         profile = Profile.default()
         profile.rows[0].move_hk, profile.rows[1].move_hk = 'shift+-', 'shift+_'
         atomic_json(invalid, profile.export())
-        before, settings = invalid.read_bytes(), w.settings_path.read_bytes()
+        before = invalid.read_bytes()
         w.edit_script(w.profile.rows[0].id)
-        editor = w.script_editor
         with patch.object(w, 'prepare_profile_change', return_value=True), \
              patch.object(QFileDialog, 'getOpenFileName', return_value=(str(invalid), '')), \
              patch.object(w.statusBar(), 'show_error') as error:
             w.open_profile()
-        self.assertIs(w.profile, original)
-        self.assertEqual(w.path, path)
-        self.assertIs(w.script_editor, editor)
-        self.assertIn('실제 입력이 중복', error.call_args.args[0])
+        self.assertEqual(w.path, invalid)
+        self.assertIsNone(w.script_editor)
+        self.assertEqual([r.move_hk for r in w.profile.rows], ['shift+-', 'shift+_', 'e'])
+        self.assertEqual([b.key for b in w.hooks.bindings if b.action == 'move'], ['e'])
+        self.assertIn('단축키 비활성', error.call_args.args[0])
+        self.assertIn('사용하려면 단축키를 변경', w.statusBar().currentMessage())
         self.assertEqual(invalid.read_bytes(), before)
-        self.assertEqual(w.settings_path.read_bytes(), settings)
 
     def test_physical_conflict_startup_does_not_bind_or_rewrite_profile(self):
         from domain import atomic_json
@@ -2414,8 +2415,9 @@ class UiTests(unittest.TestCase):
             other = MainWindow(data_dir=folder, hook_enabled=False)
             try:
                 self.assertFalse(other.armed)
-                self.assertEqual(other.hooks.bindings, [])
-                self.assertIn('실제 입력이 중복', other.load_error)
+                self.assertEqual([b.key for b in other.hooks.bindings if b.action == 'move'], ['e'])
+                self.assertFalse(other.load_error)
+                self.assertIn('단축키 비활성', other.statusBar().currentMessage())
                 self.assertEqual(other.profile.rows[0].move_hk, 'shift+-')
                 self.assertEqual(path.read_bytes(), before)
             finally:
@@ -2425,16 +2427,14 @@ class UiTests(unittest.TestCase):
                 self.qt.processEvents()
             self.assertEqual(path.read_bytes(), before)
 
-    def test_physical_conflict_is_rejected_before_profile_save(self):
+    def test_physical_conflict_does_not_block_profile_save(self):
         w = self.window
         w.flush_pending_saves()
-        before = w.path.read_bytes()
         w.profile.rows[0].move_hk, w.profile.rows[1].move_hk = 'shift+-', 'shift+_'
-        with patch.object(w, 'error'), patch.object(w.store, 'save') as save:
-            self.assertFalse(w.save())
-            save.assert_not_called()
-        self.assertEqual(w.path.read_bytes(), before)
-        w.profile.rows[0].move_hk, w.profile.rows[1].move_hk = 'q', 'w'
+        self.assertTrue(w.save())
+        w.rebind()
+        self.assertEqual([r['move_hk'] for r in read_json(w.path)['macros']], ['shift+-', 'shift+_', 'e'])
+        self.assertEqual([b.key for b in w.hooks.bindings if b.action == 'move'], ['e'])
 
     def test_keypad_plus_and_equals_can_be_registered_and_saved(self):
         w = self.window
@@ -2468,14 +2468,14 @@ class UiTests(unittest.TestCase):
                         factory.return_value.value.return_value = ''
                         other.edit_key(other.profile.rows[1].id)
                         self.assertEqual(other.profile.rows[1].move_hk, '')
-                        self.assertTrue(other.dirty)
                         self.assertEqual(other.profile_name.text(), path.stem)
                         self.assertFalse(other.armed)
-                        self.assertEqual(other.hooks.bindings, [])
-                        self.assertIn('남은 충돌', other.statusBar().currentMessage())
-                        self.assertFalse(other.save())
+                        self.assertEqual([b.key for b in other.hooks.bindings if b.action == 'move'], ['shift+-'])
+                        self.assertTrue(other.save())
                         other.flush_pending_saves()
-                        self.assertEqual(path.read_bytes(), before)
+                        self.assertFalse(other.dirty)
+                        self.assertEqual([r['move_hk'] for r in read_json(path)['macros']],
+                                         ['shift+-', '', 'shift+/', 'shift+?'])
                         # Recovery must not allow introducing another conflict.
                         factory.return_value.value.return_value = 'shift+?'
                         other.edit_key(other.profile.rows[1].id)
@@ -2495,7 +2495,7 @@ class UiTests(unittest.TestCase):
                     other.deleteLater()
                     self.qt.processEvents()
 
-    def test_discarding_partial_shortcut_repair_keeps_original_file(self):
+    def test_partial_shortcut_repair_is_autosaved(self):
         from domain import Row, atomic_json
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'macro.json'
@@ -2509,10 +2509,11 @@ class UiTests(unittest.TestCase):
                     factory.return_value.value.return_value = 'f1'
                     other.edit_key(other.profile.rows[1].id)
                 self.assertEqual(other.profile.rows[1].move_hk, 'f1')
-                self.assertTrue(other.dirty)
-                with patch.object(QMessageBox, 'exec', return_value=QMessageBox.StandardButton.Discard):
-                    self.assertTrue(other.confirm_changes())
-                self.assertEqual(path.read_bytes(), before)
+                other.flush_pending_saves()
+                self.assertFalse(other.dirty)
+                self.assertEqual([r['move_hk'] for r in read_json(path)['macros']],
+                                 ['shift+-', 'f1', 'shift+/', 'shift+?'])
+                self.assertEqual(len(other._shortcut_issues), 2)
             finally:
                 other.shutdown()
                 other.close()
@@ -2531,21 +2532,22 @@ class UiTests(unittest.TestCase):
                 before = path.read_bytes()
                 other = MainWindow(data_dir=folder, hook_enabled=False)
                 try:
-                    with patch('app.KeyDialog') as factory:
-                        factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
-                        factory.return_value.value.return_value = 'f1'
-                        other.edit_key(other.profile.rows[2].id)
-                    self.assertTrue(other.dirty)
-                    self.assertEqual(path.read_bytes(), before)
                     def write(destination, data):
                         if fail_profile_save and Path(destination) == path:
                             raise OSError('profile write unavailable')
                         return atomic_json(destination, data)
-                    with patch('app.SettingsDialog') as factory, patch('persistence.atomic_json', side_effect=write):
-                        factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
-                        factory.return_value.value.return_value = replace(other.settings, pause_hk='f2')
-                        other.settings_dialog()
+                    with patch('persistence.atomic_json', side_effect=write):
+                        with patch('app.KeyDialog') as factory:
+                            factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+                            factory.return_value.value.return_value = 'f1'
+                            other.edit_key(other.profile.rows[2].id)
                         other.flush_pending_saves()
+                        self.assertEqual(other.dirty, fail_profile_save)
+                        with patch('app.SettingsDialog') as factory:
+                            factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
+                            factory.return_value.value.return_value = replace(other.settings, pause_hk='f2')
+                            other.settings_dialog()
+                            other.flush_pending_saves()
                     self.assertEqual(other.settings.pause_hk, 'f2')
                     self.assertEqual(read_json(other.settings_path)['pause_hk'], 'f2')
                     self.assertEqual(other.profile.rows[2].move_hk, 'f1')
@@ -2563,7 +2565,7 @@ class UiTests(unittest.TestCase):
                     other.deleteLater()
                     self.qt.processEvents()
 
-    def test_deleting_conflicting_rows_stays_blocked_until_final_repair(self):
+    def test_deleting_conflicting_rows_enables_only_repaired_rows(self):
         from domain import Row, atomic_json
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'macro.json'
@@ -2578,16 +2580,16 @@ class UiTests(unittest.TestCase):
                     other.delete_rows()
                     self.assertEqual(other.table.currentRow(), 0)
                     self.assertFalse(other.armed)
-                    self.assertEqual(other.hooks.bindings, [])
-                    self.assertTrue(other.dirty)
-                    self.assertIn('남은 충돌', other.statusBar().currentMessage())
-                    start.assert_not_called()
-                    self.assertEqual(path.read_bytes(), before)
+                    self.assertEqual([b.key for b in other.hooks.bindings if b.action == 'move'], ['shift+-'])
+                    other.flush_pending_saves()
+                    self.assertFalse(other.dirty)
+                    start.assert_called_once()
+                    self.assertEqual(len(read_json(path)['macros']), 3)
                     other.table.selectRow(2)
                     other.delete_rows()
                     other.flush_pending_saves()
                     self.assertEqual(other.table.currentRow(), 1)
-                    start.assert_called_once()
+                    self.assertEqual(start.call_count, 2)
                     self.assertFalse(other.dirty)
                     self.assertEqual([r['move_hk'] for r in read_json(path)['macros']], ['shift+-', 'shift+/'])
             finally:

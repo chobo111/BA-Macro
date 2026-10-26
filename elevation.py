@@ -179,7 +179,7 @@ def await_ready(launch, parent, timeout_ms=15000):
     poll.timeout.connect(check)
     try:
         if launch.ready():
-            return True
+            return not launch.finished()
         poll.start(30)
         deadline.start(timeout_ms)
         loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)

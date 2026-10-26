@@ -63,7 +63,7 @@ class SizeMismatchDialog(QMessageBox):
         self.setText('프로필 기준 해상도와 현재 화면 크기가 다릅니다.')
         guidance = ('창 크기를 프로필에 맞추거나, 자동 변환으로 실행하세요.\n'
                     '자동 변환은 원본을 유지하며 대체 좌표를 메모리에서만 사용합니다.\n'
-                    '창 크기 변경 후에는 다시 시작을 눌러 주세요.')
+                    '창 크기 변경이 완료되면 바로 시작합니다.')
         warning = aspect_warning(saved, current)
         if warning:
             guidance = warning + '\n\n' + guidance

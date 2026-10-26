@@ -15,6 +15,7 @@ from app import MainWindow
 from conversion_dialog import BaselineResolutionDialog
 from domain import Profile, atomic_json, read_json
 from persistence import SaveResult
+from ui_test_support import fail_on_unexpected_error_dialogs, mock_target_context
 
 GAME = {'exe': 'Game.exe', 'class': 'GameWindow', 'title': 'Game'}
 OTHER = {'exe': 'Other.exe', 'class': 'OtherWindow', 'title': 'Other'}
@@ -33,6 +34,7 @@ class MissingBasisTests(unittest.TestCase):
         cls.qt.setStyle('Fusion')
 
     def setUp(self):
+        fail_on_unexpected_error_dialogs(self)
         self.directory = tempfile.TemporaryDirectory()
         path = Path(self.directory.name) / 'macro.json'
         profile = Profile.default()
@@ -43,7 +45,7 @@ class MissingBasisTests(unittest.TestCase):
         self.window.timer.stop()
         self.window.target = 123
         self.patches = ExitStack()
-        self.patches.enter_context(patch('app.elevation.requires_elevation', return_value=False))
+        self.patches.enter_context(mock_target_context(self.window))
         native = self.window.native
         self.exists = self.patches.enter_context(patch.object(native, 'exists', return_value=True))
         self.identity = self.patches.enter_context(patch.object(native, 'window_identity', return_value=dict(GAME)))
@@ -81,8 +83,8 @@ class MissingBasisTests(unittest.TestCase):
     def test_cancel_blocks_fixed_and_retained_coordinates_even_with_auto_enabled(self):
         w = self.window
         row = w.profile.rows[0]
-        cases = ((640, 360, 'click', ''), (0, 0, 'script', 'click 0,0'),
-                 (0, 0, 'click', 'curve 100,200 mouse'),
+        cases = ((640, 360, 'move_only', ''), (0, 0, 'script', 'click 0,0'),
+                 (0, 0, 'move_only', 'curve 100,200 mouse'),
                  (25, 50, 'script', 'sleep 5'), (0, 0, 'script', 'click 640,'))
         for automatic in (False, True):
             for x, y, mode, script in cases:
@@ -108,7 +110,7 @@ class MissingBasisTests(unittest.TestCase):
         row.x = row.y = 0
         for script in ('', 'sleep 5', 'click mouse', 'curve mouse mouse', '// click 640,360'):
             with self.subTest(script=script):
-                row.action_mode = 'script' if script else 'click'
+                row.action_mode = 'script' if script else 'move_only'
                 row.script = script
                 with patch('app.BaselineResolutionDialog') as prompt:
                     w.toggle()

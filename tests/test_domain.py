@@ -108,9 +108,9 @@ class DomainTests(unittest.TestCase):
         self.assertEqual(hotkey("Shift+Control+Q"), "ctrl+shift+q")
         p = Profile([Row(move_hk="ctrl+shift+q"), Row(move_hk="shift+ctrl+q")])
         with self.assertRaises(ValueError):
-            p.validate()
+            Settings.read({"capture_hk": p.rows[0].move_hk, "pause_hk": p.rows[1].move_hk})
         with self.assertRaises(ValueError):
-            Profile.default().validate(["q"])
+            Settings.read({"capture_hk": "q", "pause_hk": "q"})
 
     def test_bad_values(self):
         for data in ({"click_hold_ms": -1}, {"auto_pause": "yes"},

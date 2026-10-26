@@ -152,7 +152,7 @@ class WriteWaitTests(unittest.TestCase):
             return original(*args, **kwargs)
         with patch('app.RenameProfileDialog') as factory, patch.object(w.store,'_rename',side_effect=slow):
             factory.return_value.exec.return_value = QDialog.DialogCode.Accepted
-            factory.return_value.name.text.return_value = 'renamed'
+            factory.return_value.value.return_value = 'renamed'
             QTimer.singleShot(30,release.set)
             try:
                 w.rename_profile()

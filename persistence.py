@@ -66,7 +66,6 @@ class ProfileStore:
         try:
             profile = (Profile.read(read_json(path)) if path.exists()
                        else Profile.default((settings.capture_hk, settings.pause_hk)))
-            profile.validate((settings.capture_hk, settings.pause_hk))
             if not path.exists() and not settings_valid:
                 path = None
             elif not path.exists():
@@ -95,6 +94,20 @@ class ProfileStore:
             number += 1
         return path
 
+    def import_profile(self, path, profile):
+        """Import a validated snapshot on the ordered writer before editing it."""
+        with self.queue_lock:
+            if self.closed:
+                raise RuntimeError('Profile store is closed')
+            self.queued_save = None
+            return self.executor.submit(self._import_profile, Path(path), deepcopy(profile))
+
+    def _import_profile(self, path, profile):
+        local = self._sync_recent_copy(path, profile)
+        # Once shown for editing, the copy is independent of its original.
+        self._release_recent_copy(local)
+        return local
+
     def _is_settings_path(self, path):
         candidate, settings = Path(path).resolve(), self.settings_path.resolve()
         # WindowsPath equality is case-insensitive; resolve also follows aliases.
@@ -104,6 +117,14 @@ class ProfileStore:
     def validate_profile_path(self, path):
         if self._is_settings_path(path):
             raise ValueError('환경설정 파일에는 프로필을 저장할 수 없습니다. 다른 파일명을 선택하세요.')
+
+    def output_path(self, path):
+        """Normalize a newly selected destination before checking protected files."""
+        path = Path(path)
+        if path.suffix.lower() != '.json':
+            path = path.with_suffix('.json')
+        self.validate_profile_path(path)
+        return path
 
     def rename_path(self, path, name):
         name = name.strip()
@@ -116,9 +137,6 @@ class ProfileStore:
         destination = Path(path).with_name(name + '.json')
         self.validate_profile_path(destination)
         return destination
-
-    def rename(self, source, destination, settings):
-        return self.rename_async(source, destination, settings).result()
 
     def rename_async(self, source, destination, settings):
         """Rename after queued writes, then update the startup profile reference."""
@@ -271,14 +289,6 @@ class ProfileStore:
             self.queued_save = None
             future = self.executor.submit(self._settings, path, deepcopy(settings), recover=recover)
         return future
-
-    def flush(self):
-        with self.queue_lock:
-            if self.closed:
-                return
-            self.queued_save = None
-            future = self.executor.submit(lambda: None)
-        future.result()
 
     def close(self):
         with self.queue_lock:

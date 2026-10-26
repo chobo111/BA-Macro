@@ -27,6 +27,8 @@ class MemoEditingTests(unittest.TestCase):
 
     def tearDown(self):
         if self.window is not None:
+            # Qt can retain the modifiers from the last synthetic Ctrl chord.
+            QTest.keyRelease(self.window, Qt.Key.Key_Control)
             self.window.shutdown()
             self.window.close()
             self.window.deleteLater()
